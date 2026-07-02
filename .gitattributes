@@ -1,0 +1,12 @@
+# Large committed binary assets go through git-lfs so the repo stays light.
+# (Model weights are gitignored entirely; these are small project art assets.)
+assets/**/*.png   filter=lfs diff=lfs merge=lfs -text
+assets/**/*.psd   filter=lfs diff=lfs merge=lfs -text
+assets/**/*.inp   filter=lfs diff=lfs merge=lfs -text
+assets/**/*.inx   filter=lfs diff=lfs merge=lfs -text
+
+# Treat shader + project sources as text with LF endings (cross-platform editor).
+*.glsl  text eol=lf
+*.hlsl  text eol=lf
+*.json  text eol=lf
+*.toml  text eol=lf

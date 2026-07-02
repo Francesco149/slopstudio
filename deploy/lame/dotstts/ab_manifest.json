@@ -1,0 +1,42 @@
+[
+  {
+    "name": "dots_vo3",
+    "text": "This is Raki-Masu — Lucky-Mas. A Lucky Star meets Idolmaster desktop toy, sold on a single disc at Comiket, back in 2007.",
+    "prompt_audio": "/work/ref.wav",
+    "prompt_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it.",
+    "seed": 42,
+    "num_steps": 10
+  },
+  {
+    "name": "dots_vo4",
+    "text": "The circle behind it was called SYGNAS. Out of print for years; their website, long gone. It almost vanished — which is exactly why we cracked it open.",
+    "prompt_audio": "/work/ref.wav",
+    "prompt_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it.",
+    "seed": 42,
+    "num_steps": 10
+  },
+  {
+    "name": "dots_vo9",
+    "text": "And it paints its own mascot right over the top — masked the old-fashioned way: punch a hole, drop in the colour, copy it down.",
+    "prompt_audio": "/work/ref.wav",
+    "prompt_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it.",
+    "seed": 42,
+    "num_steps": 10
+  },
+  {
+    "name": "dots_vo3_seedB",
+    "text": "This is Raki-Masu — Lucky-Mas. A Lucky Star meets Idolmaster desktop toy, sold on a single disc at Comiket, back in 2007.",
+    "prompt_audio": "/work/ref.wav",
+    "prompt_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it.",
+    "seed": 1234,
+    "num_steps": 10
+  },
+  {
+    "name": "design_then_clone",
+    "text": "And there it is — twenty lines of decompiled C, rebuilt from scratch. Fufu~, not bad at all.",
+    "prompt_audio": "/work/design.wav",
+    "prompt_text": "Fufu~ welcome back, darling. Shall we break another little game today? I do hope you brought your patience.",
+    "seed": 42,
+    "num_steps": 10
+  }
+]

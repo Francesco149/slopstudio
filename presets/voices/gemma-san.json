@@ -1,0 +1,10 @@
+{
+  "schema": "slopstudio.voice/1",
+  "name": "gemma-san",
+  "provider": "tts",
+  "voice": "A playful, teasing young woman's voice — soft and melodic with a slightly breathy, mischievous succubus lilt; expressive and warm, youthful but not childish, a knowing smile in the tone.",
+  "language": "English",
+  "seed": 7,
+  "description": "Host voice for Gemma-san. The base `voice` instruct defines the timbre; per-line emotion is appended via each clip's `emotion` field (e.g. 'smug', 'mock-pouting', 'excited and fast', 'deadpan', 'soft and conspiratorial'). Signature catchphrase: 'fufu~'.",
+  "notes": "Validated on lame: Qwen3-TTS synthesizes clean speech for this instruct+seed (4.96s @ 24kHz, healthy levels, no clipping). Subjective timbre tuning welcome — edit `voice`/`seed` and re-run the provider's `voice_design` to preview."
+}

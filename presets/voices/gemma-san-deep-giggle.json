@@ -1,0 +1,9 @@
+{
+  "schema": "slopstudio.voice/1",
+  "name": "gemma-san-deep-giggle",
+  "provider": "tts",
+  "voice": "A seductive low, breathy young woman's voice, a deeper chest register, smooth and velvety with a mischievous succubus purr — here delivered as a GENUINE GIGGLE: light, playful, breathy laughter, clearly amused, an actual giggling laugh rather than a flat spoken chuckle.",
+  "language": "Japanese",
+  "seed": 7,
+  "description": "Design-mode (no ref) giggle variant for the ふふふ opener. Expressive but the timbre drifts from the cloned host (VoiceDesign re-derives per call) — audition vs the clone; revert v_o1 to the clone asset if it doesn't match."
+}

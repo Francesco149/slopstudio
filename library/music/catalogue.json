@@ -1,0 +1,4 @@
+{
+  "_comment": "Stock royalty-free music beds. Each track needs a direct `url`, a commercial-safe `license` (cc0 / cc-by / public-domain — see tools/fetch-stock-music.py), and, for cc-by, an `attribution` string the editor surfaces as an on-screen credit. Populate with the channel owner's picks (SummoningSalt-flavoured synthwave/retro + chiptunes). Fetch with: nix develop --command python tools/fetch-stock-music.py",
+  "tracks": []
+}

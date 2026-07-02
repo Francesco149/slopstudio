@@ -1,0 +1,919 @@
+{
+  "schema": "slopstudio.project/1",
+  "meta": {
+    "title": "opening",
+    "fps": 30,
+    "resolution": [
+      1280,
+      768
+    ],
+    "sample_rate": 48000,
+    "vignette": 0.22,
+    "notes": "Full host opening (LuckyMas cold-open): giggle zoom + welcome + the MoistCr1TiKaL intro, per-sentence VO clips (gemma-san-deep-jp), host emotes per sentence, auto bg-matched on the day room. Built from the signature-opener recipe; SKELETON to tune once a pose library exists. tracks TOP-first."
+  },
+  "assets": {
+    "bg_day": {
+      "provider": "external",
+      "type": "image",
+      "status": "ready",
+      "uri": "presets/backgrounds/room-day.png",
+      "meta": {}
+    },
+    "a_2gldg7kind5fcbei": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "ふふふ～",
+        "voice": "A seductive low, breathy young woman's voice. A deeper chest register, smooth and velvety with a breathy, mischievous succubus purr; warm and confident, quick and knowing in delivery, a slight smile in the tone.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-jp"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_2gldg7kind5fcbei.wav",
+      "meta": {
+        "duration": 1.44,
+        "sample_rate": 24000
+      }
+    },
+    "a_6y3l2c5pexcuweca": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "Welcome back, mortals.",
+        "voice": "A seductive low, breathy young woman's voice. A deeper chest register, smooth and velvety with a breathy, mischievous succubus purr; warm and confident, quick and knowing in delivery, a slight smile in the tone.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-jp"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_6y3l2c5pexcuweca.wav",
+      "meta": {
+        "duration": 2.0,
+        "sample_rate": 24000
+      }
+    },
+    "a_bmf7fx543kvz6tvl": {
+      "provider": "align",
+      "type": "visemes",
+      "params": {
+        "dialog": "ふふふ～"
+      },
+      "inputs": [
+        "a_2gldg7kind5fcbei"
+      ],
+      "status": "ready",
+      "uri": "cache://align/a_bmf7fx543kvz6tvl.json",
+      "meta": {
+        "n": 6,
+        "engine": "rhubarb",
+        "shape_set": "preston-blair",
+        "duration": 1.44
+      }
+    },
+    "a_42o7uasryuzyissq": {
+      "provider": "align",
+      "type": "visemes",
+      "params": {
+        "dialog": "Welcome back, mortals."
+      },
+      "inputs": [
+        "a_6y3l2c5pexcuweca"
+      ],
+      "status": "ready",
+      "uri": "cache://align/a_42o7uasryuzyissq.json",
+      "meta": {
+        "n": 13,
+        "engine": "rhubarb",
+        "shape_set": "preston-blair",
+        "duration": 2.0
+      }
+    },
+    "a_lghph2yltf6vqu2v": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "In 2007, some weeaboo degenerate decided they wanted anime girls on their computer.",
+        "voice": "A seductive low, breathy young woman's voice. A deeper chest register, smooth and velvety with a breathy, mischievous succubus purr; warm and confident, quick and knowing in delivery, a slight smile in the tone.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-jp"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_lghph2yltf6vqu2v.wav",
+      "meta": {
+        "duration": 6.08,
+        "sample_rate": 24000
+      }
+    },
+    "a_phftdgrknn3um5jr": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "And so, LuckyMas was born.",
+        "voice": "A seductive low, breathy young woman's voice. A deeper chest register, smooth and velvety with a breathy, mischievous succubus purr; warm and confident, quick and knowing in delivery, a slight smile in the tone.",
+        "emotion": "amused, sly",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-jp"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_phftdgrknn3um5jr.wav",
+      "meta": {
+        "duration": 3.52,
+        "sample_rate": 24000
+      }
+    },
+    "a_xmjupbcbbrifomuy": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "An absolute master class in goonery, unmatched by many.",
+        "voice": "A seductive low, breathy young woman's voice. A deeper chest register, smooth and velvety with a breathy, mischievous succubus purr; warm and confident, quick and knowing in delivery, a slight smile in the tone.",
+        "emotion": "smug, superior",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-jp"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_xmjupbcbbrifomuy.wav",
+      "meta": {
+        "duration": 5.44,
+        "sample_rate": 24000
+      }
+    },
+    "a_rvecqie5iqmzep3h": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "A piece of software with an aura so strong, it becomes a bat signal of your power level.",
+        "voice": "A seductive low, breathy young woman's voice. A deeper chest register, smooth and velvety with a breathy, mischievous succubus purr; warm and confident, quick and knowing in delivery, a slight smile in the tone.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-jp"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_rvecqie5iqmzep3h.wav",
+      "meta": {
+        "duration": 7.12,
+        "sample_rate": 24000
+      }
+    },
+    "a_t6tso4eavbxub5ov": {
+      "provider": "align",
+      "type": "visemes",
+      "params": {
+        "dialog": "In 2007, some weeaboo degenerate decided they wanted anime girls on their computer."
+      },
+      "inputs": [
+        "a_lghph2yltf6vqu2v"
+      ],
+      "status": "ready",
+      "uri": "cache://align/a_t6tso4eavbxub5ov.json",
+      "meta": {
+        "n": 43,
+        "engine": "rhubarb",
+        "shape_set": "preston-blair",
+        "duration": 6.08
+      }
+    },
+    "a_6c5jplxoxhwzylkw": {
+      "provider": "align",
+      "type": "visemes",
+      "params": {
+        "dialog": "And so, LuckyMas was born."
+      },
+      "inputs": [
+        "a_phftdgrknn3um5jr"
+      ],
+      "status": "ready",
+      "uri": "cache://align/a_6c5jplxoxhwzylkw.json",
+      "meta": {
+        "n": 21,
+        "engine": "rhubarb",
+        "shape_set": "preston-blair",
+        "duration": 3.52
+      }
+    },
+    "a_iuyuieeuskl4y3rp": {
+      "provider": "align",
+      "type": "visemes",
+      "params": {
+        "dialog": "An absolute master class in goonery, unmatched by many."
+      },
+      "inputs": [
+        "a_xmjupbcbbrifomuy"
+      ],
+      "status": "ready",
+      "uri": "cache://align/a_iuyuieeuskl4y3rp.json",
+      "meta": {
+        "n": 30,
+        "engine": "rhubarb",
+        "shape_set": "preston-blair",
+        "duration": 5.44
+      }
+    },
+    "a_zdtuwy2i4uqa7dc3": {
+      "provider": "align",
+      "type": "visemes",
+      "params": {
+        "dialog": "A piece of software with an aura so strong, it becomes a bat signal of your power level."
+      },
+      "inputs": [
+        "a_rvecqie5iqmzep3h"
+      ],
+      "status": "ready",
+      "uri": "cache://align/a_zdtuwy2i4uqa7dc3.json",
+      "meta": {
+        "n": 45,
+        "engine": "rhubarb",
+        "shape_set": "preston-blair",
+        "duration": 7.12
+      }
+    },
+    "a_iawv6gj2sw7rut5z": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "ふふふ～",
+        "voice": "A seductive low, breathy young woman's voice. A deeper chest register, smooth and velvety with a breathy, mischievous succubus purr; warm and confident, quick and knowing in delivery, a slight smile in the tone.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-clone",
+        "ref_text": "ふふふ～ ... Welcome back, mortals~ In 2007, some weeaboo degenerate decided they wanted anime girls on their computer. And so, LuckyMas was born. An absolute master class in goonery, unmatched by many. A piece of software with an aura so strong, it becomes a bat signal of your power level."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_iawv6gj2sw7rut5z.wav",
+      "meta": {
+        "duration": 1.12,
+        "sample_rate": 24000
+      }
+    },
+    "a_msxdpdc2rkrn7zbu": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "Welcome back, mortals.",
+        "voice": "A seductive low, breathy young woman's voice. A deeper chest register, smooth and velvety with a breathy, mischievous succubus purr; warm and confident, quick and knowing in delivery, a slight smile in the tone.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-clone",
+        "ref_text": "ふふふ～ ... Welcome back, mortals~ In 2007, some weeaboo degenerate decided they wanted anime girls on their computer. And so, LuckyMas was born. An absolute master class in goonery, unmatched by many. A piece of software with an aura so strong, it becomes a bat signal of your power level."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_msxdpdc2rkrn7zbu.wav",
+      "meta": {
+        "duration": 1.52,
+        "sample_rate": 24000
+      }
+    },
+    "a_37eu3zcgtojov6ja": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "In 2007, some weeaboo degenerate decided they wanted anime girls on their computer.",
+        "voice": "A seductive low, breathy young woman's voice. A deeper chest register, smooth and velvety with a breathy, mischievous succubus purr; warm and confident, quick and knowing in delivery, a slight smile in the tone.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-clone",
+        "ref_text": "ふふふ～ ... Welcome back, mortals~ In 2007, some weeaboo degenerate decided they wanted anime girls on their computer. And so, LuckyMas was born. An absolute master class in goonery, unmatched by many. A piece of software with an aura so strong, it becomes a bat signal of your power level."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_37eu3zcgtojov6ja.wav",
+      "meta": {
+        "duration": 6.08,
+        "sample_rate": 24000
+      }
+    },
+    "a_2xdb2foapam5znb5": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "And so, LuckyMas was born.",
+        "voice": "A seductive low, breathy young woman's voice. A deeper chest register, smooth and velvety with a breathy, mischievous succubus purr; warm and confident, quick and knowing in delivery, a slight smile in the tone.",
+        "emotion": "amused, sly",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-clone",
+        "ref_text": "ふふふ～ ... Welcome back, mortals~ In 2007, some weeaboo degenerate decided they wanted anime girls on their computer. And so, LuckyMas was born. An absolute master class in goonery, unmatched by many. A piece of software with an aura so strong, it becomes a bat signal of your power level."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_2xdb2foapam5znb5.wav",
+      "meta": {
+        "duration": 2.48,
+        "sample_rate": 24000
+      }
+    },
+    "a_llyz5cuh67juov3x": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "An absolute master class in goonery, unmatched by many.",
+        "voice": "A seductive low, breathy young woman's voice. A deeper chest register, smooth and velvety with a breathy, mischievous succubus purr; warm and confident, quick and knowing in delivery, a slight smile in the tone.",
+        "emotion": "smug, superior",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-clone",
+        "ref_text": "ふふふ～ ... Welcome back, mortals~ In 2007, some weeaboo degenerate decided they wanted anime girls on their computer. And so, LuckyMas was born. An absolute master class in goonery, unmatched by many. A piece of software with an aura so strong, it becomes a bat signal of your power level."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_llyz5cuh67juov3x.wav",
+      "meta": {
+        "duration": 4.64,
+        "sample_rate": 24000
+      }
+    },
+    "a_ubqiydyldeteygep": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "A piece of software with an aura so strong, it becomes a bat signal of your power level.",
+        "voice": "A seductive low, breathy young woman's voice. A deeper chest register, smooth and velvety with a breathy, mischievous succubus purr; warm and confident, quick and knowing in delivery, a slight smile in the tone.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-clone",
+        "ref_text": "ふふふ～ ... Welcome back, mortals~ In 2007, some weeaboo degenerate decided they wanted anime girls on their computer. And so, LuckyMas was born. An absolute master class in goonery, unmatched by many. A piece of software with an aura so strong, it becomes a bat signal of your power level."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_ubqiydyldeteygep.wav",
+      "meta": {
+        "duration": 6.24,
+        "sample_rate": 24000
+      }
+    },
+    "a_agsa3rkrt5jlmstk": {
+      "provider": "align",
+      "type": "visemes",
+      "params": {
+        "dialog": "ふふふ～"
+      },
+      "inputs": [
+        "a_iawv6gj2sw7rut5z"
+      ],
+      "status": "ready",
+      "uri": "cache://align/a_agsa3rkrt5jlmstk.json",
+      "meta": {
+        "n": 6,
+        "engine": "rhubarb",
+        "shape_set": "preston-blair",
+        "duration": 1.12
+      }
+    },
+    "a_dw5nvkqntjjdtwki": {
+      "provider": "align",
+      "type": "visemes",
+      "params": {
+        "dialog": "Welcome back, mortals."
+      },
+      "inputs": [
+        "a_msxdpdc2rkrn7zbu"
+      ],
+      "status": "ready",
+      "uri": "cache://align/a_dw5nvkqntjjdtwki.json",
+      "meta": {
+        "n": 14,
+        "engine": "rhubarb",
+        "shape_set": "preston-blair",
+        "duration": 1.52
+      }
+    },
+    "a_sz2yea4iy5bwb27z": {
+      "provider": "align",
+      "type": "visemes",
+      "params": {
+        "dialog": "In 2007, some weeaboo degenerate decided they wanted anime girls on their computer."
+      },
+      "inputs": [
+        "a_37eu3zcgtojov6ja"
+      ],
+      "status": "ready",
+      "uri": "cache://align/a_sz2yea4iy5bwb27z.json",
+      "meta": {
+        "n": 40,
+        "engine": "rhubarb",
+        "shape_set": "preston-blair",
+        "duration": 6.08
+      }
+    },
+    "a_gr2pcbrrs4vq5f46": {
+      "provider": "align",
+      "type": "visemes",
+      "params": {
+        "dialog": "And so, LuckyMas was born."
+      },
+      "inputs": [
+        "a_2xdb2foapam5znb5"
+      ],
+      "status": "ready",
+      "uri": "cache://align/a_gr2pcbrrs4vq5f46.json",
+      "meta": {
+        "n": 16,
+        "engine": "rhubarb",
+        "shape_set": "preston-blair",
+        "duration": 2.48
+      }
+    },
+    "a_3cvmwbxirsmgmdic": {
+      "provider": "align",
+      "type": "visemes",
+      "params": {
+        "dialog": "An absolute master class in goonery, unmatched by many."
+      },
+      "inputs": [
+        "a_llyz5cuh67juov3x"
+      ],
+      "status": "ready",
+      "uri": "cache://align/a_3cvmwbxirsmgmdic.json",
+      "meta": {
+        "n": 30,
+        "engine": "rhubarb",
+        "shape_set": "preston-blair",
+        "duration": 4.64
+      }
+    },
+    "a_bf3h2zq5krly6tgp": {
+      "provider": "align",
+      "type": "visemes",
+      "params": {
+        "dialog": "A piece of software with an aura so strong, it becomes a bat signal of your power level."
+      },
+      "inputs": [
+        "a_ubqiydyldeteygep"
+      ],
+      "status": "ready",
+      "uri": "cache://align/a_bf3h2zq5krly6tgp.json",
+      "meta": {
+        "n": 43,
+        "engine": "rhubarb",
+        "shape_set": "preston-blair",
+        "duration": 6.24
+      }
+    }
+  },
+  "tracks": [
+    {
+      "id": "tk_av",
+      "name": "Host",
+      "kind": "video",
+      "rows": [
+        "r_av"
+      ]
+    },
+    {
+      "id": "tk_bg",
+      "name": "Background",
+      "kind": "video",
+      "rows": [
+        "r_bg"
+      ]
+    },
+    {
+      "id": "tk_vo",
+      "name": "Narration",
+      "kind": "audio",
+      "rows": [
+        "r_vo"
+      ]
+    }
+  ],
+  "rows": {
+    "r_av": {
+      "type": "avatar",
+      "name": "Gemma",
+      "params": {
+        "rig": "gemma-pngtuber",
+        "driven_by": "r_vo"
+      },
+      "clips": [
+        "c_av_giggle",
+        "c_av_line",
+        "c_av3",
+        "c_av4",
+        "c_av5",
+        "c_av6"
+      ]
+    },
+    "r_bg": {
+      "type": "image",
+      "name": "Background",
+      "params": {},
+      "clips": [
+        "c_bg"
+      ]
+    },
+    "r_vo": {
+      "type": "tts",
+      "name": "Gemma VO",
+      "params": {
+        "voice_preset": "gemma-san-deep-clone"
+      },
+      "clips": [
+        "c_giggle",
+        "c_line",
+        "c_s3",
+        "c_s4",
+        "c_s5",
+        "c_s6"
+      ]
+    }
+  },
+  "clips": {
+    "c_bg": {
+      "row": "r_bg",
+      "start": 0.0,
+      "dur": 24.96,
+      "asset": "bg_day",
+      "params": {
+        "saturation": 0.95
+      },
+      "notes": "canon day room; the purple host pops + integration grades her in",
+      "transform": {
+        "pos": [
+          0,
+          0
+        ],
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "rot": 0,
+        "opacity": 1,
+        "anchor": [
+          0.5,
+          0.5
+        ]
+      }
+    },
+    "c_giggle": {
+      "row": "r_vo",
+      "start": 0.0,
+      "dur": 1.12,
+      "params": {
+        "text": "ふふふ～",
+        "emotion": "smug, teasing",
+        "voice_preset": "gemma-san-deep-clone"
+      },
+      "notes": "the giggle (romaji laugh); own clip + intonation",
+      "transform": {
+        "pos": [
+          0,
+          0
+        ],
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "rot": 0,
+        "opacity": 1,
+        "anchor": [
+          0.5,
+          0.5
+        ]
+      },
+      "asset": "a_iawv6gj2sw7rut5z"
+    },
+    "c_line": {
+      "row": "r_vo",
+      "start": 1.6,
+      "dur": 1.52,
+      "params": {
+        "text": "Welcome back, mortals.",
+        "emotion": "smug, teasing",
+        "voice_preset": "gemma-san-deep-clone"
+      },
+      "notes": "the greeting; own clip + intonation",
+      "transform": {
+        "pos": [
+          0,
+          0
+        ],
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "rot": 0,
+        "opacity": 1,
+        "anchor": [
+          0.5,
+          0.5
+        ]
+      },
+      "asset": "a_msxdpdc2rkrn7zbu"
+    },
+    "c_av_giggle": {
+      "row": "r_av",
+      "start": 0.0,
+      "dur": 1.6,
+      "params": {
+        "emotion": "smug"
+      },
+      "notes": "host CLOSE during the giggle then back — keyframed scale (spring)",
+      "transform": {
+        "pos": [
+          0,
+          30
+        ],
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "rot": 0,
+        "opacity": 1,
+        "anchor": [
+          0.5,
+          0.5
+        ]
+      },
+      "keyframes": {
+        "transform.scale": [
+          {
+            "t": 0.0,
+            "v": [
+              1.0,
+              1.0
+            ]
+          },
+          {
+            "t": 0.95,
+            "v": [
+              1.5,
+              1.5
+            ],
+            "interp": "spring",
+            "spring": {
+              "stiffness": 280,
+              "damping": 20
+            }
+          },
+          {
+            "t": 1.6,
+            "v": [
+              1.0,
+              1.0
+            ],
+            "interp": "spring",
+            "spring": {
+              "stiffness": 240,
+              "damping": 24
+            }
+          }
+        ]
+      },
+      "asset": "a_agsa3rkrt5jlmstk"
+    },
+    "c_av_line": {
+      "row": "r_av",
+      "start": 1.6,
+      "dur": 1.72,
+      "params": {
+        "emotion": "smug"
+      },
+      "notes": "host at rest, greeting",
+      "transform": {
+        "pos": [
+          0,
+          30
+        ],
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "rot": 0,
+        "opacity": 1,
+        "anchor": [
+          0.5,
+          0.5
+        ]
+      },
+      "asset": "a_dw5nvkqntjjdtwki"
+    },
+    "c_s3": {
+      "row": "r_vo",
+      "start": 3.32,
+      "dur": 6.08,
+      "params": {
+        "text": "In 2007, some weeaboo degenerate decided they wanted anime girls on their computer.",
+        "emotion": "smug, teasing",
+        "voice_preset": "gemma-san-deep-clone"
+      },
+      "transform": {
+        "pos": [
+          0,
+          0
+        ],
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "rot": 0,
+        "opacity": 1,
+        "anchor": [
+          0.5,
+          0.5
+        ]
+      },
+      "asset": "a_37eu3zcgtojov6ja"
+    },
+    "c_av3": {
+      "row": "r_av",
+      "start": 3.32,
+      "dur": 6.28,
+      "params": {
+        "emotion": "smug"
+      },
+      "transform": {
+        "pos": [
+          0,
+          30
+        ],
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "rot": 0,
+        "opacity": 1,
+        "anchor": [
+          0.5,
+          0.5
+        ]
+      },
+      "asset": "a_sz2yea4iy5bwb27z"
+    },
+    "c_s4": {
+      "row": "r_vo",
+      "start": 9.6,
+      "dur": 2.48,
+      "params": {
+        "text": "And so, LuckyMas was born.",
+        "emotion": "amused, sly",
+        "voice_preset": "gemma-san-deep-clone"
+      },
+      "transform": {
+        "pos": [
+          0,
+          0
+        ],
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "rot": 0,
+        "opacity": 1,
+        "anchor": [
+          0.5,
+          0.5
+        ]
+      },
+      "asset": "a_2xdb2foapam5znb5"
+    },
+    "c_av4": {
+      "row": "r_av",
+      "start": 9.6,
+      "dur": 2.68,
+      "params": {
+        "emotion": "happy"
+      },
+      "transform": {
+        "pos": [
+          0,
+          30
+        ],
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "rot": 0,
+        "opacity": 1,
+        "anchor": [
+          0.5,
+          0.5
+        ]
+      },
+      "asset": "a_gr2pcbrrs4vq5f46"
+    },
+    "c_s5": {
+      "row": "r_vo",
+      "start": 12.28,
+      "dur": 4.64,
+      "params": {
+        "text": "An absolute master class in goonery, unmatched by many.",
+        "emotion": "smug, superior",
+        "voice_preset": "gemma-san-deep-clone"
+      },
+      "transform": {
+        "pos": [
+          0,
+          0
+        ],
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "rot": 0,
+        "opacity": 1,
+        "anchor": [
+          0.5,
+          0.5
+        ]
+      },
+      "asset": "a_llyz5cuh67juov3x"
+    },
+    "c_av5": {
+      "row": "r_av",
+      "start": 12.28,
+      "dur": 4.84,
+      "params": {
+        "emotion": "smug"
+      },
+      "transform": {
+        "pos": [
+          0,
+          30
+        ],
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "rot": 0,
+        "opacity": 1,
+        "anchor": [
+          0.5,
+          0.5
+        ]
+      },
+      "asset": "a_3cvmwbxirsmgmdic"
+    },
+    "c_s6": {
+      "row": "r_vo",
+      "start": 17.12,
+      "dur": 6.24,
+      "params": {
+        "text": "A piece of software with an aura so strong, it becomes a bat signal of your power level.",
+        "emotion": "smug, teasing",
+        "voice_preset": "gemma-san-deep-clone"
+      },
+      "transform": {
+        "pos": [
+          0,
+          0
+        ],
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "rot": 0,
+        "opacity": 1,
+        "anchor": [
+          0.5,
+          0.5
+        ]
+      },
+      "asset": "a_ubqiydyldeteygep"
+    },
+    "c_av6": {
+      "row": "r_av",
+      "start": 17.12,
+      "dur": 6.84,
+      "params": {
+        "emotion": "surprised"
+      },
+      "transform": {
+        "pos": [
+          0,
+          30
+        ],
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "rot": 0,
+        "opacity": 1,
+        "anchor": [
+          0.5,
+          0.5
+        ]
+      },
+      "asset": "a_bf3h2zq5krly6tgp"
+    }
+  }
+}

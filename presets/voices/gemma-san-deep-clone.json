@@ -1,0 +1,11 @@
+{
+  "schema": "slopstudio.voice/1",
+  "name": "gemma-san-deep-clone",
+  "provider": "tts",
+  "voice": "A seductive low, breathy young woman's voice. A deeper chest register, smooth and velvety with a breathy, mischievous succubus purr; warm and confident, quick and knowing in delivery, a slight smile in the tone.",
+  "language": "English",
+  "seed": 7,
+  "description": "CLONE of the golden fufu-lab intro generation (a_rw74d7mzm6y5fqfw) — locks the timbre so it is IDENTICAL across clips (fixes VoiceDesign's per-call drift). Ref is the committed golden intro line.",
+  "ref": "gemma-san-deep-clone.ref.wav",
+  "ref_text": "ふふふ～ ... Welcome back, mortals~ In 2007, some weeaboo degenerate decided they wanted anime girls on their computer. And so, LuckyMas was born. An absolute master class in goonery, unmatched by many. A piece of software with an aura so strong, it becomes a bat signal of your power level."
+}

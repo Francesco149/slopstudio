@@ -1,0 +1,1186 @@
+{
+  "schema": "slopstudio.project/1",
+  "meta": {
+    "title": "Fufu Lab — golden catchphrase exploration",
+    "fps": 60,
+    "resolution": [
+      1920,
+      1080
+    ],
+    "sample_rate": 48000,
+    "notes": "A hand-tweakable lab for Gemma-san's smug 'fufu~' catchphrase. The host's gemma-san-deep voice is CLONE mode (stable timbre, but it DROPS per-line emotion → monotone), so the catchphrase wants its own DESIGN-mode clip: the row carries a smug `voice` instruct and NO voice_preset (no ref clip → VoiceDesign derives the delivery from voice+emotion). Each clip is a candidate spelling — the TTS reads the hiragana ふふ as a generic LAUGH, so these use phonetic/romaji spellings to get a deliberate, emphasized chuckle. Workflow: scrub or select a clip → Generate → audition (Play) → tweak `text`/`voice`/`emotion`/`seed` and re-Generate. When you find the golden one, bake it to a preset ref with tools/bake-voice-ref.py (clone it for a stable catchphrase) or keep the design clip. Design mode drifts timbre per call (seed), so lock the seed once you like one."
+  },
+  "assets": {
+    "a_45xsa4ow64xw5j7r": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "Fufu~",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_45xsa4ow64xw5j7r.wav",
+      "meta": {
+        "duration": 0.72,
+        "sample_rate": 24000
+      }
+    },
+    "a_tx3kps6cl6ocov2l": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "Fu... fu~",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, knowing",
+        "seed": 7,
+        "language": "English"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_tx3kps6cl6ocov2l.wav",
+      "meta": {
+        "duration": 2.48,
+        "sample_rate": 24000
+      }
+    },
+    "a_nu4ialre2eqt3fd7": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "Fufufu~",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "amused, sly",
+        "seed": 7,
+        "language": "English"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_nu4ialre2eqt3fd7.wav",
+      "meta": {
+        "duration": 1.28,
+        "sample_rate": 24000
+      }
+    },
+    "a_navkyo5hnbijhb45": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "Hehe~",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "teasing, playful",
+        "seed": 7,
+        "language": "English"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_navkyo5hnbijhb45.wav",
+      "meta": {
+        "duration": 1.52,
+        "sample_rate": 24000
+      }
+    },
+    "a_wfo2q4mhfdn3fkey": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "Mm, fufu~",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, breathy",
+        "seed": 7,
+        "language": "English"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_wfo2q4mhfdn3fkey.wav",
+      "meta": {
+        "duration": 2.4,
+        "sample_rate": 24000
+      }
+    },
+    "a_t6pdvfyn3nt36jbb": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "Fu~fu~",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "confident, smug",
+        "seed": 7,
+        "language": "English"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_t6pdvfyn3nt36jbb.wav",
+      "meta": {
+        "duration": 1.2,
+        "sample_rate": 24000
+      }
+    },
+    "a_dcfzzc66qaol7qia": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "Fufu~",
+        "voice": "A short, smug exhale of a laugh through the nose — held-back, knowing, amused superiority with a sly half-smile; breathy and low, a teasing 'fufu', NOT an open laugh.",
+        "emotion": "smug, superior",
+        "seed": 7,
+        "language": "English"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_dcfzzc66qaol7qia.wav",
+      "meta": {
+        "duration": 0.88,
+        "sample_rate": 24000
+      }
+    },
+    "a_f4ibvzqi3skcaik2": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "Fufufu~",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "amused, sly",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_f4ibvzqi3skcaik2.wav",
+      "meta": {
+        "duration": 1.12,
+        "sample_rate": 24000
+      }
+    },
+    "a_dpr6petjgyv3hsq7": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "Mm, fufu~",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, breathy",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_dpr6petjgyv3hsq7.wav",
+      "meta": {
+        "duration": 1.68,
+        "sample_rate": 24000
+      }
+    },
+    "a_3ygfhdrnqcb3gfdi": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "Fu... fu~",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, knowing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_3ygfhdrnqcb3gfdi.wav",
+      "meta": {
+        "duration": 1.84,
+        "sample_rate": 24000
+      }
+    },
+    "a_jyl2gmguamh6rvyu": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "Fufufufu~",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "amused, sly",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_jyl2gmguamh6rvyu.wav",
+      "meta": {
+        "duration": 1.2,
+        "sample_rate": 24000
+      }
+    },
+    "a_ldsebytuq5cfivaa": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "Hehe, fufu~",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, breathy",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_ldsebytuq5cfivaa.wav",
+      "meta": {
+        "duration": 1.6,
+        "sample_rate": 24000
+      }
+    },
+    "a_e7kzgkwv4otcgp2k": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "Hehe, fufu?",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, breathy",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_e7kzgkwv4otcgp2k.wav",
+      "meta": {
+        "duration": 1.44,
+        "sample_rate": 24000
+      }
+    },
+    "a_qpnmhp5fekbcnif2": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "Hehe, fufu!",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, breathy",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_qpnmhp5fekbcnif2.wav",
+      "meta": {
+        "duration": 1.84,
+        "sample_rate": 24000
+      }
+    },
+    "a_czgzshdczqswwvvy": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "Fu~fu~",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "confident, smug",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_czgzshdczqswwvvy.wav",
+      "meta": {
+        "duration": 0.8,
+        "sample_rate": 24000
+      }
+    },
+    "a_p5hqgfvilbflh2j5": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "Fufu~",
+        "voice": "A short, smug exhale of a laugh through the nose — held-back, knowing, amused superiority with a sly half-smile; breathy and low, a teasing 'fufu', NOT an open laugh.",
+        "emotion": "smug, superior",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_p5hqgfvilbflh2j5.wav",
+      "meta": {
+        "duration": 0.8,
+        "sample_rate": 24000
+      }
+    },
+    "a_t4jw4nemsss2rmjh": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "Hmm, fufu!",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, breathy",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_t4jw4nemsss2rmjh.wav",
+      "meta": {
+        "duration": 1.84,
+        "sample_rate": 24000
+      }
+    },
+    "a_v3efyhjrgv5s6xwi": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "Fufu~",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_v3efyhjrgv5s6xwi.wav",
+      "meta": {
+        "duration": 0.8,
+        "sample_rate": 24000
+      }
+    },
+    "a_2itaf4ft7ls5nxam": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "Fufufu~",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_2itaf4ft7ls5nxam.wav",
+      "meta": {
+        "duration": 1.12,
+        "sample_rate": 24000
+      }
+    },
+    "a_gfpqlfhocnrvgdod": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "Fu~ fufu~",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_gfpqlfhocnrvgdod.wav",
+      "meta": {
+        "duration": 0.88,
+        "sample_rate": 24000
+      }
+    },
+    "a_awv5kbzs5jbdvuee": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "Fu. fufu~",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_awv5kbzs5jbdvuee.wav",
+      "meta": {
+        "duration": 0.96,
+        "sample_rate": 24000
+      }
+    },
+    "a_d24tnsolm6xdwpil": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "Fufufufu~",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_d24tnsolm6xdwpil.wav",
+      "meta": {
+        "duration": 1.2,
+        "sample_rate": 24000
+      }
+    },
+    "a_qrku4y3hops4a65g": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "Oh you sweet little nugget, Fufufufu~",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_qrku4y3hops4a65g.wav",
+      "meta": {
+        "duration": 3.04,
+        "sample_rate": 24000
+      }
+    },
+    "a_oybia3ikgvh5bqv6": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "Oh you sweet little nugget, Huhu~",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_oybia3ikgvh5bqv6.wav",
+      "meta": {
+        "duration": 3.04,
+        "sample_rate": 24000
+      }
+    },
+    "a_67d7xnz66mtbnz6a": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "Oh you sweet little nugget, fufu~",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_67d7xnz66mtbnz6a.wav",
+      "meta": {
+        "duration": 2.72,
+        "sample_rate": 24000
+      }
+    },
+    "a_bee47rxlbd2yriob": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "You're so cute when you try so hard, fufu~",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_bee47rxlbd2yriob.wav",
+      "meta": {
+        "duration": 3.04,
+        "sample_rate": 24000
+      }
+    },
+    "a_ikqytkt6q6rcgenv": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "You're so cute when you're desperate, fufu~",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing, superior",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_ikqytkt6q6rcgenv.wav",
+      "meta": {
+        "duration": 2.96,
+        "sample_rate": 24000
+      }
+    },
+    "a_rgcli6rhegyvbkbl": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "You're so cute when you're desperate. fufu!",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing, superior",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_rgcli6rhegyvbkbl.wav",
+      "meta": {
+        "duration": 2.96,
+        "sample_rate": 24000
+      }
+    },
+    "a_f4fpb5hfsssau4sc": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "You're so cute when you're desperate. fufu!",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing, seductive",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_f4fpb5hfsssau4sc.wav",
+      "meta": {
+        "duration": 2.96,
+        "sample_rate": 24000
+      }
+    },
+    "a_fpddemqshtmkruz3": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "You're so cute when you're desperate. fufu!",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "seductive",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_fpddemqshtmkruz3.wav",
+      "meta": {
+        "duration": 2.96,
+        "sample_rate": 24000
+      }
+    },
+    "a_z4ixfthkj5hnwx6m": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "You're so cute when you're desperate. fufu!",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_z4ixfthkj5hnwx6m.wav",
+      "meta": {
+        "duration": 2.96,
+        "sample_rate": 24000
+      }
+    },
+    "a_e4hmns6mvkmickd7": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "You're so cute when you're desperate. fufu~",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "seductive",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_e4hmns6mvkmickd7.wav",
+      "meta": {
+        "duration": 3.2,
+        "sample_rate": 24000
+      }
+    },
+    "a_n5cbagdwtdblm7vc": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "\"You're so cute when you're desperate. fufu~\" I said smugly",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_n5cbagdwtdblm7vc.wav",
+      "meta": {
+        "duration": 5.04,
+        "sample_rate": 24000
+      }
+    },
+    "a_cgzxuaklmfjkk66v": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "\"Oh my little nugget, you're so cute when you're struggling, fufu~\" I said smugly",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_cgzxuaklmfjkk66v.wav",
+      "meta": {
+        "duration": 5.76,
+        "sample_rate": 24000
+      }
+    },
+    "a_cftoogixvuahqb4a": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "Oh my little nugget, you're so cute when you're struggling, fufu~",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_cftoogixvuahqb4a.wav",
+      "meta": {
+        "duration": 4.0,
+        "sample_rate": 24000
+      }
+    },
+    "a_niu6m7ydljg3rowr": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "苦戦してる時の君ってすごく可愛いね、ふふ～",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_niu6m7ydljg3rowr.wav",
+      "meta": {
+        "duration": 3.92,
+        "sample_rate": 24000
+      }
+    },
+    "a_tu7rlj5gvkxmgb4s": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "苦戦してる時の君ってすごく可愛いね、ふふふふ～",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_tu7rlj5gvkxmgb4s.wav",
+      "meta": {
+        "duration": 5.12,
+        "sample_rate": 24000
+      }
+    },
+    "a_k5a3eih3i53hzrho": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "ふふふふ～",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_k5a3eih3i53hzrho.wav",
+      "meta": {
+        "duration": 2.08,
+        "sample_rate": 24000
+      }
+    },
+    "a_eeiihbwjhkis47fq": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "ふふふ～、もがいている姿がとっても可愛いね。",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_eeiihbwjhkis47fq.wav",
+      "meta": {
+        "duration": 4.8,
+        "sample_rate": 24000
+      }
+    },
+    "a_wc6tbzybuuqxn6oi": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "もがいている姿、とっても可愛いね。ふふふ",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-jp"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_wc6tbzybuuqxn6oi.wav",
+      "meta": {
+        "duration": 11.12,
+        "sample_rate": 24000
+      }
+    },
+    "a_ft42omkwdl5xry3c": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "You're so cute when you struggle, fufu~",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-jp"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_ft42omkwdl5xry3c.wav",
+      "meta": {
+        "duration": 2.8,
+        "sample_rate": 24000
+      }
+    },
+    "a_ulotznpgchjffjae": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "You're so cute when you struggle, ふふふ～",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-jp"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_ulotznpgchjffjae.wav",
+      "meta": {
+        "duration": 3.2,
+        "sample_rate": 24000
+      }
+    },
+    "a_au2v6fjl5szizbum": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "ふふふ～ もがいている君はとっても可愛いね。もしかしたら食べちゃうかも。",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-jp"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_au2v6fjl5szizbum.wav",
+      "meta": {
+        "duration": 8.08,
+        "sample_rate": 24000
+      }
+    },
+    "a_5shuenngqpomwrat": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "ふふふ～ もがいている君はとっても可愛いね。もしかしたら食べちゃうかも。",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-jp",
+        "ref_text": "ふふふ～ もがいている君はとっても可愛いね。もしかしたら食べちゃうかも。"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_5shuenngqpomwrat.wav",
+      "meta": {
+        "duration": 6.48,
+        "sample_rate": 24000
+      }
+    },
+    "a_tpdflhz6mgpsvvv4": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "ふふふ～ Welcome back my little nuggets.",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-jp",
+        "ref_text": "ふふふ～ もがいている君はとっても可愛いね。もしかしたら食べちゃうかも。"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_tpdflhz6mgpsvvv4.wav",
+      "meta": {
+        "duration": 4.24,
+        "sample_rate": 24000
+      }
+    },
+    "a_wxoxt6dkwlp2ik2w": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "ふふふ～ Welcome back my little nuggets.",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-jp"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_wxoxt6dkwlp2ik2w.wav",
+      "meta": {
+        "duration": 4.88,
+        "sample_rate": 24000
+      }
+    },
+    "a_am7gi55x4t2764kr": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "ふふふ～ Welcome back my little nuggets. What's on the menu today?",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-jp"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_am7gi55x4t2764kr.wav",
+      "meta": {
+        "duration": 6.56,
+        "sample_rate": 24000
+      }
+    },
+    "a_zzozcs7qzrlf67zc": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "ふふふ～ Welcome back my little nuggets~",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-jp"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_zzozcs7qzrlf67zc.wav",
+      "meta": {
+        "duration": 4.64,
+        "sample_rate": 24000
+      }
+    },
+    "a_lsybfpr3ekli5ock": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "ふふふ～おかえりなさい、ちっぽけな人間たちよ。",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-jp",
+        "ref_text": "40ふふふ～おかえりなさい、ちっぽけな人間たちよ。"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_lsybfpr3ekli5ock.wav",
+      "meta": {
+        "duration": 5.76,
+        "sample_rate": 24000
+      }
+    },
+    "a_utdod52e73gbeovw": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "ふふふ～ welcome back, mortals.",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-jp",
+        "ref_text": "40ふふふ～おかえりなさい、ちっぽけな人間たちよ。"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_utdod52e73gbeovw.wav",
+      "meta": {
+        "duration": 4.4,
+        "sample_rate": 24000
+      }
+    },
+    "a_yzhwzccmemnx524i": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "ふふふ～ welcome back, mortals. In 2007, some weeaboo degenerate decided they wanted anime girls on their computer. And so, LuckyMas was born. An absolute master class in goonery, unmatched by many.",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-jp",
+        "ref_text": "40ふふふ～おかえりなさい、ちっぽけな人間たちよ。"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_yzhwzccmemnx524i.wav",
+      "meta": {
+        "duration": 17.04,
+        "sample_rate": 24000
+      }
+    },
+    "a_xwto4fjqnr53mglg": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "ふふふ～ ... Welcome back, mortals. In 2007, some weeaboo degenerate decided they wanted anime girls on their computer. And so, LuckyMas was born. An absolute master class in goonery, unmatched by many.",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-jp",
+        "ref_text": "40ふふふ～おかえりなさい、ちっぽけな人間たちよ。"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_xwto4fjqnr53mglg.wav",
+      "meta": {
+        "duration": 18.16,
+        "sample_rate": 24000
+      }
+    },
+    "a_spnqs7dmgg4fiwiz": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "ふふふ～ ... Welcome back, mortals. In 2007, some weeaboo degenerate decided they wanted anime girls on their computer. And so, LuckyMas was born. An absolute master class in goonery, unmatched by many. A piece of software with an aura so strong, it becomes a bat signal of your power level.",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-jp",
+        "ref_text": "40ふふふ～おかえりなさい、ちっぽけな人間たちよ。"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_spnqs7dmgg4fiwiz.wav",
+      "meta": {
+        "duration": 25.84,
+        "sample_rate": 24000
+      }
+    },
+    "a_zzlvxwl54zu33brc": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "ふふふ～ ... Welcome back, mortals. In 2007, some weeaboo degenerate decided they wanted anime girls on their computer. And so, LuckyMas was born. An absolute master class in goonery, unmatched by many. A piece of software with an aura so strong, it becomes a bat signal of your power level.",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_zzlvxwl54zu33brc.wav",
+      "meta": {
+        "duration": 20.32,
+        "sample_rate": 24000
+      }
+    },
+    "a_465icc3zlwi5ksau": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "ふふふ～ ... Welcome back, mortals.",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep",
+        "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_465icc3zlwi5ksau.wav",
+      "meta": {
+        "duration": 3.36,
+        "sample_rate": 24000
+      }
+    },
+    "a_u4rmhcwzkgz67olz": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "ふふふ～ ... Welcome back, mortals. In 2007, some weeaboo degenerate decided they wanted anime girls on their computer. And so, LuckyMas was born. An absolute master class in goonery, unmatched by many. A piece of software with an aura so strong, it becomes a bat signal of your power level.",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-jp"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_u4rmhcwzkgz67olz.wav",
+      "meta": {
+        "duration": 23.36,
+        "sample_rate": 24000
+      }
+    },
+    "a_rw74d7mzm6y5fqfw": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "ふふふ～ ... Welcome back, mortals~ In 2007, some weeaboo degenerate decided they wanted anime girls on their computer. And so, LuckyMas was born. An absolute master class in goonery, unmatched by many. A piece of software with an aura so strong, it becomes a bat signal of your power level.",
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-jp"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_rw74d7mzm6y5fqfw.wav",
+      "meta": {
+        "duration": 23.84,
+        "sample_rate": 24000
+      }
+    }
+  },
+  "tracks": [
+    {
+      "id": "tk_fufu",
+      "name": "Fufu",
+      "kind": "audio",
+      "rows": [
+        "r_fufu"
+      ]
+    }
+  ],
+  "rows": {
+    "r_fufu": {
+      "type": "tts",
+      "name": "Fufu candidates",
+      "params": {
+        "voice": "A low, breathy, smug young woman — a teasing, knowing chuckle with a sly smile and a touch of seduction; emphasized and confident, amused but composed, almost a soft 'hehe' — NOT an open laugh.",
+        "language": "English",
+        "seed": 7
+      },
+      "clips": [
+        "c_f1"
+      ]
+    }
+  },
+  "clips": {
+    "c_f1": {
+      "row": "r_fufu",
+      "start": 0.0,
+      "dur": 23.84,
+      "asset": "a_rw74d7mzm6y5fqfw",
+      "params": {
+        "text": "ふふふ～ ... Welcome back, mortals~ In 2007, some weeaboo degenerate decided they wanted anime girls on their computer. And so, LuckyMas was born. An absolute master class in goonery, unmatched by many. A piece of software with an aura so strong, it becomes a bat signal of your power level.",
+        "emotion": "smug, teasing",
+        "voice_preset": "gemma-san-deep-jp"
+      },
+      "notes": "plain romaji",
+      "transform": {
+        "pos": [
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "rot": 0.0,
+        "opacity": 1.0,
+        "anchor": [
+          0.5,
+          0.5
+        ]
+      }
+    }
+  }
+}

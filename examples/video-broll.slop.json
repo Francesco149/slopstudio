@@ -1,0 +1,148 @@
+{
+  "meta": {
+    "title": "Video B-roll — in-process decode",
+    "resolution": [
+      1920,
+      1080
+    ],
+    "fps": 60,
+    "vignette": 0.35,
+    "notes": "Self-demo of the IN-PROCESS video decode path: the `video` clip points straight at an mp4 (assets-src/luckymas-crt.mp4) and the editor decodes frames on demand with libav (avformat seek + avcodec decode + swscale→RGBA→texture) — NO proxy-extraction step. Scrub 0→12s: the CRT footage advances (boot screen → XP setup wizard) under a lower-third + vignette, with a gentle Ken Burns push-in (keyframes apply to video transform too). The decoder fills fps/frames/dims from the file on first open, so the asset is just `{type:video, uri}`. Identical in preview + export (both walk composite_frame). Setup: none beyond having the source mp4 in assets-src/ (gitignored). `--no-video-decode` forces the legacy JPEG-proxy fallback (needs tools/video-proxy.py)."
+  },
+  "assets": {
+    "vid_crt": {
+      "provider": "external",
+      "type": "video",
+      "status": "ready",
+      "uri": "assets-src/luckymas-crt.mp4",
+      "dur": 12.0,
+      "meta": {}
+    }
+  },
+  "tracks": [
+    {
+      "id": "tk_cap",
+      "name": "Captions",
+      "kind": "video",
+      "rows": [
+        "r_cap"
+      ]
+    },
+    {
+      "id": "tk_video",
+      "name": "Footage",
+      "kind": "video",
+      "rows": [
+        "r_video"
+      ]
+    }
+  ],
+  "rows": {
+    "r_video": {
+      "type": "video",
+      "name": "Footage",
+      "params": {},
+      "clips": [
+        "c_vid1"
+      ]
+    },
+    "r_cap": {
+      "type": "caption",
+      "name": "Captions",
+      "params": {},
+      "clips": [
+        "c_cap1"
+      ]
+    }
+  },
+  "clips": {
+    "c_vid1": {
+      "row": "r_video",
+      "start": 0,
+      "dur": 12,
+      "asset": "vid_crt",
+      "notes": "native 1920x1080 source → scale 1.0 fills the frame (the decoder reports real dims). `in`/`speed`/`loop` retime the source; the scale keyframes are a Ken Burns push over moving footage.",
+      "params": {
+        "in": 0,
+        "speed": 1.0,
+        "loop": false
+      },
+      "transform": {
+        "pos": [
+          0,
+          0
+        ],
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "anchor": [
+          0.5,
+          0.5
+        ],
+        "opacity": 1
+      },
+      "keyframes": {
+        "transform.scale": [
+          {
+            "t": 0,
+            "v": [
+              1.0,
+              1.0
+            ],
+            "interp": "bezier"
+          },
+          {
+            "t": 12,
+            "v": [
+              1.08,
+              1.08
+            ],
+            "interp": "bezier"
+          }
+        ]
+      }
+    },
+    "c_cap1": {
+      "row": "r_cap",
+      "start": 0.4,
+      "dur": 11.2,
+      "notes": "lower-third labelling the new primitive",
+      "params": {
+        "style": "lower_third",
+        "text": "in-process video decode",
+        "sub": "libav · decoded live from the mp4 · scrub me — it moves",
+        "align": "left"
+      },
+      "transform": {
+        "pos": [
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1
+        ],
+        "anchor": [
+          0.5,
+          0.5
+        ],
+        "opacity": 1
+      },
+      "keyframes": {
+        "transform.opacity": [
+          {
+            "t": 0.4,
+            "v": 0,
+            "interp": "linear"
+          },
+          {
+            "t": 1.0,
+            "v": 1,
+            "interp": "linear"
+          }
+        ]
+      }
+    }
+  }
+}

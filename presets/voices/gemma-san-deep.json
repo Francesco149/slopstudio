@@ -1,0 +1,11 @@
+{
+  "schema": "slopstudio.voice/1",
+  "name": "gemma-san-deep",
+  "provider": "tts",
+  "voice": "A seductive low, breathy young woman's voice. A deeper chest register, smooth and velvety with a breathy, mischievous succubus purr; warm and confident, unhurried and knowing in delivery, a slow smile in the tone.",
+  "language": "English",
+  "seed": 7,
+  "description": "Authored in the editor's voice preset editor.",
+  "ref": "gemma-san-deep.ref.wav",
+  "ref_text": "Fufu~ welcome back, darling. Today we are breaking a game older than some of you, and I intend to enjoy every single second of it."
+}

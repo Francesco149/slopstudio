@@ -1,0 +1,101 @@
+# ── secrets / local config — NEVER commit credentials ──────────────────────
+# slopstudio is MIT + open source. Real endpoints + API keys live in config.toml
+# (copied from config.example.toml) and are machine-specific. Keep them out of git.
+config.toml
+config.local.toml
+*.local.toml
+.env
+.env.*
+*.key
+*.pem
+secrets/
+*.secret
+
+# ── build artifacts ────────────────────────────────────────────────────────
+build/
+build-*/
+result
+result-*
+*.o
+*.obj
+*.exe
+*.pdb
+*.lib
+*.a
+*.spv
+*.cso
+*.dxbc
+
+# ── python ─────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+*.egg-info/
+
+# ── node (auxiliary tooling only) ──────────────────────────────────────────
+node_modules/
+.playwright-mcp/
+
+# ── model weights (huge; fetched per-deploy, never vendored) ───────────────
+models/
+*.safetensors
+*.ckpt
+*.gguf
+*.pt
+*.pth
+*.onnx
+
+# ── generated media / runtime state / caches ───────────────────────────────
+data/
+cache/
+# raw source media (downloaded B-roll, e.g. the CRT footage + the XP capture clips/stills);
+# stills meant for the repo are extracted into examples/assets/ instead.
+# NOTE: .gitignore has no inline comments — keep the comment on its own line or the pattern breaks.
+assets-src/
+runs/
+out/
+exports/
+staging/
+*.mp4
+*.mkv
+*.mov
+*.webm
+*.wav
+*.flac
+*.mp3
+*.ogg
+
+# ── OS / editor junk ───────────────────────────────────────────────────────
+.DS_Store
+*Zone.Identifier
+*~
+.idea/
+.vscode/
+
+# ── explicit allow-list: committed assets & presets survive the media ignores
+# (text presets + voice refs live here; ART does not — see the stock block below)
+!assets/**
+!presets/**
+!examples/**
+
+# ── stock ART — ships as the stock-assets.zip release asset (tools/pack-stock-assets.py
+# builds it, tools/fetch-stock-assets.py / the editor's first-run prompt pulls it).
+# The code master is CODE-ONLY: no rigs/backgrounds/library media in git.
+presets/avatars/
+presets/backgrounds/
+library/images/
+library/audio/
+
+# avatar sprite raw gens (regenerable: tools/gen-avatar-sprites.py + cutout-sprites.sh)
+presets/avatars/*/raw/
+
+# Localized per-project media bundles (tools/localize-project.py output): heavy VO/video
+# copied in to make a project self-contained on disk. Packaged as a release/demo bundle
+# for the stress test — NOT committed into the code master (keeps it "code only").
+examples/assets/*/audio/
+examples/assets/*/video/
+examples/assets/*/viseme/
+
+# release build artifacts (stock pack etc.)
+dist/
