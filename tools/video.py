@@ -15,6 +15,7 @@ the dev shell:  nix develop --command python tools/video.py <cmd>
   video.py look  <name> [--n 6]      render frames across the cut → montage → llm-feed
   video.py export <name> [--final]   render to mp4 (--final = 1080p60)
   video.py show  <name>              compact timeline (slop.py overview)
+  video.py dashboard [--port N]      open the web control panel (social queue + launcher)
 
 <name> = a folder under ../slopstudio-projects (e.g. `luckymas`), or a direct path to a
 .slop.json / .skeleton.json. Full playbook + what to decide at each step: docs/VIDEO_RUNBOOK.md
@@ -274,6 +275,14 @@ def cmd_transcript(a):
           ("Upload file → pick the .srt (exact timing)" if a.srt else "Paste transcript + auto-sync (clipboard is ready)"))
 
 
+def cmd_dashboard(a):
+    args = [sys.executable, "tools/dashboard.py", "--port", str(a.port)]
+    if not a.no_open:
+        args.append("--open")
+    print(ok(f"dashboard → http://localhost:{a.port}") + dim("  (Ctrl-C to stop)"))
+    run(args, cwd=ROOT)
+
+
 def cmd_status(a):
     if not a.name:
         print(col("projects", "1"))
@@ -316,10 +325,12 @@ def main():
     s = sub.add_parser("export"); s.add_argument("name"); s.add_argument("--final", action="store_true")
     s = sub.add_parser("transcript"); s.add_argument("name"); s.add_argument("--srt", action="store_true", help="copy SRT (timed) instead of plain text")
     s = sub.add_parser("show"); s.add_argument("name")
+    s = sub.add_parser("dashboard"); s.add_argument("--port", type=int, default=8080)
+    s.add_argument("--no-open", action="store_true", help="don't auto-open the browser")
     a = ap.parse_args()
     {"doctor": cmd_doctor, "wake": cmd_wake, "new": cmd_new, "status": cmd_status, "build": cmd_build,
      "voice": cmd_voice, "lint": cmd_lint, "look": cmd_look, "export": cmd_export, "transcript": cmd_transcript,
-     "show": cmd_show}[a.cmd](a)
+     "show": cmd_show, "dashboard": cmd_dashboard}[a.cmd](a)
 
 
 if __name__ == "__main__":

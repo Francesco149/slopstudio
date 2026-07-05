@@ -111,6 +111,22 @@ vid export <name> --final     # 1080p60 mp4 in exports/ (+ a .credits.txt for CC
 
 ---
 
+## The control panel (web dashboard)
+
+For a browser view of the whole operation instead of the CLI:
+
+```
+vid dashboard                 # → http://localhost:8080  (auto-opens; Ctrl-C to stop)
+```
+
+Three tabs: **Social** (the post queue grouped by ready/upcoming/trigger, per-platform cadence
+with DUE flags + queue depth, the "post today" picks, and a gallery of the GPT gens showing which
+post each is paired to — mark-posted / pair-an-image / copy-a-body without opening a file);
+**Launcher** (one-click the actions below with their options, plus open the editor or the Gemma
+thumbnail editor on a project); **Projects** (the per-project pipeline checklist). It just drives
+`tools/video.py` + `tools/social.py` and streams their output in a live log — no new state. Social
+content is read from `../gemma-branding/social/`; gens from the owner's social gen folder.
+
 ## Where am I?
 
 ```
@@ -132,3 +148,4 @@ vid show <name>       # compact timeline (durations, act cards, clip counts)
 | render mp4 | `vid export <name> --final` |
 | captions → clipboard | `vid transcript <name> [--srt]` |
 | where is it | `vid status <name>` |
+| social + launcher dashboard | `vid dashboard` |

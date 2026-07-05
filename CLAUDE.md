@@ -136,6 +136,13 @@ bundle — is a *possible later* smooth-deformation upgrade; **not supported tod
 - **Gemma/brand/channel layer (character · packaging · social · brand package):**
   `../gemma-branding/README.md` — the map; playbooks `PACKAGING.md` + `SOCIAL.md` + research live there.
 - **Social presence ops — canonical bios/description · cadence · the post queue + daily scheduler:**
-  `../gemma-branding/SOCIAL.md` (CLI: `tools/social.py status`; content: `../gemma-branding/social/`)
+  `../gemma-branding/SOCIAL.md` (CLI: `tools/social.py status`; **web dashboard: `tools/video.py dashboard`**
+  = the social queue + video launcher at a glance; content: `../gemma-branding/social/`)
+- **The live YouTube channel IS yours to inspect + manage** — the **`yutu` MCP** is wired (YouTube Data
+  API: channel/video/playlist/comment/caption/analytics; its tools load every session). So on any
+  @GemmaExplains task you can check subscriber/view counts, list/update uploads, read + reply to comments,
+  etc. **Default to read/inspect; confirm before mutating** (uploads, comments, deletes, playlist/metadata
+  edits) — same brand-safety bar as posting. Needs a one-time owner OAuth; setup + commands: `docs/INFRA.md`
+  § *YouTube channel control (yutu)*.
 - **Agent-capability roadmap — skills to author + `slop.py` builds for better editing/scripting/design:**
   `docs/AGENT_TOOLING.md` (deep research: `docs/research/llm-video-tooling-2026-07.md`)

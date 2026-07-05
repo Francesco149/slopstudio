@@ -5,6 +5,23 @@ in the same change that lands work, so a fresh session reorients in ~60s. Last u
 **2026-07-05**. For the next editor UX/product pass, also read `docs/UX_NEXT.md`; for
 composing a video as an agent, **`docs/LLM_WORKFLOW.md`**.
 
+> **★ NEWEST (2026-07-06): CONTROL-PANEL DASHBOARD + yutu YouTube MCP + luckymas publish-prep.**
+> **`tools/dashboard.py`** (stdlib `http.server`, `vid dashboard` → :8080) — a local web control panel:
+> **Social** (post queue grouped by ready/upcoming/trigger, per-platform cadence with DUE + queue-depth,
+> "post today" picks, and a **gallery of GPT gens showing which post each is paired to** — mark-posted /
+> pair-image / copy-body inline), **Launcher** (one-click the `video.py` runbook actions with options +
+> open the editor / Gemma thumbnail editor), **Projects** (pipeline checklist), **Channel** (read-only
+> YouTube stats). It only drives `video.py`/`social.py` + streams their output; whitelisted cmds, localhost.
+> Docs: VIDEO_RUNBOOK § *control panel*. **yutu YouTube MCP wired** (`~/.local/bin/yutu`, MCP registered
+> local-scope + ✔ Connected) so any session can inspect/manage the live channel — **needs the owner's
+> one-time OAuth** (`~/.config/yutu/README.md`; `docs/INFRA.md` § *YouTube channel control*); CLAUDE.md now
+> flags channel control on orientation. **Publish-prep for luckymas3:** fixed 7 stale social image refs
+> (owner renamed the gens, kept the ChatGPT suffix) + repointed both TikTok shorts posts off the **squashed
+> 608×1080 `-1080p60.mp4`** onto the native **1080×1920 `-1920p60.mp4`**; added paste-ready **Shorts YouTube
+> metadata** (owner convention: hashtags in the title, description = verbatim copy of the long-form) to
+> `luckymas/docs/001-packaging.md` + PACKAGING §6. **Publish blocker still open:** the 2 GitHub lecture
+> repos (xp-copy-animation, layered-mascot) the outro links at 14:14 are committed locally but **unpushed**.
+>
 > **★ NEWEST (2026-07-05): THREE-REPO SPLIT + social scheduler + thumbtool gesture perf.**
 > Gemma/brand/channel/social content moved to **`../gemma-branding`** (own local-only repo; its
 > `README.md` is the map): CHARACTER/PACKAGING/SOCIAL playbooks + the 3 research reports +

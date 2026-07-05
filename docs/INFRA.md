@@ -89,6 +89,26 @@ video `8012` · music `8013` · align `8014` (**live**, `slop-align`, 3080) · r
   content-hash from a shared/RO-mounted cache**, not provider↔provider HTTP. `slop-align`
   reads the tts cache read-only (`SLOP_ASSET_ROOTS=/cache/assets:/inputs/tts`).
 
+## YouTube channel control (yutu)
+The live @GemmaExplains channel is drivable via **`yutu`** (github.com/eat-pray-ai/yutu) — a YouTube
+Data API CLI **and MCP server**. Covers channel · video (upload/list/update/thumbnail) · playlist ·
+comment/commentThread · caption · subscription · member · analytics.
+- **Binary:** `~/.local/bin/yutu` (static Go binary, v0.10.9; runs on NixOS; **not on PATH** — use the
+  absolute path or `nix run`-style invocation). Upgrade = drop a newer release asset in place.
+- **MCP:** registered as `yutu` (Claude Code **local** scope for `/opt/src/slopstudio`, in `~/.claude.json`
+  — not committed). Its tools load every session; verify with `claude mcp list` (→ `yutu … ✔ Connected`).
+  Re-add if lost: `claude mcp add yutu -e YUTU_CREDENTIAL=~/.config/yutu/client_secret.json
+  -e YUTU_CACHE_TOKEN=~/.config/yutu/youtube.token.json -- ~/.local/bin/yutu mcp`.
+- **Credentials (out of git):** `~/.config/yutu/{client_secret.json,youtube.token.json}` — see the
+  `README.md` there for the **one-time OAuth** (enable YouTube Data API v3 → Desktop OAuth client →
+  `yutu auth -c … -t …`, signing in as the @GemmaExplains account). The MCP + the dashboard Channel tab
+  are non-functional until that's done; the tools list fine before it (auth only bites on real API calls).
+- **Quick checks:** `~/.local/bin/yutu channel list --mine -o table` (subs/views/videos) ·
+  `yutu video list --mine` · `yutu commentThread list --allThreadsRelatedToChannelId <id>`. The dashboard
+  surfaces channel stats read-only on its **Channel** tab (`/api/channel`, cached ~5 min).
+- **Safety:** yutu holds full read+write scope. **Default to read/inspect; confirm before mutating**
+  (uploads, comment posts/deletes, metadata/playlist edits) — same brand-safety bar as social posting.
+
 ## Other lab bits (pointers, not duplication)
 - **llm-feed** — `/opt/src/llm-feed/feed.py` on wslop (`:8777`); push visuals here.
 - Windows host (wslop's host) LAN name: **`cutestation.soy`**.
