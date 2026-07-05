@@ -657,6 +657,7 @@ static void render_bg(Img& canvas, const json& L, const Brand& brand, const std:
     std::string patStr = js(L, "pattern", "");
     bool diamond = (patStr == "diamond" || patStr == "argyle");
     float pcell = (float)jf(L, "cell", 96) * SS;
+    float pox = (float)jf(L, "pattern_ox", 0) * SS, poy = (float)jf(L, "pattern_oy", 0) * SS;   // slide the whole quilt (center a group in-frame)
     std::string pfillS = js(L, "pattern_fill", ""), plineS = js(L, "pattern_line", "");
     RGBA pfill = brand.color(pfillS, c0);
     RGBA pline = brand.color(plineS, c0);
@@ -670,6 +671,7 @@ static void render_bg(Img& canvas, const json& L, const Brand& brand, const std:
     float motifSize = (float)jf(L, "pattern_motif_size", 0.2);   // 0..0.5, fraction of the half-cell
     float pmotifA = (float)jf(L, "pattern_motif_alpha", 1.0);
     int motifEvery = std::max(1, ji(L, "pattern_motif_every", 2));
+    int motifPhase = ji(L, "pattern_motif_phase", 0);   // shift the selected-corner sublattice (align a group in-frame)
     bool hasMotif = !motifShape.empty() && !pmotifS.empty();
     for (int y = 0; y < canvas.h; y++) {
         uint8_t* dp = canvas.at(0, y);
@@ -680,7 +682,7 @@ static void render_bg(Img& canvas, const json& L, const Brand& brand, const std:
                 c.r = c0.r + (c1.r - c0.r) * t; c.g = c0.g + (c1.g - c0.g) * t; c.b = c0.b + (c1.b - c0.b) * t;
             }
             if (diamond && pcell > 1.f) {
-                float u = (x + y) / pcell, v = (x - y) / pcell;
+                float u = ((x - pox) + (y - poy)) / pcell, v = ((x - pox) - (y - poy)) / pcell;
                 int ca = (int)floorf(u), cb = (int)floorf(v);
                 if (hasPatFill && ((ca + cb) & 1)) {   // alternate diamonds → shift toward pattern_fill (keeps any gradient shading)
                     c.r += pfill.r - c0.r; c.g += pfill.g - c0.g; c.b += pfill.b - c0.b;
@@ -690,7 +692,7 @@ static void render_bg(Img& canvas, const json& L, const Brand& brand, const std:
                     if (du < lw || dv < lw) { c.r += (pline.r - c.r) * plineA; c.g += (pline.g - c.g) * plineA; c.b += (pline.b - c.b) * plineA; }
                 }
                 if (hasMotif) {   // accent centred on the lattice VERTICES (the corners where the diamonds meet), drawn over the lines
-                    int ru = (int)floorf(u + 0.5f), rv = (int)floorf(v + 0.5f);
+                    int ru = (int)floorf(u + 0.5f) + motifPhase, rv = (int)floorf(v + 0.5f) + motifPhase;
                     int ea = ((ru % motifEvery) + motifEvery) % motifEvery, eb = ((rv % motifEvery) + motifEvery) % motifEvery;
                     if (ea == 0 && eb == 0) {
                         float au = fabsf(u - ru), av = fabsf(v - rv);   // distance from the nearest corner (0..0.5)
