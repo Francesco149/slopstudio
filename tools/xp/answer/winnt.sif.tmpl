@@ -1,0 +1,51 @@
+;SetupMgrTag — slopstudio XP capture harness unattended answer file.
+; provision.py fills @PRODUCT_KEY@/@COMPUTER_NAME@ and writes the result to the
+; root of a 1.44MB floppy (A:); XP text-mode setup auto-reads A:\winnt.sif.
+; A blank Administrator password + autologon + [GuiRunOnce] A:\setup.cmd give the
+; agent-less SMB control layer (firewall off, blank-pw network logon, probe tools).
+[Data]
+AutoPartition=1
+MsDosInitiated="0"
+UnattendedInstall="Yes"
+
+[Unattended]
+UnattendMode=FullUnattended
+OemSkipEula=Yes
+OemPreinstall=No
+Repartition=Yes
+FileSystem=NTFS
+WaitForReboot="No"
+TargetPath=\WINDOWS
+
+[GuiUnattended]
+AdminPassword=*
+EncryptedAdminPassword=NO
+AutoLogon=Yes
+AutoLogonCount=1
+OEMSkipRegional=1
+OemSkipWelcome=1
+TimeZone=110
+
+[Display]
+; 800x600x16 — plenty for the capture demos, and (crucially) keeps the desktop above
+; the low-res/low-colour threshold so XP's first-logon "adjust resolution" Display
+; Settings dialog never appears (it blocks first-logon + A:\setup.cmd otherwise).
+BitsPerPel=16
+Xresolution=800
+Yresolution=600
+Vrefresh=60
+
+[UserData]
+ProductKey=@PRODUCT_KEY@
+FullName="slop"
+OrgName="slopstudio"
+ComputerName=@COMPUTER_NAME@
+
+[Identification]
+JoinWorkgroup=WORKGROUP
+
+[Networking]
+InstallDefaultComponents=Yes
+
+[GuiRunOnce]
+Command0="A:\setup.cmd"

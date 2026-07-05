@@ -1,0 +1,10 @@
+{
+  "schema": "slopstudio.voice/1",
+  "name": "gemma-san-mid",
+  "provider": "tts",
+  "voice": "A warm mid-range young woman's voice — softly melodic with a gentle breathy succubus lilt, a touch lower and rounder than bright-and-girlish; playful and confident, expressive and teasing, a knowing smile in the tone.",
+  "language": "English",
+  "seed": 7,
+  "description": "In-between variant of the Gemma-san host voice — sits between the bright base (gemma-san) and the sultry gemma-san-deep. Per-line emotion via each clip's `emotion`/`instruct`. Catchphrase: 'fufu~'.",
+  "notes": "Designed-voice variant: mid register. Switch + Regenerate in the editor (clip 'voice' selector) to audition against gemma-san and gemma-san-deep. Tune `voice`/`seed` and re-run the TTS provider to preview."
+}

@@ -1,0 +1,5 @@
+# Treat shader + project sources as text with LF endings (cross-platform editor).
+*.glsl  text eol=lf
+*.hlsl  text eol=lf
+*.json  text eol=lf
+*.toml  text eol=lf

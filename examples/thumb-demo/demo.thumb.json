@@ -1,0 +1,23 @@
+{
+  "format": "thumb-1",
+  "canvas": [1280, 720],
+  "brand": "brand-demo",
+  "title": "The forgotten floppy format that refused to die",
+  "layers": [
+    { "id": "bg", "type": "bg", "fill": "$bg", "grad_to": "#1e3a4a", "grad_angle": 115, "vignette": 0.38 },
+    { "id": "floppy", "type": "image", "src": "brand-demo/sprites/demo-blob.png",
+      "x": 930, "y": 400, "scale": 0.92, "rot": -4,
+      "glow": { "px": 42, "color": "$teal", "alpha": 0.55 } },
+    { "id": "headline", "type": "text", "text": "IT LIVES", "style": "headline",
+      "x": 360, "y": 300, "rot": -3, "px": 200, "grad_to": "$orange", "max_w": 640 },
+    { "id": "kicker", "type": "text", "text": "1998 WANTS IT BACK", "style": "pill",
+      "x": 360, "y": 545 },
+    { "id": "arrow", "type": "shape", "shape": "arrow",
+      "x1": 480, "y1": 620, "x2": 760, "y2": 500, "width": 26,
+      "fill": "$yellow", "outline_px": 7, "outline": "$ink",
+      "shadow": { "dx": 5, "dy": 7, "blur": 8, "alpha": 0.4 } },
+    { "id": "ring", "type": "shape", "shape": "circle",
+      "x": 930, "y": 400, "r": 250, "thick": 0, "fill": "#2dd4bf",
+      "opacity": 0.0, "hidden": true }
+  ]
+}

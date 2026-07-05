@@ -1,0 +1,65 @@
+# slopstudio configuration — COPY this to `config.toml` (gitignored) and edit.
+#
+# config.toml is machine-specific and holds endpoints + any API keys; it is NEVER
+# committed. This indirection is what makes slopstudio redeployable on a different
+# configuration: point these URLs at whatever hardware you have. The defaults
+# below target the lab GPU host `lame` (RX 7800XT 16GB + RTX 3080 10GB); the
+# editor itself runs Windows-native on the workstation.
+
+[editor]
+# Where the editor stores projects, the render/asset cache, and exports.
+# `~` expands to the user home. All three may be on fast local storage.
+project_dir = "~/slopstudio/projects"
+cache_dir   = "~/slopstudio/cache"
+export_dir  = "~/slopstudio/exports"
+
+# Interactive preview quality. The compositing/timing/effects loop is always
+# instant; this only scales the live-preview render resolution (export is full).
+preview_scale = 0.5        # 0.25..1.0
+preview_fps   = 60
+
+# Local HTTP control endpoint the editor exposes so a frontier model (or any
+# script) can drive it. Bind to localhost; this is not authenticated.
+control_bind = "127.0.0.1:8080"
+
+# ── Generation providers ───────────────────────────────────────────────────
+# Each provider is an out-of-process service speaking the slopstudio provider
+# protocol (docs/PROVIDER_PROTOCOL.md). Out-of-process = a crashing model can
+# never take down the editor. Heavy generation is async + cached, so editing a
+# generation parameter never blocks the interactive loop.
+[providers.tts]
+url     = "http://10.0.10.56:8010"   # Qwen3-TTS 1.7B VoiceDesign (Apache-2.0)
+enabled = true
+
+[providers.image]
+url     = "http://10.0.10.56:8011"   # ComfyUI: Illustrious-XL 2.0 + Gemma-san LoRA
+enabled = true
+
+[providers.video]
+url     = "http://10.0.10.56:8012"   # procedural 2.5D motion (default) + Wan 2.2 I2V (opt-in)
+enabled = true
+
+[providers.music]
+url     = "http://10.0.10.56:8013"   # Jamendo CC-BY search + ACE-Step 1.5 local gen
+enabled = true
+
+[providers.align]
+url     = "http://10.0.10.56:8014"   # WhisperX word timing + Rhubarb visemes
+enabled = true
+
+[providers.rembg]
+url     = "http://10.0.10.56:8015"   # background removal / alpha matting (rembg isnet-anime, CPU)
+enabled = true
+
+# ── Optional cloud sprinkles ───────────────────────────────────────────────
+# Every cloud feature has a local/manual fallback. Leave keys blank to disable.
+[cloud.anthropic]
+# Used ONLY for the script-writing fallback when no Claude Code session is
+# driving the editor. Prefer the env var ANTHROPIC_API_KEY over inlining here.
+api_key_env = "ANTHROPIC_API_KEY"
+model       = "claude-opus-4-8"
+
+[music.jamendo]
+# Free client id from https://devportal.jamendo.com/ . Required for royalty-free
+# music search + automatic attribution. Prefer the env var below over inlining.
+client_id_env = "JAMENDO_CLIENT_ID"

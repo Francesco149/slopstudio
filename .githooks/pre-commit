@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# slopstudio is the TOOLS repo. Videos → ../slopstudio-projects; gemma/brand/social →
+# ../gemma-branding. This hook blocks anything that belongs in the sibling repos.
+# Enabled via `git config core.hooksPath .githooks` (re-run after a fresh clone).
+set -euo pipefail
+fail=0
+say() { echo "pre-commit: $1" >&2; fail=1; }
+
+while IFS= read -r f; do
+  case "$f" in
+    # allowed roots (the tool + its stock pack + repo meta)
+    editor/*|thumbtool/*|tools/*|providers/*|deploy/*|docs/*|examples/*|presets/*|library/*| \
+    assets-src/fonts/*|.claude/*|.github/*|.githooks/*| \
+    README.md|CLAUDE.md|LICENSE|flake.nix|flake.lock|config.example.toml|.gitignore|.gitattributes) ;;
+    *) say "'$f' is outside the tools-repo allowlist — video content → ../slopstudio-projects, gemma/brand/social → ../gemma-branding";;
+  esac
+  case "$f" in
+    docs/CHARACTER.md|docs/PACKAGING.md|docs/SOCIAL.md|docs/research/youtube-packaging-*|docs/research/thumbnail-pipeline-*|docs/research/vtuber-branding-*)
+      say "'$f' moved to ../gemma-branding — edit it there";;
+    examples/*) ;;  # bundled demos are the one place project files belong
+    *.slop.json|*.skeleton.json|*.thumb.json)
+      say "'$f': project/thumb docs belong in ../slopstudio-projects (only examples/ may carry them here)";;
+  esac
+done < <(git diff --cached --name-only --diff-filter=ACR)
+
+[ "$fail" -eq 0 ] || { echo "pre-commit: blocked. (bypass ONLY if intentional: git commit --no-verify)" >&2; exit 1; }

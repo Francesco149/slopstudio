@@ -1,0 +1,180 @@
+{
+  "_comment": "Stock royalty-free music beds. Each track needs a direct `url`, a commercial-safe `license` (cc0 / cc-by / public-domain — see tools/fetch-stock-music.py), and, for cc-by, an `attribution` string the editor surfaces as an on-screen credit. `core:true` marks the OWNER-ASSIGNED palette (the `role` on those is authoritative — pick by role, don't improvise); the rest are variety. Fetch with: nix develop --command python tools/fetch-stock-music.py",
+  "tracks": [
+    {
+      "name": "neon-laser-horizon",
+      "title": "Neon Laser Horizon",
+      "url": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Neon%20Laser%20Horizon.mp3",
+      "license": "cc-by-4.0",
+      "attribution": "\"Neon Laser Horizon\" Kevin MacLeod (incompetech.com) — CC BY 4.0",
+      "role": "main explainer bed",
+      "tags": [
+        "synthwave",
+        "retro",
+        "driving",
+        "no-vocals"
+      ]
+    },
+    {
+      "name": "voxel-revolution",
+      "title": "Voxel Revolution",
+      "url": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Voxel%20Revolution.mp3",
+      "license": "cc-by-4.0",
+      "attribution": "\"Voxel Revolution\" Kevin MacLeod (incompetech.com) — CC BY 4.0",
+      "core": true,
+      "role": "speech-free montages ONLY (never under narration)",
+      "tags": [
+        "chiptune",
+        "synthwave",
+        "energetic",
+        "no-vocals"
+      ]
+    },
+    {
+      "name": "bit-quest",
+      "title": "Bit Quest",
+      "url": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Bit%20Quest.mp3",
+      "license": "cc-by-4.0",
+      "attribution": "\"Bit Quest\" Kevin MacLeod (incompetech.com) — CC BY 4.0",
+      "role": "playful retro sections",
+      "tags": [
+        "chiptune",
+        "adventure",
+        "upbeat",
+        "no-vocals"
+      ]
+    },
+    {
+      "name": "bossa-antigua",
+      "title": "Bossa Antigua",
+      "url": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Bossa%20Antigua.mp3",
+      "license": "cc-by-4.0",
+      "attribution": "\"Bossa Antigua\" Kevin MacLeod (incompetech.com) — CC BY 4.0",
+      "core": true,
+      "role": "beach / she's-relaxing gag intros",
+      "tags": [
+        "bossa",
+        "laid-back",
+        "deadpan",
+        "no-vocals"
+      ]
+    },
+    {
+      "name": "blippy-trance",
+      "title": "Blippy Trance",
+      "url": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Blippy%20Trance.mp3",
+      "license": "cc-by-4.0",
+      "attribution": "\"Blippy Trance\" Kevin MacLeod (incompetech.com) — CC BY 4.0",
+      "role": "high-energy montage",
+      "tags": [
+        "chiptune",
+        "trance",
+        "fast",
+        "no-vocals"
+      ]
+    },
+    {
+      "name": "pixelland",
+      "title": "Pixelland",
+      "url": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Pixelland.mp3",
+      "license": "cc-by-4.0",
+      "attribution": "\"Pixelland\" Kevin MacLeod (incompetech.com) — CC BY 4.0",
+      "role": "credits screens / \"to be continued\" beats (even as a joke)",
+      "tags": [
+        "chiptune",
+        "happy",
+        "bouncy",
+        "no-vocals"
+      ],
+      "core": true
+    },
+    {
+      "name": "overworld",
+      "title": "Overworld",
+      "url": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Overworld.mp3",
+      "license": "cc-by-4.0",
+      "attribution": "\"Overworld\" Kevin MacLeod (incompetech.com) — CC BY 4.0",
+      "role": "calm retro exploration",
+      "tags": [
+        "chiptune",
+        "calm",
+        "melodic",
+        "no-vocals"
+      ]
+    },
+    {
+      "name": "chill-wave",
+      "title": "Chill Wave",
+      "url": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Chill%20Wave.mp3",
+      "license": "cc-by-4.0",
+      "attribution": "\"Chill Wave\" Kevin MacLeod (incompetech.com) — CC BY 4.0",
+      "role": "story-opening / title-drop bed — enters LOUD at the drop, tapers into background level and keeps going (slop.py `bed --intro-gain`)",
+      "tags": [
+        "chillwave",
+        "relaxed",
+        "no-vocals"
+      ],
+      "core": true
+    },
+    {
+      "name": "deadly-roulette",
+      "title": "Deadly Roulette",
+      "url": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Deadly%20Roulette.mp3",
+      "license": "cc-by-4.0",
+      "attribution": "\"Deadly Roulette\" Kevin MacLeod (incompetech.com) — CC BY 4.0",
+      "role": "gag scenes",
+      "tags": [
+        "swing",
+        "spy",
+        "ironic",
+        "no-vocals"
+      ],
+      "core": true
+    },
+    {
+      "name": "space-jazz",
+      "title": "Space Jazz",
+      "url": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Space%20Jazz.mp3",
+      "license": "cc-by-4.0",
+      "attribution": "\"Space Jazz\" Kevin MacLeod (incompetech.com) — CC BY 4.0",
+      "role": "MAIN BGM — the default bed for videos and shorts",
+      "tags": [
+        "jazz",
+        "spacey",
+        "quirky",
+        "no-vocals"
+      ],
+      "core": true
+    },
+    {
+      "name": "digital-lemonade",
+      "title": "Digital Lemonade",
+      "url": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Digital%20Lemonade.mp3",
+      "license": "cc-by-4.0",
+      "attribution": "\"Digital Lemonade\" Kevin MacLeod (incompetech.com) — CC BY 4.0",
+      "role": "light techy background",
+      "tags": [
+        "electronic",
+        "light",
+        "upbeat",
+        "no-vocals"
+      ]
+    },
+    {
+      "name": "edm-detection-mode",
+      "title": "EDM Detection Mode",
+      "url": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/EDM%20Detection%20Mode.mp3",
+      "license": "cc-by-4.0",
+      "attribution": "\"EDM Detection Mode\" Kevin MacLeod (incompetech.com) — CC BY 4.0",
+      "role": "alternate main bgm — more intense / fast-cut energy",
+      "gain_db": -24,
+      "tags": [
+        "edm",
+        "driving",
+        "shorts",
+        "no-vocals"
+      ],
+      "core": true
+    }
+  ]
+}

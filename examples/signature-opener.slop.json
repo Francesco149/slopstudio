@@ -1,0 +1,370 @@
+{
+  "schema": "slopstudio.project/1",
+  "meta": {
+    "title": "signature-opener",
+    "fps": 30,
+    "resolution": [
+      1280,
+      768
+    ],
+    "sample_rate": 48000,
+    "vignette": 0.26,
+    "notes": "REUSABLE RECIPE — the host's signature opener; vary per video. Gemma giggles (zoomed CLOSE) then backs off and greets: 'Welcome back, mortals.' Host = Anima gemma-pngtuber on the canon day room (presets/backgrounds), integrated into the plate (avatar grade + contact shadow + scene meta.vignette). Voice = gemma-san-deep-jp (designed JP -> EN). Per the voice workflow, EACH sentence is its own TTS clip with tuned intonation (long single gens drift/stall) — so giggle + line are separate clips; add more sentences as separate clips for the intro. Zoom = keyframed avatar transform.scale (spring): rest -> close during the giggle -> rest by the giggle's end. TO MAKE A VARIATION: swap bg (presets/backgrounds/*), the line text, and the following intro sentences (one clip each); re-Generate each VO + its avatar viseme track. tracks are TOP-first (array[0] draws on top)."
+  },
+  "assets": {
+    "bg_day": {
+      "provider": "external",
+      "type": "image",
+      "status": "ready",
+      "uri": "presets/backgrounds/room-day.png",
+      "meta": {}
+    },
+    "a_2gldg7kind5fcbei": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "ふふふ～",
+        "voice": "A seductive low, breathy young woman's voice. A deeper chest register, smooth and velvety with a breathy, mischievous succubus purr; warm and confident, quick and knowing in delivery, a slight smile in the tone.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-jp"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_2gldg7kind5fcbei.wav",
+      "meta": {
+        "duration": 1.44,
+        "sample_rate": 24000
+      }
+    },
+    "a_6y3l2c5pexcuweca": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "Welcome back, mortals.",
+        "voice": "A seductive low, breathy young woman's voice. A deeper chest register, smooth and velvety with a breathy, mischievous succubus purr; warm and confident, quick and knowing in delivery, a slight smile in the tone.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-jp"
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_6y3l2c5pexcuweca.wav",
+      "meta": {
+        "duration": 2.0,
+        "sample_rate": 24000
+      }
+    },
+    "a_bmf7fx543kvz6tvl": {
+      "provider": "align",
+      "type": "visemes",
+      "params": {
+        "dialog": "ふふふ～"
+      },
+      "inputs": [
+        "a_2gldg7kind5fcbei"
+      ],
+      "status": "ready",
+      "uri": "cache://align/a_bmf7fx543kvz6tvl.json",
+      "meta": {
+        "n": 6,
+        "engine": "rhubarb",
+        "shape_set": "preston-blair",
+        "duration": 1.44
+      }
+    },
+    "a_42o7uasryuzyissq": {
+      "provider": "align",
+      "type": "visemes",
+      "params": {
+        "dialog": "Welcome back, mortals."
+      },
+      "inputs": [
+        "a_6y3l2c5pexcuweca"
+      ],
+      "status": "ready",
+      "uri": "cache://align/a_42o7uasryuzyissq.json",
+      "meta": {
+        "n": 13,
+        "engine": "rhubarb",
+        "shape_set": "preston-blair",
+        "duration": 2.0
+      }
+    },
+    "a_iawv6gj2sw7rut5z": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "ふふふ～",
+        "voice": "A seductive low, breathy young woman's voice. A deeper chest register, smooth and velvety with a breathy, mischievous succubus purr; warm and confident, quick and knowing in delivery, a slight smile in the tone.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-clone",
+        "ref_text": "ふふふ～ ... Welcome back, mortals~ In 2007, some weeaboo degenerate decided they wanted anime girls on their computer. And so, LuckyMas was born. An absolute master class in goonery, unmatched by many. A piece of software with an aura so strong, it becomes a bat signal of your power level."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_iawv6gj2sw7rut5z.wav",
+      "meta": {
+        "duration": 1.12,
+        "sample_rate": 24000
+      }
+    },
+    "a_msxdpdc2rkrn7zbu": {
+      "provider": "tts",
+      "type": "speech",
+      "params": {
+        "text": "Welcome back, mortals.",
+        "voice": "A seductive low, breathy young woman's voice. A deeper chest register, smooth and velvety with a breathy, mischievous succubus purr; warm and confident, quick and knowing in delivery, a slight smile in the tone.",
+        "emotion": "smug, teasing",
+        "seed": 7,
+        "language": "English",
+        "voice_preset": "gemma-san-deep-clone",
+        "ref_text": "ふふふ～ ... Welcome back, mortals~ In 2007, some weeaboo degenerate decided they wanted anime girls on their computer. And so, LuckyMas was born. An absolute master class in goonery, unmatched by many. A piece of software with an aura so strong, it becomes a bat signal of your power level."
+      },
+      "inputs": [],
+      "status": "ready",
+      "uri": "cache://tts/a_msxdpdc2rkrn7zbu.wav",
+      "meta": {
+        "duration": 1.52,
+        "sample_rate": 24000
+      }
+    },
+    "a_agsa3rkrt5jlmstk": {
+      "provider": "align",
+      "type": "visemes",
+      "params": {
+        "dialog": "ふふふ～"
+      },
+      "inputs": [
+        "a_iawv6gj2sw7rut5z"
+      ],
+      "status": "ready",
+      "uri": "cache://align/a_agsa3rkrt5jlmstk.json",
+      "meta": {
+        "n": 6,
+        "engine": "rhubarb",
+        "shape_set": "preston-blair",
+        "duration": 1.12
+      }
+    },
+    "a_dw5nvkqntjjdtwki": {
+      "provider": "align",
+      "type": "visemes",
+      "params": {
+        "dialog": "Welcome back, mortals."
+      },
+      "inputs": [
+        "a_msxdpdc2rkrn7zbu"
+      ],
+      "status": "ready",
+      "uri": "cache://align/a_dw5nvkqntjjdtwki.json",
+      "meta": {
+        "n": 14,
+        "engine": "rhubarb",
+        "shape_set": "preston-blair",
+        "duration": 1.52
+      }
+    }
+  },
+  "tracks": [
+    {
+      "id": "tk_av",
+      "name": "Host",
+      "kind": "video",
+      "rows": [
+        "r_av"
+      ]
+    },
+    {
+      "id": "tk_bg",
+      "name": "Background",
+      "kind": "video",
+      "rows": [
+        "r_bg"
+      ]
+    },
+    {
+      "id": "tk_vo",
+      "name": "Narration",
+      "kind": "audio",
+      "rows": [
+        "r_vo"
+      ]
+    }
+  ],
+  "rows": {
+    "r_av": {
+      "type": "avatar",
+      "name": "Gemma",
+      "params": {
+        "rig": "gemma-pngtuber",
+        "driven_by": "r_vo"
+      },
+      "clips": [
+        "c_av_giggle",
+        "c_av_line"
+      ]
+    },
+    "r_bg": {
+      "type": "image",
+      "name": "Background",
+      "params": {},
+      "clips": [
+        "c_bg"
+      ]
+    },
+    "r_vo": {
+      "type": "tts",
+      "name": "Gemma VO",
+      "params": {
+        "voice_preset": "gemma-san-deep-clone"
+      },
+      "clips": [
+        "c_giggle",
+        "c_line"
+      ]
+    }
+  },
+  "clips": {
+    "c_bg": {
+      "row": "r_bg",
+      "start": 0.0,
+      "dur": 8.0,
+      "asset": "bg_day",
+      "params": {
+        "saturation": 0.95
+      },
+      "notes": "canon day room; the purple host pops + integration grades her in",
+      "transform": {
+        "pos": [
+          0,
+          0
+        ],
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "rot": 0,
+        "opacity": 1,
+        "anchor": [
+          0.5,
+          0.5
+        ]
+      }
+    },
+    "c_giggle": {
+      "row": "r_vo",
+      "start": 0.0,
+      "dur": 1.12,
+      "params": {
+        "text": "ふふふ～",
+        "emotion": "smug, teasing",
+        "voice_preset": "gemma-san-deep-clone"
+      },
+      "notes": "the giggle (romaji laugh); own clip + intonation",
+      "transform": {
+        "pos": [
+          0,
+          0
+        ],
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "rot": 0,
+        "opacity": 1,
+        "anchor": [
+          0.5,
+          0.5
+        ]
+      },
+      "asset": "a_iawv6gj2sw7rut5z"
+    },
+    "c_line": {
+      "row": "r_vo",
+      "start": 1.6,
+      "dur": 1.52,
+      "params": {
+        "text": "Welcome back, mortals.",
+        "emotion": "smug, teasing",
+        "voice_preset": "gemma-san-deep-clone"
+      },
+      "notes": "the greeting; own clip + intonation",
+      "transform": {
+        "pos": [
+          0,
+          0
+        ],
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "rot": 0,
+        "opacity": 1,
+        "anchor": [
+          0.5,
+          0.5
+        ]
+      },
+      "asset": "a_msxdpdc2rkrn7zbu"
+    },
+    "c_av_giggle": {
+      "row": "r_av",
+      "start": 0.0,
+      "dur": 1.6,
+      "params": {
+        "emotion": "smug",
+        "framing": "closeup"
+      },
+      "notes": "host smug face CLOSEUP that snaps in on the cut (framing:closeup positions the FULL sprite; no zoom anim)",
+      "transform": {
+        "pos": [
+          0,
+          30
+        ],
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "rot": 0,
+        "opacity": 1,
+        "anchor": [
+          0.5,
+          0.5
+        ]
+      },
+      "asset": "a_agsa3rkrt5jlmstk"
+    },
+    "c_av_line": {
+      "row": "r_av",
+      "start": 1.6,
+      "dur": 1.92,
+      "params": {
+        "emotion": "smug",
+        "framing": "bust"
+      },
+      "notes": "host at rest, greeting",
+      "transform": {
+        "pos": [
+          0,
+          30
+        ],
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "rot": 0,
+        "opacity": 1,
+        "anchor": [
+          0.5,
+          0.5
+        ]
+      },
+      "asset": "a_dw5nvkqntjjdtwki"
+    }
+  }
+}

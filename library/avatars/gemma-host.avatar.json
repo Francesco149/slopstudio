@@ -1,0 +1,8 @@
+{
+  "schema": "slopstudio.avatar_rig/1",
+  "prefix": "gemma-",
+  "fallback": "neutral",
+  "emotions": {
+    "teaching": "gemma-host-teacher-test.png"
+  }
+}

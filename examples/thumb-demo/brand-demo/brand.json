@@ -1,0 +1,53 @@
+{
+  "name": "demo",
+  "_comment": "Generic demo brand package — proves the tool is brand-agnostic. Real channels ship their own package (see docs/THUMBNAIL_TOOL.md). Font paths are package-relative; this demo reuses the repo's OFL display fonts.",
+  "palette": {
+    "bg":      "#101820",
+    "ink":     "#000000",
+    "white":   "#ffffff",
+    "teal":    "#2dd4bf",
+    "orange":  "#fb923c",
+    "yellow":  "#fde047",
+    "red":     "#ef4444"
+  },
+  "fonts": {
+    "display": "../../../assets-src/fonts/Anton-Regular.ttf",
+    "condensed": "../../../assets-src/fonts/BebasNeue-Regular.ttf",
+    "black": "../../../assets-src/fonts/ArchivoBlack-Regular.ttf"
+  },
+  "styles": {
+    "headline": {
+      "font": "display", "px": 170, "fill": "$white", "stroke": "$ink", "stroke_px": 12,
+      "align": "center", "line_height": 0.98,
+      "shadow": { "dx": 6, "dy": 9, "blur": 10, "alpha": 0.55 }
+    },
+    "accent": {
+      "font": "condensed", "px": 84, "fill": "$yellow", "stroke": "$ink", "stroke_px": 8,
+      "align": "center",
+      "shadow": { "dx": 4, "dy": 6, "blur": 8, "alpha": 0.5 }
+    },
+    "pill": {
+      "font": "condensed", "px": 56, "fill": "$white", "stroke_px": 0,
+      "align": "center",
+      "plate": { "pad_x": 26, "pad_y": 12, "radius": 16, "fill": "$red", "alpha": 0.95 }
+    }
+  },
+  "sticker": {
+    "outline_px": 10, "outline": "$white",
+    "shadow": { "dx": 8, "dy": 12, "blur": 14, "alpha": 0.45 }
+  },
+  "sprite_roots": ["sprites"],
+  "templates": [
+    {
+      "name": "reaction",
+      "hint": "big subject right, headline left",
+      "layers": [
+        { "id": "bg", "type": "bg", "fill": "$bg", "grad_to": "#1e3a4a", "grad_angle": 115, "vignette": 0.35 },
+        { "id": "host", "type": "image", "src": "brand-demo/sprites/demo-blob.png", "x": 960, "y": 400, "scale": 0.95, "rot": -3 },
+        { "id": "headline", "type": "text", "text": "BIG\nHOOK", "style": "headline", "x": 380, "y": 330, "rot": -3, "max_w": 620 },
+        { "id": "kicker", "type": "text", "text": "3 WORDS MAX", "style": "pill", "x": 380, "y": 560 }
+      ]
+    }
+  ],
+  "lint": { "max_words": 3, "keep_clear_br": true }
+}
