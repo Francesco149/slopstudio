@@ -75,6 +75,23 @@ composing a video as an agent, **`docs/LLM_WORKFLOW.md`**.
   (param-hash excludes position → drags never re-rasterize) + **D3D11 compositor** (premult rotated quads,
   mosaic quantize shader, offscreen RT the preview shows directly; toolbar shows build/gpu ms). CPU compose
   stays the deterministic export path — **verified byte-identical pre/post refactor** (cmp on c-deadpan).
+- **★ TRANSCRIPT TIMING v2: wav-RMS pauses + spoken-char weights + sentence snap — NEW 2026-07-05 (owner:
+  short2 "Half your capture" popped at 2.76s instead of ~3.46s).** `tools/slop.py` `transcript_apply`;
+  both shorts regenerated + re-exported. Three compounding causes, all fixed:
+  - **Chunk weights now use the SPOKEN text** (`_tts_norm`): "2007" is 4 display chars but "two thousand
+    seven" out loud, so every chunk after a year started early.
+  - **Speech/pause segments now come from the take's WAV** (20ms RMS gate, `_speech_segs_audio`; visemes
+    kept as fallback): Rhubarb renders a soft inter-sentence pause as viseme **B (near-closed), not X
+    (silence)** — b01's real 0.46s pause was invisible to the old viseme-only path.
+  - **Sentence boundaries SNAP to speech-resume after a real pause** (`_snap_bounds`): 1:1 in-order when
+    boundary count == big-pause count (the common case), else a tiny order-preserving DP (max matches,
+    min distance, 0.8s tolerance) — nearest-gap-per-boundary crossed assignments on tiny sentences
+    (short1 "Go." grabbed the wrong pause). Chunks inside a sentence distribute by spoken-char fraction
+    over THAT sentence's speech window, so drift can't cross a boundary.
+  - Verified: short2 "Half your capture" pops at **3.446** (speech resume 4.48s source ÷1.3); b08's 3
+    sentence starts land on their pauses with the mid-sentence dramatic pause correctly skipped; short1
+    "Go" pops at its true onset 54.09 (old r_transcript overlap note gone; lint 0/0 + 0/1 pre-existing
+    b09 info). Frames at 2.9s/3.7s on the feed.
 - **★ RENDER MODAL: format-aware defaults (Shorts no longer downscaled + oversized) — NEW 2026-07-04 (owner).**
   `editor` File ▸ Render video…. The modal defaulted **"Scale to 1080p" ON + target 300 MB** for every project —
   fine for the landscape full video, WRONG for a Short: `--scale 1080` scales HEIGHT to 1080, so a 1080x1920

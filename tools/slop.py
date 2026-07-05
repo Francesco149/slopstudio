@@ -788,11 +788,12 @@ def cmd_lint(p, a):
     return 1 if warn else 0
 
 # ── transcript: automated animated on-screen transcript (the shorts convention) ──
-# One short caption chunk at a time popping in over the mid-band, LOOSELY timed onto each VO
-# line: chunk starts are placed by char-fraction across the take's SPEECH time (the viseme
-# track's non-silence segments, so chunks don't advance through pauses; silences also snap
-# sentence boundaries "for free" since a sentence break IS a pause). No viseme track → plain
-# linear over the clip. Regenerable (wipes r_transcript first); portrait retime re-runs it,
+# One short caption chunk at a time popping in over the mid-band, timed onto each VO line:
+# sentence boundaries SNAP to the real pauses in the take's WAV (20ms RMS gate — the viseme
+# track is only a fallback; Rhubarb renders soft pauses as viseme B, not silence), and chunks
+# inside a sentence are placed by SPOKEN-char fraction (_tts_norm: "2007" weighs as "two
+# thousand seven") across that sentence's speech time. No wav/visemes → plain linear over
+# the clip. Regenerable (wipes r_transcript first); portrait retime re-runs it,
 # so genvo/retime keep it in sync. A line displays `params.transcript` when set — the
 # authored `text` is what the TTS SPEAKS (phonetic spellings, "Heh~"…), the transcript is
 # what the viewer should READ; they default to the same string.
@@ -835,6 +836,29 @@ def _speech_segs(vis_uri):
     except Exception:
         return None
 
+def _speech_segs_audio(wav_uri):
+    """merged non-silence [t0,t1] segments straight from the take's WAV (20ms RMS gate, threshold
+    relative to the take's loud level). PREFERRED over the viseme track: Rhubarb renders a soft
+    inter-sentence pause as a near-closed mouth (viseme B), NOT silence (X) — that hid the real
+    0.46s pause in short2's b01 and let the captions run through the sentence boundary."""
+    try:
+        import soundfile as sf, numpy as np
+        x,sr=sf.read(resolve_uri(wav_uri))
+        if getattr(x,"ndim",1)>1: x=x.mean(1)
+        win=max(1,int(sr*0.02)); nw=len(x)//win
+        if not nw: return None
+        rms=np.sqrt((x[:nw*win].reshape(nw,win)**2).mean(1))
+        thr=0.08*float(np.percentile(rms,95))
+        segs=[]
+        for i in range(nw):
+            if rms[i]<thr: continue
+            s,e=i*0.02,(i+1)*0.02
+            if segs and s-segs[-1][1]<0.12: segs[-1][1]=e
+            else: segs.append([s,e])
+        return [s for s in segs if s[1]-s[0]>0.05] or None
+    except Exception:
+        return None
+
 def _frac_to_t(segs, f):
     """map a fraction of total SPEECH time to a source timestamp (skips the silences)."""
     tot=sum(e-s for s,e in segs)
@@ -843,6 +867,34 @@ def _frac_to_t(segs, f):
         if acc+(e-s)>=want-1e-9: return s+(want-acc)
         acc+=e-s
     return segs[-1][1]
+
+def _snap_bounds(ests, gaps):
+    """snap sentence-boundary time estimates onto the take's real pauses, IN ORDER. A tiny
+    sentence ("Go.") gets a fraction estimate that can sit nearer the WRONG pause, so nearest-gap
+    per boundary crosses assignments; order-preserving matching can't. Equal counts within
+    tolerance → 1:1 (the common case: every sentence break IS a pause); otherwise a small DP —
+    max matches then min total distance, a match must be within 0.8s, unmatched keeps its
+    estimate. Returns one source-time per boundary (the pause END = speech resume)."""
+    big=[g for g in gaps if g[1]-g[0]>=0.25]
+    if len(big)==len(ests) and all(abs((g[0]+g[1])/2-e)<=0.8 for g,e in zip(big,ests)):
+        return [g[1] for g in big]
+    m,n=len(ests),len(big)
+    best=[[None]*(n+1) for _ in range(m+1)]   # (matches, -cost, choice) from (i,j) to the ends
+    for i in range(m,-1,-1):
+        for j in range(n,-1,-1):
+            if i==m or j==n: best[i][j]=(0,0.0,None); continue
+            cands=[(best[i][j+1][0],best[i][j+1][1],'g'),      # skip this gap
+                   (best[i+1][j][0],best[i+1][j][1],'b')]      # boundary unmatched
+            d=abs((big[j][0]+big[j][1])/2-ests[i])
+            if d<=0.8: cands.append((best[i+1][j+1][0]+1,best[i+1][j+1][1]-d,'m'))
+            best[i][j]=max(cands)
+    out=[]; i=j=0
+    while i<m:
+        ch=best[i][j][2] if j<n else 'b'
+        if ch=='m': out.append(big[j][1]); i+=1; j+=1
+        elif ch=='b': out.append(ests[i]); i+=1
+        else: j+=1
+    return out
 
 def transcript_apply(p):
     """(re)build the r_transcript caption chunks from every VO line; returns chunk count."""
@@ -897,19 +949,50 @@ def transcript_apply(p):
             if ad.get("type")=="visemes" and (not vd or vd in (_norm_text(spoken),_norm_text(_tts_norm(spoken)))):
                 vuri=ad.get("uri")
         if not vuri: vuri=vys.get(_norm_text(spoken)) or vys.get(_norm_text(_tts_norm(spoken)))
-        segs=_speech_segs(vuri) if vuri else None
+        sad=p.get("assets",{}).get(c.get("asset") or "",{})   # the take's own wav = ground truth for pauses
+        segs=(_speech_segs_audio(sad["uri"]) if sad.get("type")=="speech" and sad.get("uri") else None) \
+             or (_speech_segs(vuri) if vuri else None)
         w0=float(c.get("params",{}).get("in") or 0.0)    # split take: its window of the audio
         w1=w0+c["dur"]*rate
         if segs:
             segs=[[max(s,w0),min(e,w1)] for s,e in segs if e>w0 and s<w1]
             segs=[s for s in segs if s[1]-s[0]>0.02] or None
-        tot=sum(len(ch) for ch in chunks) or 1
-        starts=[]; acc=0
-        for ch in chunks:
-            f=acc/tot
-            if segs: tl=c["start"]+(_frac_to_t(segs,f)-w0)/rate
-            else:    tl=c["start"]+0.1+f*max(0.0,c["dur"]-0.4)
-            starts.append(round(tl,3)); acc+=len(ch)
+        # chunk weights use the SPOKEN text (_tts_norm), not the display text — "2007" is four
+        # characters on screen but "two thousand seven" out loud; raw-char weighting started every
+        # chunk after a year too early (the short2 "Half your capture" desync).
+        wl=[max(1,len(_tts_norm(ch))) for ch in chunks]
+        tot=sum(wl)
+        starts=[]
+        if segs:
+            # sentence anchors: char-fraction estimate, then SNAP to speech-resume after the nearest
+            # real pause. TTS speaks each sentence at its own char rate, so the fraction alone lands
+            # a sentence boundary early/late; the wav pause is exact. Chunks inside a sentence are
+            # then char-fraction over THAT sentence's speech window, so drift can't cross a boundary.
+            sents=[]; curs=[]
+            for i,ch in enumerate(chunks):
+                curs.append(i)
+                if ch[-1] in ".!?…": sents.append(curs); curs=[]
+            if curs: sents.append(curs)
+            gaps=[(segs[i][1],segs[i+1][0]) for i in range(len(segs)-1)]
+            ests=[]; acc=0
+            for s in sents[:-1]:
+                acc+=sum(wl[i] for i in s)
+                ests.append(_frac_to_t(segs,acc/tot))
+            anchors=[segs[0][0]]
+            for ts in (_snap_bounds(ests,gaps) if ests else []):
+                anchors.append(max(ts,anchors[-1]+0.05))
+            anchors.append(segs[-1][1])
+            for si,s in enumerate(sents):
+                a0,a1=anchors[si],anchors[si+1]
+                ss=[[max(x0,a0),min(x1,a1)] for x0,x1 in segs if x1>a0 and x0<a1]
+                ss=[x for x in ss if x[1]-x[0]>0.02] or [[a0,max(a1,a0+0.05)]]
+                stot=sum(wl[i] for i in s); sacc=0
+                for i in s:
+                    starts.append(round(c["start"]+(_frac_to_t(ss,sacc/stot)-w0)/rate,3)); sacc+=wl[i]
+        else:
+            acc=0
+            for i,ch in enumerate(chunks):
+                starts.append(round(c["start"]+0.1+(acc/tot)*max(0.0,c["dur"]-0.4),3)); acc+=wl[i]
         # the last caption holds until ~the audio end — it must not vanish during a trailing word or
         # pause (the align track can legitimately end before the audio ends). Was anchored to the last
         # viseme only, which left a visible gap. Capped just past the clip end.
