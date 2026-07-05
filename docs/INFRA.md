@@ -97,15 +97,21 @@ comment/commentThread · caption · subscription · member · analytics.
   absolute path or `nix run`-style invocation). Upgrade = drop a newer release asset in place.
 - **MCP:** registered as `yutu` (Claude Code **local** scope for `/opt/src/slopstudio`, in `~/.claude.json`
   — not committed). Its tools load every session; verify with `claude mcp list` (→ `yutu … ✔ Connected`).
-  Re-add if lost: `claude mcp add yutu -e YUTU_CREDENTIAL=~/.config/yutu/client_secret.json
-  -e YUTU_CACHE_TOKEN=~/.config/yutu/youtube.token.json -- ~/.local/bin/yutu mcp`.
+  Re-add if lost (the wrapper cd's into the creds dir — see the gotcha below):
+  `claude mcp add yutu -- bash -c 'cd "$HOME/.config/yutu" && exec "$HOME/.local/bin/yutu" mcp'`.
 - **Credentials (out of git):** `~/.config/yutu/{client_secret.json,youtube.token.json}` — see the
-  `README.md` there for the **one-time OAuth** (enable YouTube Data API v3 → Desktop OAuth client →
-  `yutu auth -c … -t …`, signing in as the @GemmaExplains account). The MCP + the dashboard Channel tab
-  are non-functional until that's done; the tools list fine before it (auth only bites on real API calls).
-- **Quick checks:** `~/.local/bin/yutu channel list --mine -o table` (subs/views/videos) ·
-  `yutu video list --mine` · `yutu commentThread list --allThreadsRelatedToChannelId <id>`. The dashboard
-  surfaces channel stats read-only on its **Channel** tab (`/api/channel`, cached ~5 min).
+  `README.md` there for the **one-time OAuth**: enable YouTube Data API v3 → **Desktop** OAuth client →
+  **PUBLISH the app to production** (Testing-mode refresh tokens die after 7 days) → `env -C ~/.config/yutu
+  ~/.local/bin/yutu auth`, signing in as the @GemmaExplains account. The MCP + dashboard Channel tab are
+  non-functional until that's done; tools list fine before it (auth only bites on real API calls).
+- **⚠ yutu path gotcha:** yutu reads `client_secret.json`/`youtube.token.json` from its **working
+  directory** (default filenames). Absolute `-c`/`-t`/`YUTU_CREDENTIAL` paths get mis-parsed as base64
+  (a `.`-containing path fails at the first dot) — so **always run yutu from the creds dir** (`env -C
+  ~/.config/yutu …` or the MCP bash-cd wrapper). The token auto-refreshes in place there.
+- **Quick checks (from the creds dir):** `env -C ~/.config/yutu ~/.local/bin/yutu channel list --mine -o
+  table` (subs/views/videos) · `… video list --mine` · `… commentThread list
+  --allThreadsRelatedToChannelId <id>`. The dashboard surfaces channel stats read-only on its **Channel**
+  tab (`/api/channel`, cached ~5 min).
 - **Safety:** yutu holds full read+write scope. **Default to read/inspect; confirm before mutating**
   (uploads, comment posts/deletes, metadata/playlist edits) — same brand-safety bar as social posting.
 

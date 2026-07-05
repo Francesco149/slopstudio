@@ -41,8 +41,8 @@ EDITOR_EXE = os.path.join(ROOT, "build", "slopstudio.exe")
 THUMB_EXE = os.path.join(ROOT, "build", "slopthumb.exe")
 BRAND_PKG = os.path.join(GEMMA, "brand-package")
 YUTU_BIN = shutil.which("yutu") or os.path.expanduser("~/.local/bin/yutu")
-YUTU_CRED = os.path.expanduser("~/.config/yutu/client_secret.json")
-YUTU_TOKEN = os.path.expanduser("~/.config/yutu/youtube.token.json")
+YUTU_DIR = os.path.expanduser("~/.config/yutu")           # yutu reads creds from its CWD
+YUTU_TOKEN = os.path.join(YUTU_DIR, "youtube.token.json")  # exists ⇒ OAuth done
 
 sys.path.insert(0, TOOLS)
 import social  # reuse the queue parser / window logic — one source of truth
@@ -204,10 +204,12 @@ def channel_state(force=False):
     now = time.time()
     if not force and _CHAN["data"] and now - _CHAN["ts"] < 300:
         return _CHAN["data"]
-    env = {**os.environ, "YUTU_CREDENTIAL": YUTU_CRED, "YUTU_CACHE_TOKEN": YUTU_TOKEN}
     try:
+        # yutu reads client_secret.json / youtube.token.json from its CWD (default filenames);
+        # absolute path/env forms get mis-parsed as base64, so run from the creds dir.
         r = subprocess.run([YUTU_BIN, "channel", "list", "--mine", "-o", "json",
-                            "-p", "id,snippet,statistics"], env=env, capture_output=True, text=True, timeout=25)
+                            "-p", "id,snippet,statistics"], cwd=YUTU_DIR,
+                           capture_output=True, text=True, timeout=25)
         if r.returncode != 0:
             return {"ok": False, "error": (r.stderr or "yutu channel list failed").strip()[:400]}
         ch = _first_channel(json.loads(r.stdout or "{}"))
