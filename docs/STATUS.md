@@ -75,6 +75,29 @@ composing a video as an agent, **`docs/LLM_WORKFLOW.md`**.
   (param-hash excludes position → drags never re-rasterize) + **D3D11 compositor** (premult rotated quads,
   mosaic quantize shader, offscreen RT the preview shows directly; toolbar shows build/gpu ms). CPU compose
   stays the deterministic export path — **verified byte-identical pre/post refactor** (cmp on c-deadpan).
+- **★ PROJECT ANCHORS: per-project tunable category base positions — NEW 2026-07-05 (owner idea).**
+  `meta.anchors` (category → base [x,y]) + `params.anchor` on clips: the editor renders **anchor +
+  transform.pos**, so a clip's pos is an OFFSET and ONE Project-panel knob nudges the whole category in
+  THAT project only; no param → absolute pos (full back-compat — luckymas3 untouched). Editor: anchor
+  applied at the central cx/cy transform read (preview = export), Project panel "anchors" DragFloat2
+  knobs, inspector shows "offset from anchor …". `slop.py`: skeleton seeds per-format defaults + tags
+  host clips (`bust`, `code_host`); transcript tags chunks (`tr_room/tr_scene/tr_content/tr_code`).
+  Defaults distilled from the owner's luckymas tuning: **landscape bust [0,-104]** (median of 53
+  hand-nudges — busts sat too low), **code_host corner [660,194]** (was 320), **portrait tr_scene
+  [0,-448]** (the b02 ghost-girl band: room beat WITH a beat-authored scene backdrop, detected via a
+  non-`c_*` r_bg clip; solo-room stays tr_room -673). Both shorts regenerated onto anchors (positions
+  byte-identical to the owner's tweaks) + re-exported. Docs: PROJECT_FORMAT §meta + §clips.
+- **★ TRANSCRIPT TIMING v3 (same day): global pause↔sentence matching + wav-fallback visibility.**
+  v2's nearest-gap snap (0.8s window) crossed assignments on staccato runs — short2 b02 "No grey box /
+  No title bar" grabbed the wrong pause (owner report). `_sent_cuts` now chooses cuts GLOBALLY:
+  prefer the most pause-cuts, then min Σ|sentence speech dur − spoken-char share|, pause-cut admissible
+  only within a 0.3×–3× duration band (rejects mid-sentence comma pauses posing as boundaries); a
+  boundary with no plausible pause stays char-proportional ("free"). Verified b02 all 4 boundaries on
+  their true pauses (6.184/7.292/8.446/12.492 play) with the comma pause skipped; b08 unchanged-correct
+  incl. the skipped dramatic pause; b10 "Go" exact. Also: `transcript` now prints a per-run
+  **"timing: N wav / N viseme / N linear"** line — the wav→viseme fallback is a silent quality cliff
+  (scratch-dir copies resolve `cache://` but not project-relative `assets/…` uris → visemes → Rhubarb's
+  B-shaped pauses invisible → drift; run transcript against the real project dir).
 - **★ TRANSCRIPT TIMING v2: wav-RMS pauses + spoken-char weights + sentence snap — NEW 2026-07-05 (owner:
   short2 "Half your capture" popped at 2.76s instead of ~3.46s).** `tools/slop.py` `transcript_apply`;
   both shorts regenerated + re-exported. Three compounding causes, all fixed:

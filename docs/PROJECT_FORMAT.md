@@ -44,6 +44,7 @@ by `start`.
   "song_credits": true,
   "song_credit_corner": "tl",
   "song_credit_secs": 10,
+  "anchors": { "bust": [0, -104], "code_host": [660, 194], "tr_room": [0, -673] },
   "notes": "video essay; dense reaction pics; Gemma host"
 }
 ```
@@ -179,6 +180,13 @@ the param UI from the schema, so adding a model needs no editor change.
   (the things that change the asset hash) plus presentation-only fields.
 - `effects` is an ordered stack (each reads the previous output as `src`).
 - `transform` is the clip's placement in the composite.
+- **`params.anchor`** (optional) names a key in **`meta.anchors`** (category → base `[x,y]`;
+  seeded by `slop.py skeleton`/`transcript`, tuned in the Project panel). The clip renders at
+  **anchor + transform.pos**, so its pos is an OFFSET and one project-level knob nudges every
+  clip of that category — in that project only. No `anchor` param → absolute pos (back-compat).
+  Current categories: `bust` (host bust shots), `code_host` (the host while a code card is up),
+  `tr_room` / `tr_scene` / `tr_content` / `tr_code` (the shorts transcript bands: solo-room ·
+  room-with-scene-backdrop · content beat · code beat).
 - `keyframes` maps a dotted param path → an ordered list of keyframes. Each keyframe has
   `t`, `v`, and an `interp` (`linear · bezier · constant · spring`); `bezier` adds
   `in`/`out` handle vectors, `spring` adds `{stiffness,damping}`. **Any** numeric param is

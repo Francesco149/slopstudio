@@ -110,10 +110,16 @@ with the portrait profile on top:
   on-screen chunks drop a **trailing full-stop period** (a period reads unnatural at the
   end of a big caption); `? ! … ,` and mid-text punctuation stay (tone/context for a
   muted viewer). Sentence boundaries still use the original punctuation for chunking.
-  **Timing:** chunks are word-timed from the paired viseme track ONLY if its `dialog`
-  matches the line — a stale viseme (left paired after a VO regen) is ignored, falling back
-  to an even linear spread, so the captions don't rush + end early. The last chunk always
-  **holds until the audio end** (never vanishes during a trailing word/pause).
+  **Timing:** speech/pause segments come from the take's own WAV (RMS gate; the viseme
+  track is only a fallback — Rhubarb hides soft pauses as viseme B), chunk weights use the
+  SPOKEN text (`_tts_norm`: "2007" weighs as "two thousand seven"), and sentence boundaries
+  snap to real pauses via a global order-preserving match (comma pauses rejected). The
+  command prints `timing: N wav / N viseme / N linear` — a non-wav count means asset uris
+  didn't resolve (run against the real project dir). The last chunk always **holds until
+  the audio end** (never vanishes during a trailing word/pause). **Position:** each chunk
+  rides a project ANCHOR (`params.anchor` → `meta.anchors`): `tr_room` (solo room, top) /
+  `tr_scene` (room with a beat backdrop, lower) / `tr_content` / `tr_code` — one Project-panel
+  knob per band, per project.
 - **Portrait code cards:** wrap the code NARROW (~30–40 cols — there's vertical room,
   and width costs font size); put comments on their OWN LINE ABOVE the call, not
   trailing. Keep card titles short (`file.c · Function`) — long titles clip.

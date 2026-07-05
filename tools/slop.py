@@ -385,6 +385,7 @@ def cmd_skeleton(a):
         else: ensure_row(p,rid)
     p["rows"]["r_vo"]["params"]=OD([("voice_preset",voice),("normalize",True)])
     p["rows"]["r_av"]["params"]=OD([("rig",rig),("driven_by","r_vo")])
+    ensure_anchors(p)   # per-project tunable base positions (Project panel) — clips ride params.anchor
     akeys={}   # uri -> asset key (dedupe; repeats become visible to lint)
     def asset_for(uri, typ):
         if uri in akeys: return akeys[uri]
@@ -461,7 +462,10 @@ def cmd_skeleton(a):
                 p["clips"][cv]["params"]["sfx_cue"]=b["sound"]
                 if "sound_at" in b: p["clips"][cv]["params"]["sfx_at"]=float(b["sound_at"])
             if not b.get("solo"):   # solo:true = no host this beat (readable full-width shots, e.g. the apology)
-                ca=new_clip(p,"avatar","r_av",t,dur+gap,OD([("emotion",emo),("framing",b.get("framing","bust"))]),f"{pref}_av")
+                fr=b.get("framing","bust")
+                aprm=OD([("emotion",emo),("framing",fr)])
+                if fr=="bust": aprm["anchor"]="bust"   # rides the project's bust anchor (Project panel knob)
+                ca=new_clip(p,"avatar","r_av",t,dur+gap,aprm,f"{pref}_av")
         def make_visual(v, at, vdur, sfx=""):
             """one visual spec → clip(s). Returns (clip_ids, needs_filler)."""
             lay=v.get("layout","inset")
@@ -613,11 +617,11 @@ def cmd_skeleton(a):
             # portrait: the code card is TOP-docked and auto-sizes to its content, so there's always room
             # for a BIG host at the bottom (verified on 7- and 12-line cards — no overlap). She runs big +
             # centered, matching the owner's short1 b07 tweak, on EVERY code beat (short or long). Landscape
-            # keeps the small lower-right code-shot host.
-            if portrait:
-                av["transform"]["pos"]=[4,120]; av["transform"]["scale"]=[1.17,1.17]
-            else:
-                av["transform"]["pos"]=list(S(660,320)); av["transform"]["scale"]=[0.62,0.62]
+            # keeps the small lower-right code-shot host. Position rides the code_host ANCHOR
+            # (portrait [4,120] · landscape [660,194] — the owner's settled corner) — one knob per project.
+            av["params"]["anchor"]="code_host"
+            av["transform"]["pos"]=[0,0]
+            av["transform"]["scale"]=[1.17,1.17] if portrait else [0.62,0.62]
         # plate: a corner caption drawn WITH the beat's (or the held) visual — not a visual change
         if b.get("plate") and line:
             pl=b["plate"]
@@ -822,6 +826,24 @@ def _tr_chunks(text):
     flush()
     return chunks
 
+# ── project anchors: per-project tunable category base positions (meta.anchors) ──
+# A clip that names one (params.anchor) renders at anchor + transform.pos in the editor, so the
+# clip's pos is an OFFSET and ONE Project-panel knob nudges the whole category in THAT project
+# only (owner idea 2026-07-05). Clips without the param keep absolute pos — full back-compat.
+# Defaults distilled from the owner's luckymas hand-tuning: landscape busts sat ~104px too low
+# (median of 53 nudges), the code-shot corner host settled at y=194 (was 320), portrait
+# scene-beat transcript at -448 (the b02 ghost-girl tweak).
+ANCHORS_POR ={"bust":[0,0],"code_host":[4,120],
+              "tr_room":[0,-673],"tr_scene":[0,-448],"tr_content":[0,-70],"tr_code":[0,0]}
+ANCHORS_LAND={"bust":[0,-104],"code_host":[660,194],"tr_content":[0,330]}
+def ensure_anchors(p, keys=None):
+    """seed missing meta.anchors entries (format defaults); keys=None seeds the full set."""
+    dfl=ANCHORS_POR if p.get("meta",{}).get("format")=="portrait" else ANCHORS_LAND
+    a=p.setdefault("meta",OD()).setdefault("anchors",OD())
+    for k in (keys if keys is not None else dfl):
+        if k in dfl: a.setdefault(k,list(dfl[k]))
+    return a
+
 def _speech_segs(vis_uri):
     """merged non-silence [t0,t1] segments of a viseme track (source-audio seconds)."""
     try:
@@ -868,32 +890,42 @@ def _frac_to_t(segs, f):
         acc+=e-s
     return segs[-1][1]
 
-def _snap_bounds(ests, gaps):
-    """snap sentence-boundary time estimates onto the take's real pauses, IN ORDER. A tiny
-    sentence ("Go.") gets a fraction estimate that can sit nearer the WRONG pause, so nearest-gap
-    per boundary crosses assignments; order-preserving matching can't. Equal counts within
-    tolerance → 1:1 (the common case: every sentence break IS a pause); otherwise a small DP —
-    max matches then min total distance, a match must be within 0.8s, unmatched keeps its
-    estimate. Returns one source-time per boundary (the pause END = speech resume)."""
-    big=[g for g in gaps if g[1]-g[0]>=0.25]
-    if len(big)==len(ests) and all(abs((g[0]+g[1])/2-e)<=0.8 for g,e in zip(big,ests)):
-        return [g[1] for g in big]
-    m,n=len(ests),len(big)
-    best=[[None]*(n+1) for _ in range(m+1)]   # (matches, -cost, choice) from (i,j) to the ends
-    for i in range(m,-1,-1):
-        for j in range(n,-1,-1):
-            if i==m or j==n: best[i][j]=(0,0.0,None); continue
-            cands=[(best[i][j+1][0],best[i][j+1][1],'g'),      # skip this gap
-                   (best[i+1][j][0],best[i+1][j][1],'b')]      # boundary unmatched
-            d=abs((big[j][0]+big[j][1])/2-ests[i])
-            if d<=0.8: cands.append((best[i+1][j+1][0]+1,best[i+1][j+1][1]-d,'m'))
-            best[i][j]=max(cands)
-    out=[]; i=j=0
-    while i<m:
-        ch=best[i][j][2] if j<n else 'b'
-        if ch=='m': out.append(big[j][1]); i+=1; j+=1
-        elif ch=='b': out.append(ests[i]); i+=1
-        else: j+=1
+def _sent_cuts(exps, segs):
+    """place one cut per sentence boundary — at a real pause (speech resumes at the next seg) or
+    'free' (char-proportional) — chosen GLOBALLY: prefer the most pause-cuts (a TTS take pauses at
+    nearly every sentence break), then minimize Σ|sentence speech dur − its spoken-char share|.
+    Absolute-distance windows can't do this: on staccato runs ("No window. No grey box. No title
+    bar.") the char estimates drift past any fixed window and nearest-gap matching crosses
+    assignments. A pause-cut is only admissible if the sentence it closes stays within a sane
+    band of its expected duration (0.3×−3× +0.4s slack), which is what rejects a mid-sentence
+    comma pause posing as a boundary. exps = per-SENTENCE expected speech durations (spoken-char
+    share × total speech); returns one source-time per boundary."""
+    durs=[e-s for s,e in segs]; T=sum(durs)
+    cuts=[]; acc=0.0                      # (speech consumed before the cut, source time of resume)
+    for i in range(len(segs)-1):
+        acc+=durs[i]
+        if segs[i+1][0]-segs[i][1]>=0.2: cuts.append((acc,segs[i+1][0]))
+    K=len(exps)-1
+    memo={}
+    def best(k,cum,j):
+        if k==K: return (0,-abs((T-cum)-exps[K]),())
+        key=(k,round(cum,3),j)
+        if key in memo: return memo[key]
+        nf=min(cum+exps[k],T)             # free cut: exactly char-proportional, no pause consumed
+        jj=j
+        while jj<len(cuts) and cuts[jj][0]<=nf+1e-6: jj+=1
+        fc=best(k+1,nf,jj)
+        r=(fc[0],fc[1],(('f',nf),)+fc[2])
+        lo,hi=max(0.05,0.3*exps[k]-0.2),3*exps[k]+0.4
+        for i in range(j,len(cuts)):
+            d=cuts[i][0]-cum
+            if d<lo or d>hi: continue
+            gc=best(k+1,cuts[i][0],i+1)
+            r=max(r,(gc[0]+1,gc[1]-abs(d-exps[k]),(('g',i),)+gc[2]))
+        memo[key]=r; return r
+    out=[]
+    for kind,v in best(0,0.0,0)[2]:
+        out.append(cuts[v][1] if kind=='g' else _frac_to_t(segs,v/T))
     return out
 
 def transcript_apply(p):
@@ -925,11 +957,20 @@ def transcript_apply(p):
             if p["rows"].get(c2.get("row",""),{}).get("type")!="code": continue
             if c2["start"]<t1 and c2["start"]+c2["dur"]>t0: return True
         return False
+    def span_has_scene_bg(t0,t1):
+        """a beat-authored backdrop (bNN_backdrop — not the compiled room bg, c_*) over [t0,t1]:
+        the host stands fully in frame WITH a scene backdrop → its own caption band, tr_scene
+        (owner's b02 ghost-girl tweak: -448, lower than the solo-room -673)."""
+        for cid2 in p["rows"].get("r_bg",{}).get("clips",[]):
+            c2=p["clips"].get(cid2)
+            if c2 and not cid2.startswith("c_") and c2["start"]<t1 and c2["start"]+c2["dur"]>t0: return True
+        return False
+    ensure_anchors(p,["tr_room","tr_scene","tr_content","tr_code"])   # chunks ride these (Project panel)
     vys={}   # normalized dialog -> viseme uri (pairing fallback for non-skeleton ids)
     for ak,ad in p.get("assets",{}).items():
         if ad.get("type")=="visemes" and ad.get("uri"):
             vys.setdefault(_norm_text(ad.get("params",{}).get("dialog")), ad["uri"])
-    n=0
+    n=0; nsrc={"wav":0,"viseme":0,"linear":0}
     for cid,c in sorted(p["clips"].items(), key=lambda kv: kv[1].get("start",0)):
         if p["rows"].get(c.get("row",""),{}).get("type")!="tts": continue
         spoken=c.get("params",{}).get("text","")
@@ -950,8 +991,11 @@ def transcript_apply(p):
                 vuri=ad.get("uri")
         if not vuri: vuri=vys.get(_norm_text(spoken)) or vys.get(_norm_text(_tts_norm(spoken)))
         sad=p.get("assets",{}).get(c.get("asset") or "",{})   # the take's own wav = ground truth for pauses
-        segs=(_speech_segs_audio(sad["uri"]) if sad.get("type")=="speech" and sad.get("uri") else None) \
-             or (_speech_segs(vuri) if vuri else None)
+        segs=_speech_segs_audio(sad["uri"]) if sad.get("type")=="speech" and sad.get("uri") else None
+        src="wav" if segs else "viseme"
+        if not segs: segs=_speech_segs(vuri) if vuri else None
+        if not segs: src="linear"
+        nsrc[src]+=1
         w0=float(c.get("params",{}).get("in") or 0.0)    # split take: its window of the audio
         w1=w0+c["dur"]*rate
         if segs:
@@ -973,13 +1017,10 @@ def transcript_apply(p):
                 curs.append(i)
                 if ch[-1] in ".!?…": sents.append(curs); curs=[]
             if curs: sents.append(curs)
-            gaps=[(segs[i][1],segs[i+1][0]) for i in range(len(segs)-1)]
-            ests=[]; acc=0
-            for s in sents[:-1]:
-                acc+=sum(wl[i] for i in s)
-                ests.append(_frac_to_t(segs,acc/tot))
+            T=sum(e-s for s,e in segs)
+            exps=[sum(wl[i] for i in s)/tot*T for s in sents]
             anchors=[segs[0][0]]
-            for ts in (_snap_bounds(ests,gaps) if ests else []):
+            for ts in (_sent_cuts(exps,segs) if len(sents)>1 else []):
                 anchors.append(max(ts,anchors[-1]+0.05))
             anchors.append(segs[-1][1])
             for si,s in enumerate(sents):
@@ -998,24 +1039,25 @@ def transcript_apply(p):
         # viseme only, which left a visible gap. Capped just past the clip end.
         endl=c["start"]+(max((segs[-1][1]-w0)/rate+0.35, c["dur"]-0.05) if segs else c["dur"])
         starts.append(round(min(endl,c["start"]+c["dur"]+0.3),3))
-        # ROOM/host beat → she OWNS the frame (solo-big); the BOTTOM is her body + the YouTube-Shorts
-        # controls/description strip, so the transcript rides the TOP (just below the top-unsafe band),
-        # clear above her head. A CONTENT beat keeps it mid-band under the top content. (User: room-scene
-        # transcript to the top — the earlier "low in room scenes" collided with the player controls.)
+        # Caption band = a project ANCHOR (offset stays 0 — tune the band per project, not per chunk):
+        # ROOM/host beat → tr_room, TOP (she OWNS the frame; the bottom is her body + the Shorts
+        # controls strip). Room WITH a scene backdrop (she stands fully in frame in a location,
+        # e.g. the ghost-girl wallpaper shot) → tr_scene, a lower band (owner's b02 tweak). CODE
+        # beat → tr_code, CENTER (clear of the top-docked card). Other content → tr_content
+        # mid-upper; landscape → tr_content low band.
         room = por and not span_has_content(c["start"], c["start"]+c["dur"])
         code = por and span_has_code(c["start"], c["start"]+c["dur"])
-        # room/bg-desk → TOP (above the host); CODE beat → CENTER y=0 (below the top-docked card, clear of it);
-        # other content → mid-upper band; landscape → low. (owner: code transcript y offset 0.)
-        pos = [0,-673] if room else ([0,0] if code else ([0,-70] if por else [0,330]))
+        scene= room and span_has_scene_bg(c["start"], c["start"]+c["dur"])
+        akey = (("tr_scene" if scene else "tr_room") if room else ("tr_code" if code else "tr_content")) if por else "tr_content"
         for i,ch in enumerate(chunks):
             last = i==len(chunks)-1
             prm=OD([("style","plain"),("text",_tr_display(ch)),("font_px",54 if por else 46),
-                    ("align","center"),("box",True),("sfx",False),
+                    ("align","center"),("box",True),("sfx",False),("anchor",akey),
                     ("transition",OD([("in","pop"),("out","fade" if last else False)]))])
-            tc=new_clip(p,"caption",rid,starts[i],round(max(0.35,starts[i+1]-starts[i]),3),
-                        prm,f"{cid}_tr{i+1}")
-            p["clips"][tc]["transform"]["pos"]=list(pos)
+            new_clip(p,"caption",rid,starts[i],round(max(0.35,starts[i+1]-starts[i]),3),
+                     prm,f"{cid}_tr{i+1}")
         n+=len(chunks)
+    if n: print(f"  timing: {nsrc['wav']} wav / {nsrc['viseme']} viseme / {nsrc['linear']} linear lines", file=sys.stderr)
     return n
 
 def cmd_transcript(p, a):

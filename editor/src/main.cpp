@@ -108,6 +108,11 @@ struct Project {
     bool songCredits = true;    // auto "now playing" chip (♪ title — artist) at each song's start (meta.song_credits)
     double songCreditSecs = 10; // how long the chip holds before fading (meta.song_credit_secs)
     std::string songCreditCorner = "tl";  // tl/tr/bl/br — where the chip sits (meta.song_credit_corner)
+    // per-project tunable position anchors (meta.anchors): category key → base [x,y]. A clip that
+    // names one (params.anchor, e.g. "bust"/"code_host"/"tr_room") renders at anchor + transform.pos,
+    // so its pos is an OFFSET and one Project-panel knob nudges the whole category in THIS project
+    // only (owner idea 2026-07-05). Clips without the param keep absolute pos — full back-compat.
+    std::map<std::string, std::array<double, 2>> anchors;
     std::vector<Track> tracks;
     std::map<std::string, Row> rows;
     std::map<std::string, Clip> clips;
@@ -175,6 +180,10 @@ static Project parse_project_json(json j, const std::string& path) {
         p.songCredits = meta.value("song_credits", true);         // auto on-screen now-playing chip
         p.songCreditSecs = meta.value("song_credit_secs", 10.0);
         p.songCreditCorner = meta.value("song_credit_corner", std::string("tl"));
+        if (meta.contains("anchors") && meta["anchors"].is_object())
+            for (auto& kv : meta["anchors"].items())
+                if (kv.value().is_array() && kv.value().size() == 2)
+                    p.anchors[kv.key()] = {kv.value()[0].get<double>(), kv.value()[1].get<double>()};
         json assetsj = j.value("assets", json::object());  // key → {uri, status, …}
         for (auto& kv : assetsj.items()) {
             const json& a = kv.value();
@@ -2088,6 +2097,17 @@ static std::string jstr(const json& o, const char* k) {
     return "";
 }
 static std::string ext_of(const std::string& uri);  // defined below; used by resolve_driven_audio
+
+// the clip's project anchor base (params.anchor → meta.anchors[key]); [0,0] when unanchored.
+// Applied wherever transform.pos lands on screen, so pos stays a pure offset from it.
+static ImVec2 anchor_off(const Project& p, const Clip& c) {
+    std::string k = jstr(c.params, "anchor");
+    if (!k.empty()) {
+        auto it = p.anchors.find(k);
+        if (it != p.anchors.end()) return ImVec2((float)it->second[0], (float)it->second[1]);
+    }
+    return ImVec2(0, 0);
+}
 
 // Minimal TOML-subset reader: just enough to pull [providers.<name>] url/enabled.
 // We don't need a full TOML parser — the config is small and this keeps the editor
@@ -5155,8 +5175,9 @@ static void composite_frame(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0, 
                 // effective transform: keyframed (sampled at the playhead) → static fallback.
                 // This is the motion-graphics layer — Ken Burns (pos+scale), fades (opacity).
                 double T = st.playhead;
-                float cx = center.x + (float)anim_xform(c, "transform.pos", 0, T, c.tx_pos[0]) * s;
-                float cy = center.y + (float)anim_xform(c, "transform.pos", 1, T, c.tx_pos[1]) * s;
+                ImVec2 anc = anchor_off(p, c);   // project anchor base; transform.pos is an offset from it
+                float cx = center.x + (anc.x + (float)anim_xform(c, "transform.pos", 0, T, c.tx_pos[0])) * s;
+                float cy = center.y + (anc.y + (float)anim_xform(c, "transform.pos", 1, T, c.tx_pos[1])) * s;
                 float eSclX = (float)anim_xform(c, "transform.scale", 0, T, c.tx_scale[0]);
                 float eSclY = (float)anim_xform(c, "transform.scale", 1, T, c.tx_scale[1]);
                 float eAncX = (float)anim_xform(c, "transform.anchor", 0, T, c.tx_anchor[0]);
@@ -5427,7 +5448,7 @@ static void composite_frame(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0, 
                           bool hasContent; float contentCx;
                           content_centroid_span(p, c.start, c.start + c.dur, center, s, fw, hasContent, contentCx);
                           if (hasContent) {
-                              float d = contentCx - (center.x + (float)c.tx_pos[0] * s);   // content vs THIS host
+                              float d = contentCx - (center.x + (anc.x + (float)c.tx_pos[0]) * s);   // content vs THIS host
                               side = d > fw * 0.04f ? 1 : d < -fw * 0.04f ? -1 : 0;
                           }
                       } }
@@ -8449,6 +8470,22 @@ static void draw_project_settings(Project& p) {
                               "TOP) from every VO line, loosely word-timed to each take's speech. Runs slop.py in a console;\n"
                               "the editor live-reloads the result — then tweak text / drag / reposition each chunk like any caption.");
     }
+    // ── anchors: per-project category bases (meta.anchors) — one knob nudges every clip that
+    // names the key in params.anchor (their pos is an offset from it). Seeded by slop.py
+    // skeleton/transcript; only ever shown when the project has some.
+    if (!p.anchors.empty()) {
+        ImGui::SeparatorText("anchors");
+        ImGui::TextDisabled("category base positions — clips with params.anchor ride these");
+        for (auto& kv : p.anchors) {
+            float v[2] = {(float)kv.second[0], (float)kv.second[1]};
+            ImGui::SetNextItemWidth(200);
+            if (ImGui::DragFloat2(kv.first.c_str(), v, 1.0f)) {
+                kv.second = {(double)v[0], (double)v[1]};
+                meta["anchors"][kv.first] = json::array({(double)v[0], (double)v[1]});
+                g_undoDirty = true;
+            }
+        }
+    }
     ImGui::Separator();
     ImGui::TextDisabled("%s  %g x %g @ %d fps", p.title.c_str(), p.width, p.height, p.fps);
 }
@@ -8714,6 +8751,12 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
             float pos[2] = {(float)c.tx_pos[0], (float)c.tx_pos[1]};
             float op = (float)c.tx_opacity;
             if (ImGui::DragFloat2("pos (px)", pos, 1.0f)) { c.tx_pos[0] = pos[0]; c.tx_pos[1] = pos[1]; }
+            {   // anchored clip → pos is an OFFSET from the project anchor (Project panel tunes the base)
+                std::string ank = jstr(c.params, "anchor");
+                if (!ank.empty() && p.anchors.count(ank))
+                    ImGui::TextDisabled("offset from anchor \"%s\" [%g, %g]", ank.c_str(),
+                                        p.anchors[ank][0], p.anchors[ank][1]);
+            }
             // ── size: actual output px (default) ⇄ scale factor, aspect-locked + synchronized.
             //    Both drive transform.scale; when scale is KEYFRAMED the edit rescales the whole
             //    track (so resizing the CRT / a zoomed host works, not a dead static field). ──
