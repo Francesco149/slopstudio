@@ -243,6 +243,37 @@ def cmd_export(a):
     run(args, cwd=ROOT)
 
 
+def _to_clipboard(text, srcfile=None):
+    """WSL → Windows clipboard, Unicode-safe (the transcript has JP like らき☆マス). Prefer
+    PowerShell reading the UTF-8 sidecar (survives non-ASCII); fall back to clip.exe / linux tools."""
+    if srcfile and shutil.which("powershell.exe") and shutil.which("wslpath"):
+        win = subprocess.run(["wslpath", "-w", srcfile], capture_output=True, text=True).stdout.strip()
+        if win and subprocess.run(["powershell.exe", "-NoProfile", "-Command",
+                                   f"Set-Clipboard -Value (Get-Content -Raw -Encoding UTF8 -LiteralPath '{win}')"]).returncode == 0:
+            return "powershell Set-Clipboard"
+    for tool in (["clip.exe"], ["wl-copy"], ["xclip", "-selection", "clipboard"], ["pbcopy"]):
+        if shutil.which(tool[0]):
+            subprocess.run(tool, input=text.encode("utf-8"))
+            return tool[0]
+    return None
+
+
+def cmd_transcript(a):
+    cut = find_one(a.name, ".slop.json")
+    fmt = "srt" if a.srt else "txt"
+    r = slop("captions", rel(cut), "--fmt", fmt, "--sidecars", capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit(bad((r.stderr or "captions failed").strip()))
+    text, base = r.stdout, re.sub(r"\.slop\.json$", "", cut)
+    tool = _to_clipboard(text, base + (".srt" if a.srt else ".captions.txt"))
+    n = len([l for l in text.splitlines() if l.strip()]) if fmt == "txt" else text.count("-->")
+    print((ok(f"transcript ({n} lines, {fmt}) → clipboard") + dim(f"  [{tool}]")) if tool
+          else warn("no clipboard tool found — use the files below"))
+    print(dim(f"  files: {rel(base)}.{{captions.txt,srt,vtt}}"))
+    print("  YouTube Studio → Subtitles → Add language → " +
+          ("Upload file → pick the .srt (exact timing)" if a.srt else "Paste transcript + auto-sync (clipboard is ready)"))
+
+
 def cmd_status(a):
     if not a.name:
         print(col("projects", "1"))
@@ -283,10 +314,12 @@ def main():
     s = sub.add_parser("lint"); s.add_argument("name")
     s = sub.add_parser("look"); s.add_argument("name"); s.add_argument("--n", type=int, default=6)
     s = sub.add_parser("export"); s.add_argument("name"); s.add_argument("--final", action="store_true")
+    s = sub.add_parser("transcript"); s.add_argument("name"); s.add_argument("--srt", action="store_true", help="copy SRT (timed) instead of plain text")
     s = sub.add_parser("show"); s.add_argument("name")
     a = ap.parse_args()
     {"doctor": cmd_doctor, "wake": cmd_wake, "new": cmd_new, "status": cmd_status, "build": cmd_build,
-     "voice": cmd_voice, "lint": cmd_lint, "look": cmd_look, "export": cmd_export, "show": cmd_show}[a.cmd](a)
+     "voice": cmd_voice, "lint": cmd_lint, "look": cmd_look, "export": cmd_export, "transcript": cmd_transcript,
+     "show": cmd_show}[a.cmd](a)
 
 
 if __name__ == "__main__":

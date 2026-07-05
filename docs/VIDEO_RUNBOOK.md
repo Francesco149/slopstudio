@@ -102,6 +102,9 @@ vid export <name> --final     # 1080p60 mp4 in exports/ (+ a .credits.txt for CC
 - Finish `docs/<name>-packaging.md`: lock the title, paste the description (chapters from the
   act cards, CC-BY credits from the export's `.credits.txt`, links). See
   `luckymas/docs/001-packaging.md` for the reference shape.
+- **Accurate captions** (better than YouTube's auto-generated): `vid transcript <name>` copies
+  the exact spoken transcript to the clipboard → YouTube Studio → Subtitles → *paste + auto-sync*.
+  For exact timing instead, `vid transcript <name> --srt` (or upload the written `.srt`).
 - Localize extra languages if wanted: `python tools/localize-project.py <name>.slop.json`.
 - Upload video + thumbnail; queue runners-up in Test & Compare; set an end screen → next
   lecture. Socials: `python tools/social.py status` and `../gemma-branding/SOCIAL.md`.
@@ -127,4 +130,5 @@ vid show <name>       # compact timeline (durations, act cards, clip counts)
 | find problems | `vid lint <name>` |
 | eyeball the cut | `vid look <name>` |
 | render mp4 | `vid export <name> --final` |
+| captions → clipboard | `vid transcript <name> [--srt]` |
 | where is it | `vid status <name>` |

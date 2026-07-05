@@ -1064,6 +1064,42 @@ def cmd_transcript(p, a):
     n=transcript_apply(p)
     save(p,a.out or a.project); print(f"transcript: {n} chunks on r_transcript")
 
+
+def _ts(t, sep=","):   # seconds -> HH:MM:SS,mmm (srt) / HH:MM:SS.mmm (vtt)
+    t=max(0.0,float(t)); h=int(t//3600); m=int(t%3600//60); s=int(t%60); ms=int(round((t-int(t))*1000))
+    if ms==1000: s+=1; ms=0
+    return f"{h:02d}:{m:02d}:{s:02d}{sep}{ms:03d}"
+
+def caption_lines(p):
+    """[(start, end, text)] for every spoken VO line in timeline order — the true transcript.
+    Prefers params.transcript (reader-facing display text) over params.text (may be TTS-normalized)."""
+    out=[]
+    for cid,c in sorted(p["clips"].items(), key=lambda kv: kv[1].get("start",0)):
+        if p["rows"].get(c.get("row",""),{}).get("type")!="tts": continue
+        pr=c.get("params",{}) or {}
+        txt=(pr.get("transcript") or pr.get("text") or "").strip()
+        if not txt: continue
+        s=float(c.get("start",0)); out.append((s, s+float(c.get("dur",0)), " ".join(txt.split())))
+    return out
+
+def captions_str(lines, fmt):
+    if fmt=="txt":  return "\n".join(t for _,_,t in lines)+"\n"
+    if fmt=="srt":  return "".join(f"{i}\n{_ts(s)} --> {_ts(e)}\n{t}\n\n" for i,(s,e,t) in enumerate(lines,1))
+    if fmt=="vtt":  return "WEBVTT\n\n"+"".join(f"{_ts(s,'.')} --> {_ts(e,'.')}\n{t}\n\n" for s,e,t in lines)
+    raise ValueError(fmt)
+
+def cmd_captions(p, a):
+    lines=caption_lines(p)
+    if not lines: sys.exit("no VO lines found (is the cut compiled + voiced? `video.py voice`)")
+    if a.sidecars:
+        base=re.sub(r"\.slop\.json$","",a.project)
+        for f,ext in (("txt",".captions.txt"),("srt",".srt"),("vtt",".vtt")):
+            open(base+ext,"w",encoding="utf-8").write(captions_str(lines,f))
+        print(f"wrote {base}.{{captions.txt,srt,vtt}}  ({len(lines)} lines)", file=sys.stderr)
+    text=captions_str(lines, a.fmt)
+    if a.out: open(a.out,"w",encoding="utf-8").write(text); print(f"wrote {a.out} ({len(lines)} lines)", file=sys.stderr)
+    else:     sys.stdout.write(text)   # pipeable → e.g. `| clip.exe`
+
 # ── bed: lay a music bed across a span. The mixer does NOT loop audio, so a bed longer than
 # the source is REPEATED clips with a continuous source walk (params.in). Volume follows a
 # keyframed RAMP (the music-lane automation the editor + export both honour): `--ramp
@@ -1338,6 +1374,9 @@ def main():
     s.add_argument("--src", required=True, help="project to adopt generated assets from")
     s=sub.add_parser("retime", help="snap the timeline to real generated VO durations (time-warp)"); common(s)
     s=sub.add_parser("transcript", help="(re)generate the animated on-screen transcript from the VO lines"); common(s)
+    s=sub.add_parser("captions", help="export the spoken VO transcript (txt/srt/vtt) for YouTube subtitles"); common(s)
+    s.add_argument("--fmt", choices=["txt","srt","vtt"], default="txt", help="stdout format (default txt = paste into YouTube auto-sync)")
+    s.add_argument("--sidecars", action="store_true", help="also write .txt/.srt/.vtt next to the project (upload the .srt for exact timing)")
     s=sub.add_parser("musicmeta", help="backfill title/artist/credit on music assets from their ID3 tags"); common(s)
     s.add_argument("--sidecar", action="store_true", help="also write a <file>.meta.json next to each song")
     s=sub.add_parser("bed", help="lay a (looping) music bed with an optional keyframed volume ramp"); common(s)
@@ -1357,6 +1396,7 @@ def main():
     if a.cmd=="adopt": cmd_adopt(p,a); return
     if a.cmd=="retime": cmd_retime(p,a); return
     if a.cmd=="transcript": cmd_transcript(p,a); return
+    if a.cmd=="captions": cmd_captions(p,a); return
     if a.cmd=="bed": cmd_bed(p,a); return
     if a.cmd=="musicmeta": cmd_musicmeta(p,a); return
 
