@@ -374,8 +374,25 @@ static void append_undo_log(const std::string& snap) {
     f << snap << "\n";
 }
 
+// auto-discover a gemma brand package by walking up from the doc's dir, so the interactive
+// UI (and export) load branding even when the doc doesn't name one. Returns a path relative
+// to startDir, or "".
+static std::string find_brand_package(const std::string& startDir) {
+    std::string up = ".";
+    for (int i = 0; i < 8; i++) {
+        for (const char* sub : {"/gemma-branding/brand-package", "/brand-package"}) {
+            std::string rel = up + sub;
+            std::error_code ec;
+            if (fs::exists(host_path(path_join(startDir, rel + "/brand.json")), ec)) return rel;
+        }
+        up += "/..";
+    }
+    return "";
+}
+
 static void resolve_brand() {
     std::string b = !g_app.brandOverride.empty() ? g_app.brandOverride : js(g_app.doc, "brand", "");
+    if (b.empty()) b = find_brand_package(g_app.docDir);   // auto-load the gemma brand if present
     g_app.brand = b.empty() ? Brand() : load_brand(path_join(g_app.docDir, b));
 }
 
@@ -1068,6 +1085,7 @@ static int headless_export(const std::string& docPath, const std::string& brandO
     if (doc.is_discarded()) { fprintf(stderr, "parse error in %s\n", docPath.c_str()); return 1; }
     std::string docDir = path_dir(docPath);
     std::string b = !brandOverride.empty() ? brandOverride : js(doc, "brand", "");
+    if (b.empty()) b = find_brand_package(docDir);   // auto-load the gemma brand if present
     Brand brand = b.empty() ? Brand() : load_brand(path_join(docDir, b));
     if (!b.empty() && !brand.ok) fprintf(stderr, "warning: %s\n", brand.err.c_str());
 

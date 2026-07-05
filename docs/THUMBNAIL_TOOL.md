@@ -43,6 +43,12 @@ Coordinates are **logical canvas px**; `x`/`y` are the layer **center**. Colors 
 `#rrggbb[aa]` or `$name` (resolved via the brand palette). Any layer: `hidden`, `opacity`,
 `rot` (deg).
 
+**New docs auto-brand**: `thumb.py new` (and the GUI/export) walk up for the gemma package
+(`gemma-branding/brand-package`) and load it with no `--brand` flag; a new branded doc defaults to
+the package's `default_template` (the `reaction-marks` a2/b2/thirst layout — artifact+ring+arrow,
+Gemma reacting right, headline, "?!"), so authoring is "fill the text + pick the 2 images + nudge
+the marks". `--blank` opts out to a bare bg.
+
 | type | fields |
 |---|---|
 | `bg` | `fill`, `grad_to` + `grad_angle`, `image` (cover-fit) + `blur`/`darken`/`opacity`, `vignette`; **`pattern`:`diamond`/`argyle`** quilt — `cell`, `pattern_fill` (alternate-diamond color), `pattern_line`+`pattern_line_px`+`pattern_line_alpha` (lattice), `pattern_motif` (`diamond`/`dot`/`plus`/`ring`/`box` accent at the corners) + `pattern_motif_fill`/`_size`/`_alpha`/`_every`/`_phase`; `pattern_ox`/`pattern_oy` slide the whole quilt (e.g. to center a motif group in a crop). Procedural → stays crisp at any scale (banners) |

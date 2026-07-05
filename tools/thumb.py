@@ -8,7 +8,9 @@ pushes them to the llm-feed. `lint` runs the research-backed hard gates
 (≤N words, no title-word repeat, bottom-right duration corner clear) before a
 human ever sees a candidate.
 
-  python tools/thumb.py new t.thumb.json --brand ../gemma-branding/brand-package [--portrait] [--template reaction-right]
+  python tools/thumb.py new t.thumb.json [--brand DIR] [--portrait] [--template NAME] [--blank]
+      # auto-finds the gemma brand (walks up for gemma-branding/brand-package) and defaults to
+      # its marks layout (a2/b2/thirst) — just fill the text + 2 image src's; --blank = bare bg
   python tools/thumb.py overview t.thumb.json
   python tools/thumb.py set t.thumb.json host x=940 scale=1.1 src="/mnt/f/.../sprite.png"
   python tools/thumb.py add t.thumb.json text id=h1 text="BIG HOOK" style=headline x=360 y=200
@@ -94,23 +96,43 @@ def run_exe(args):
 
 # ───────────────────────────── commands ─────────────────────────────────────
 
+def find_brand(start):
+    """Walk up from `start` for a gemma brand package (gemma-branding/brand-package, or a
+    sibling brand-package) so `new` auto-loads branding without a --brand flag."""
+    d = os.path.abspath(start)
+    for _ in range(8):
+        for cand in (os.path.join(d, "gemma-branding", "brand-package"), os.path.join(d, "brand-package")):
+            if os.path.exists(os.path.join(cand, "brand.json")):
+                return cand
+        nd = os.path.dirname(d)
+        if nd == d:
+            break
+        d = nd
+    return ""
+
+
 def cmd_new(a):
     if os.path.exists(a.doc) and not a.force:
         sys.exit(f"{a.doc} exists (use --force)")
-    brand_rel = os.path.relpath(a.brand, os.path.dirname(os.path.abspath(a.doc))) if a.brand else ""
+    docdir = os.path.dirname(os.path.abspath(a.doc))
+    brand = a.brand or find_brand(docdir)                       # auto-load the gemma brand if present
+    brand_rel = os.path.relpath(brand, docdir).replace(os.sep, "/") if brand else ""
     doc = {"format": "thumb-1",
            "canvas": [1080, 1920] if a.portrait else [1280, 720],
-           "brand": brand_rel.replace(os.sep, "/"),
+           "brand": brand_rel,
            "title": a.title or "",
            "layers": [{"id": "bg", "type": "bg", "fill": "$bg", "vignette": 0.4}]}
-    if a.template:
-        bj = json.load(open(os.path.join(a.brand, "brand.json"), encoding="utf-8"))
-        tpl = next((t for t in bj.get("templates", []) if t["name"] == a.template), None)
+    # template: explicit --template wins; else the brand's default layout (the a2/b2/thirst
+    # marks layout) unless --blank. So a new branded thumb is "fill text, pick 2 images, place marks".
+    bj = json.load(open(os.path.join(brand, "brand.json"), encoding="utf-8")) if brand else {}
+    tpl_name = a.template or ("" if a.blank else bj.get("default_template_portrait" if a.portrait else "default_template", ""))
+    if tpl_name:
+        tpl = next((t for t in bj.get("templates", []) if t["name"] == tpl_name), None)
         if not tpl:
-            sys.exit(f"no template '{a.template}' (have: {[t['name'] for t in bj.get('templates', [])]})")
-        doc["layers"] = tpl["layers"]
+            sys.exit(f"no template '{tpl_name}' (have: {[t['name'] for t in bj.get('templates', [])]})")
+        doc["layers"] = json.loads(json.dumps(tpl["layers"]))   # deep copy (don't alias the brand file)
     save(a.doc, doc)
-    print(f"created {a.doc} ({doc['canvas'][0]}x{doc['canvas'][1]}, brand={doc['brand'] or '(none)'})")
+    print(f"created {a.doc} ({doc['canvas'][0]}x{doc['canvas'][1]}, brand={doc['brand'] or '(none)'}, template={tpl_name or '(blank)'})")
 
 
 def cmd_overview(a):
@@ -301,6 +323,7 @@ def main():
 
     s = sub.add_parser("new"); s.add_argument("doc"); s.add_argument("--brand", default="")
     s.add_argument("--portrait", action="store_true"); s.add_argument("--template", default="")
+    s.add_argument("--blank", action="store_true", help="bare bg only (skip the brand's default template)")
     s.add_argument("--title", default=""); s.add_argument("--force", action="store_true")
     s = sub.add_parser("overview"); s.add_argument("doc")
     s = sub.add_parser("set"); s.add_argument("doc"); s.add_argument("layer"); s.add_argument("kv", nargs="+")
