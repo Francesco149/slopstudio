@@ -1,5 +1,9 @@
 # LLM VIDEO WORKFLOW — compose a watchable cut out of the box
 
+> **Building by hand? Read `docs/VIDEO_RUNBOOK.md`** — the human runbook + the `tools/video.py`
+> front-door (`doctor`/`new`/`build`/`voice`/`lint`/`look`/`export`/`status`). This file is the
+> agent-facing detail underneath it.
+
 How an agent (or a human in a hurry) goes from topic → watchable video using the
 distilled primitives. The design goal: **the LLM decides sequence + content; the
 editor's defaults decide placement + polish.** Read with `docs/UX_NEXT.md` (product
