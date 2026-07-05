@@ -21,7 +21,10 @@
 //   "title": "paired video title (lint context)",
 //   "layers": [
 //     {"id":"bg",  "type":"bg", "fill":"$bg", "grad_to":"#1a0f35", "grad_angle":90,
-//      "image":"...", "blur":0, "darken":0, "vignette":0.35},
+//      "image":"...", "blur":0, "darken":0, "vignette":0.35,
+//      "pattern":"diamond", "cell":96, "pattern_fill":"$violet",       // argyle quilt (tiles crisp at any scale)
+//      "pattern_line":"$gold", "pattern_line_px":2, "pattern_line_alpha":0.2,   // soft lattice
+//      "pattern_motif":"diamond", "pattern_motif_fill":"$amber", "pattern_motif_every":2},  // accent at the corners
 //     {"id":"host","type":"image", "src":"...", "x":940,"y":420, "scale":1.05,
 //      "rot":-3, "flip":false, "outline_px":12, "outline":"$white",
 //      "shadow":{"dx":10,"dy":14,"blur":18,"alpha":0.5},
@@ -647,6 +650,27 @@ static void render_bg(Img& canvas, const json& L, const Brand& brand, const std:
     RGBA c1 = grad ? brand.color(gradTo) : c0;
     float ang = (float)jf(L, "grad_angle", 90) * 3.14159265f / 180.f;
     float gx = cosf(ang), gy = sinf(ang);
+    // optional diamond / argyle quilt pattern — a tiling texture that stays crisp through
+    // the up/downscaling sites do to banners (a simple geometric field, not fine detail).
+    //   "pattern":"diamond", "cell":96, "pattern_fill":"$violet"  (alternate-diamond color),
+    //   "pattern_line":"$gold", "pattern_line_px":3  (optional lattice lines)
+    std::string patStr = js(L, "pattern", "");
+    bool diamond = (patStr == "diamond" || patStr == "argyle");
+    float pcell = (float)jf(L, "cell", 96) * SS;
+    std::string pfillS = js(L, "pattern_fill", ""), plineS = js(L, "pattern_line", "");
+    RGBA pfill = brand.color(pfillS, c0);
+    RGBA pline = brand.color(plineS, c0);
+    float plinePx = (float)jf(L, "pattern_line_px", 0) * SS;
+    float plineA = (float)jf(L, "pattern_line_alpha", 1.0);   // <1 → soft, blended lattice
+    bool hasPatFill = !pfillS.empty(), hasLine = !plineS.empty() && plinePx > 0.01f;
+    // periodic accent motif in the base diamonds (a little diamond/dot/plus/ring every N cells)
+    std::string motifShape = js(L, "pattern_motif", "");
+    std::string pmotifS = js(L, "pattern_motif_fill", "");
+    RGBA pmotif = brand.color(pmotifS, c0);
+    float motifSize = (float)jf(L, "pattern_motif_size", 0.2);   // 0..0.5, fraction of the half-cell
+    float pmotifA = (float)jf(L, "pattern_motif_alpha", 1.0);
+    int motifEvery = std::max(1, ji(L, "pattern_motif_every", 2));
+    bool hasMotif = !motifShape.empty() && !pmotifS.empty();
     for (int y = 0; y < canvas.h; y++) {
         uint8_t* dp = canvas.at(0, y);
         for (int x = 0; x < canvas.w; x++, dp += 4) {
@@ -655,7 +679,32 @@ static void render_bg(Img& canvas, const json& L, const Brand& brand, const std:
                 float t = clampf(((x / (float)canvas.w - 0.5f) * gx + (y / (float)canvas.h - 0.5f) * gy) + 0.5f, 0, 1);
                 c.r = c0.r + (c1.r - c0.r) * t; c.g = c0.g + (c1.g - c0.g) * t; c.b = c0.b + (c1.b - c0.b) * t;
             }
-            dp[0] = (uint8_t)(c.r * 255); dp[1] = (uint8_t)(c.g * 255); dp[2] = (uint8_t)(c.b * 255); dp[3] = 255;
+            if (diamond && pcell > 1.f) {
+                float u = (x + y) / pcell, v = (x - y) / pcell;
+                int ca = (int)floorf(u), cb = (int)floorf(v);
+                if (hasPatFill && ((ca + cb) & 1)) {   // alternate diamonds → shift toward pattern_fill (keeps any gradient shading)
+                    c.r += pfill.r - c0.r; c.g += pfill.g - c0.g; c.b += pfill.b - c0.b;
+                }
+                if (hasLine) {   // thin lattice lines along the diamond edges (blend by pattern_line_alpha)
+                    float du = fabsf(u - floorf(u + 0.5f)), dv = fabsf(v - floorf(v + 0.5f)), lw = plinePx / pcell;
+                    if (du < lw || dv < lw) { c.r += (pline.r - c.r) * plineA; c.g += (pline.g - c.g) * plineA; c.b += (pline.b - c.b) * plineA; }
+                }
+                if (hasMotif) {   // accent centred on the lattice VERTICES (the corners where the diamonds meet), drawn over the lines
+                    int ru = (int)floorf(u + 0.5f), rv = (int)floorf(v + 0.5f);
+                    int ea = ((ru % motifEvery) + motifEvery) % motifEvery, eb = ((rv % motifEvery) + motifEvery) % motifEvery;
+                    if (ea == 0 && eb == 0) {
+                        float au = fabsf(u - ru), av = fabsf(v - rv);   // distance from the nearest corner (0..0.5)
+                        bool on;
+                        if      (motifShape == "dot")  on = (au * au + av * av) < motifSize * motifSize;
+                        else if (motifShape == "ring") { float r = sqrtf(au * au + av * av); on = r < motifSize && r > motifSize * 0.55f; }
+                        else if (motifShape == "plus") on = (au < motifSize * 0.34f && av < motifSize) || (av < motifSize * 0.34f && au < motifSize);
+                        else if (motifShape == "box")  on = (au + av) < motifSize;   // axis-aligned square
+                        else                           on = (au < motifSize && av < motifSize);   // "diamond" — aligned with the quilt (default)
+                        if (on) { c.r += (pmotif.r - c.r) * pmotifA; c.g += (pmotif.g - c.g) * pmotifA; c.b += (pmotif.b - c.b) * pmotifA; }
+                    }
+                }
+            }
+            dp[0] = (uint8_t)(clampf(c.r, 0, 1) * 255); dp[1] = (uint8_t)(clampf(c.g, 0, 1) * 255); dp[2] = (uint8_t)(clampf(c.b, 0, 1) * 255); dp[3] = 255;
         }
     }
     std::string imgPath = js(L, "image", "");

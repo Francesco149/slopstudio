@@ -45,7 +45,7 @@ Coordinates are **logical canvas px**; `x`/`y` are the layer **center**. Colors 
 
 | type | fields |
 |---|---|
-| `bg` | `fill`, `grad_to` + `grad_angle`, `image` (cover-fit) + `blur`/`darken`/`opacity`, `vignette` |
+| `bg` | `fill`, `grad_to` + `grad_angle`, `image` (cover-fit) + `blur`/`darken`/`opacity`, `vignette`; **`pattern`:`diamond`/`argyle`** quilt — `cell`, `pattern_fill` (alternate-diamond color), `pattern_line`+`pattern_line_px`+`pattern_line_alpha` (lattice), `pattern_motif` (`diamond`/`dot`/`plus`/`ring`/`box` accent at the corners) + `pattern_motif_fill`/`_size`/`_alpha`/`_every`. Procedural → stays crisp at any scale (banners) |
 | `image` | `src`, `x`,`y`, `scale` (1.0 = fit canvas height), `rot`, `flip`, `outline_px`+`outline` (sticker), `shadow{dx,dy,blur,alpha,color,off}`, `glow{px,color,alpha}` — outline/shadow default from the package's `sticker` |
 | `text` | `text` (\n = line break), `style` (package style name; every field overridable), `x`,`y`, `px`, `max_w` (auto-shrink), `fill`+`grad_to` (vertical gradient), `stroke_px`+`stroke`, `tracking` (letter spacing), `line_height` (×natural leading, default 1.02; <1 packs multi-line text tighter), `align`, `plate{pad_x,pad_y,radius,fill,alpha}`, `shadow`, `glow` |
 | `shape` | `shape`: `arrow` (`x1,y1,x2,y2,width`) · `circle` (`x,y,r,thick` — 0=disc) · `rect` (`x,y,w,h,radius,thick` — 0=filled); `fill`, `outline_px`/`outline`, `shadow`, `glow` |
