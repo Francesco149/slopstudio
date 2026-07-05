@@ -47,7 +47,7 @@ Coordinates are **logical canvas px**; `x`/`y` are the layer **center**. Colors 
 |---|---|
 | `bg` | `fill`, `grad_to` + `grad_angle`, `image` (cover-fit) + `blur`/`darken`/`opacity`, `vignette` |
 | `image` | `src`, `x`,`y`, `scale` (1.0 = fit canvas height), `rot`, `flip`, `outline_px`+`outline` (sticker), `shadow{dx,dy,blur,alpha,color,off}`, `glow{px,color,alpha}` — outline/shadow default from the package's `sticker` |
-| `text` | `text` (\n = line break), `style` (package style name; every field overridable), `x`,`y`, `px`, `max_w` (auto-shrink), `fill`+`grad_to` (vertical gradient), `stroke_px`+`stroke`, `tracking`, `align`, `plate{pad_x,pad_y,radius,fill,alpha}`, `shadow`, `glow` |
+| `text` | `text` (\n = line break), `style` (package style name; every field overridable), `x`,`y`, `px`, `max_w` (auto-shrink), `fill`+`grad_to` (vertical gradient), `stroke_px`+`stroke`, `tracking` (letter spacing), `line_height` (×natural leading, default 1.02; <1 packs multi-line text tighter), `align`, `plate{pad_x,pad_y,radius,fill,alpha}`, `shadow`, `glow` |
 | `shape` | `shape`: `arrow` (`x1,y1,x2,y2,width`) · `circle` (`x,y,r,thick` — 0=disc) · `rect` (`x,y,w,h,radius,thick` — 0=filled); `fill`, `outline_px`/`outline`, `shadow`, `glow` |
 | `mosaic` | `x`,`y`,`w`,`h`,`cell` — pixelates whatever is already on the canvas under the rect (the anime censor-gag primitive) |
 | `watermark` | no fields — draws the package's `watermark` spec |

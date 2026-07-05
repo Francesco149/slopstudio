@@ -29,6 +29,7 @@
 //     {"id":"h1","type":"text", "text":"IT'S\nALIVE", "style":"headline",
 //      "x":340,"y":300, "rot":-4, "px":180, "fill":"$white", "grad_to":"$pink",
 //      "stroke_px":14, "stroke":"$black", "align":"center", "max_w":600,
+//      "line_height":0.9,   // ×natural leading; <1 packs multi-line text tighter
 //      "plate":{"pad_x":28,"pad_y":18,"radius":18,"fill":"$black","alpha":0.75}},
 //     {"id":"a1","type":"shape", "shape":"arrow|circle|rect",
 //      "x1":..,"y1":..,"x2":..,"y2":..,"width":26,        // arrow

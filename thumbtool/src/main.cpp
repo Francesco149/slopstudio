@@ -589,10 +589,10 @@ static bool color_field(const char* label, json& obj, const char* key, const std
     if (changed) g_app.undoDirty = true;
     return changed;
 }
-static bool num_field(const char* label, json& obj, const char* key, double def, float speed = 1.f, double mn = -1e6, double mx = 1e6) {
+static bool num_field(const char* label, json& obj, const char* key, double def, float speed = 1.f, double mn = -1e6, double mx = 1e6, const char* fmt = "%.1f") {
     float v = (float)jf(obj, key, def);
     ImGui::SetNextItemWidth(140);
-    if (ImGui::DragFloat(label, &v, speed, (float)mn, (float)mx, "%.1f")) { obj[key] = v; return true; }
+    if (ImGui::DragFloat(label, &v, speed, (float)mn, (float)mx, fmt)) { obj[key] = v; return true; }
     return false;
 }
 static bool fx_section(json& L) {   // shadow + glow editors (shared by image/text/shape)
@@ -822,6 +822,15 @@ static void panel_inspector() {
         ch |= num_field("stroke_px", L, "stroke_px", -1, 0.2f, -1, 60);
         ch |= color_field("stroke", L, "stroke", "");
         ch |= num_field("tracking", L, "tracking", 0, 0.2f);
+        // line spacing: multiplier on the natural line height (default from the style,
+        // else 1.02). <1 packs multi-line text closer vertically, >1 opens it up.
+        double lhDef = 1.02;
+        { std::string st = js(L, "style", "headline");
+          if (g_app.brand.styles.contains(st) && g_app.brand.styles[st].contains("line_height")
+              && g_app.brand.styles[st]["line_height"].is_number())
+              lhDef = g_app.brand.styles[st]["line_height"].get<double>(); }
+        ch |= num_field("line height", L, "line_height", lhDef, 0.01f, 0.4, 3.0, "%.2f");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("x natural leading — <1 packs lines closer, >1 opens them up");
         ch |= fx_section(L);
     } else if (type == "shape") {
         std::string shape = js(L, "shape", "arrow");
