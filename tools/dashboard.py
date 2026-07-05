@@ -364,6 +364,27 @@ def mark_posted(pid, platform, url, date):
     return start_job("post " + pid, argv, ROOT)
 
 
+def edit_post(pid, body=None, fields=None):
+    """Rewrite a queued post's body and/or frontmatter fields (window/priority/platforms/image)."""
+    path = os.path.join(SOCIAL_DIR, "queue", pid + ".md")
+    if not os.path.isfile(path):
+        raise ValueError(f"no queued post '{pid}'")
+    m = re.match(r"^---\n(.*?)\n---\n?(.*)$", open(path, encoding="utf-8").read(), re.S)
+    if not m:
+        raise ValueError("bad post format")
+    fm = m.group(1)
+    for k, v in (fields or {}).items():
+        if k not in ("window", "priority", "platforms", "image", "occasion"):
+            continue
+        v = str(v).strip()
+        if re.search(rf"(?m)^{re.escape(k)}:.*$", fm):
+            fm = re.sub(rf"(?m)^{re.escape(k)}:.*$", f"{k}: {v}", fm, count=1)
+        elif v:
+            fm = fm.rstrip("\n") + f"\n{k}: {v}"
+    new_body = m.group(2).strip("\n") if body is None else body.strip("\n")
+    open(path, "w", encoding="utf-8").write("---\n" + fm.strip("\n") + "\n---\n\n" + new_body + "\n")
+
+
 def pair_image(pid, image_path):
     """Rewrite a queue post's image: ref to `image_path` (surgical, minimal churn)."""
     path = os.path.join(SOCIAL_DIR, "queue", pid + ".md")
@@ -493,6 +514,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"job": jid})
             if u.path == "/api/pair":
                 pair_image(body["id"], body["image"])
+                return self._send(200, {"ok": True})
+            if u.path == "/api/edit":
+                edit_post(body["id"], body.get("body"), body.get("fields"))
                 return self._send(200, {"ok": True})
         except Exception as e:
             return self._send(400, {"error": str(e)})
@@ -706,8 +730,9 @@ function postCard(p){
       <div class="acts">
         <button class="sm" onclick="toggleFull('${p.id}')">show</button>
         <button class="sm" onclick="copyBody('${p.id}')">copy</button>
+        <button class="sm" onclick="editPost('${p.id}')">edit</button>
         <button class="sm pri" onclick="postForm('${p.id}')">mark posted</button>
-        ${img?`<button class="sm" onclick="pairPick('${p.id}')">change img</button>`:''}
+        <button class="sm" onclick="pairPick('${p.id}')">${img?'change img':'pair img'}</button>
       </div>
       <div id="form-${p.id}"></div>
     </div></div>`;
@@ -722,6 +747,30 @@ const bodyOf=id=>{const p=S.social.queue.find(x=>x.id==id)||S.social.posted.find
 function toggleFull(id){$('txt-'+id).classList.toggle('full')}
 function copyBody(id){navigator.clipboard.writeText(bodyOf(id));flash('copied '+id)}
 function jump(id){setTab('social');const el=$('post-'+id);if(el)el.scrollIntoView({behavior:'smooth',block:'center'});postForm(id)}
+function editPost(id){
+  const p=S.social.queue.find(x=>x.id==id); const f=$('form-'+id); if(!p)return;
+  if($('ed-body-'+id)){f.innerHTML='';return}   // toggle off
+  f.innerHTML=`<div class="card" style="margin-top:8px">
+    <div class="muted" style="font-size:11px;margin-bottom:4px">edit body + fields (writes ${esc(id)}.md)</div>
+    <textarea id="ed-body-${id}" style="width:100%;min-height:130px;font:13px/1.4 ui-monospace,monospace;
+      background:#15151c;color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:8px">${esc(p.body)}</textarea>
+    <div class="opts" style="margin-top:8px">
+      <label class="opt">platforms <input type="text" id="ed-plat-${id}" value="${esc(p.platforms.join(', '))}" size="16"></label>
+      <label class="opt">window <input type="text" id="ed-win-${id}" value="${esc(p.window)}" size="16"></label>
+      <label class="opt">priority <select id="ed-pri-${id}">
+        <option ${p.priority=='high'?'selected':''}>high</option>
+        <option ${p.priority!='high'?'selected':''}>normal</option></select></label>
+    </div>
+    <button class="sm pri" onclick="saveEdit('${id}')">save</button>
+    <button class="sm" onclick="editPost('${id}')">cancel</button></div>`;
+}
+async function saveEdit(id){
+  const fields={platforms:$('ed-plat-'+id).value.split(',').map(s=>s.trim()).filter(Boolean).join(', '),
+                window:$('ed-win-'+id).value.trim(), priority:$('ed-pri-'+id).value};
+  const r=await fetch('/api/edit',{method:'POST',body:JSON.stringify({id,body:$('ed-body-'+id).value,fields})});
+  const j=await r.json(); if(j.error){flash('✗ '+j.error);return}
+  flash('saved '+id); load();
+}
 function postForm(id){
   const p=S.social.queue.find(x=>x.id==id); const f=$('form-'+id); if(!p)return;
   if(f.innerHTML){f.innerHTML='';return}
