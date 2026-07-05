@@ -217,8 +217,11 @@ def channel_state(force=False):
         thumbs = sn.get("thumbnails", {}) or {}
         out = {"ok": True, "id": ch.get("id"), "title": sn.get("title"),
                "custom_url": sn.get("customUrl"), "desc": (sn.get("description") or "")[:220],
+               "published": sn.get("publishedAt"),
                "subs": st.get("subscriberCount"), "views": st.get("viewCount"), "videos": st.get("videoCount"),
-               "thumb": ((thumbs.get("default") or thumbs.get("medium") or {}) or {}).get("url"),
+               "hidden_subs": st.get("hiddenSubscriberCount"),
+               "empty_stats": not st,  # channels.list returns {} until there's public activity
+               "thumb": ((thumbs.get("high") or thumbs.get("medium") or thumbs.get("default") or {}) or {}).get("url"),
                "fetched": now}
         _CHAN.update(data=out, ts=now)
         return out
@@ -851,13 +854,17 @@ async function renderChannel(force){
     return;
   }
   const num=n=>n==null?'—':Number(n).toLocaleString();
-  const stat=(n,l)=>`<div class="stat"><div class="num">${num(n)}</div><div class="lbl">${l}</div></div>`;
+  const subs=c.hidden_subs?'hidden':num(c.subs);
+  const stat=(n,l)=>`<div class="stat"><div class="num">${n}</div><div class="lbl">${l}</div></div>`;
+  const since=c.published?(' · since '+esc(String(c.published).slice(0,4))):'';
+  const link=c.custom_url?`https://youtube.com/${esc(c.custom_url)}`:(c.id?`https://youtube.com/channel/${esc(c.id)}`:'#');
   el.innerHTML=`<div class="card chanhead">
     ${c.thumb?`<img class="avatar" src="${esc(c.thumb)}">`:''}
     <div><h2 style="margin:0">${esc(c.title||'(channel)')}</h2>
-      <div class="muted">${esc(c.custom_url||'')} ${c.id?('· '+esc(c.id)):''}</div></div>
+      <div class="muted"><a href="${link}" target="_blank">${esc(c.custom_url||c.id||'')}</a>${since}</div></div>
     <button class="sm" style="margin-left:auto" onclick="renderChannel(true)">⟳ refresh</button></div>
-    <div class="stats">${stat(c.subs,'subscribers')}${stat(c.views,'views')}${stat(c.videos,'videos')}</div>
+    ${c.empty_stats?`<div class="card muted" style="margin-top:12px;border-color:#3a3320">No public stats yet — the channel has no public uploads/activity. Subscriber/view/video counts populate once your first video is live.</div>`
+      :`<div class="stats">${stat(subs,'subscribers')}${stat(num(c.views),'views')}${stat(num(c.videos),'videos')}</div>`}
     ${c.desc?`<div class="card muted" style="margin-top:12px;white-space:pre-wrap">${esc(c.desc)}</div>`:''}`;
 }
 
