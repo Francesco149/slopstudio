@@ -2,8 +2,20 @@
 
 Hand-maintained "what's true right now." **Read this first after `CLAUDE.md`** and update it
 in the same change that lands work, so a fresh session reorients in ~60s. Last updated:
-**2026-07-05**. For the next editor UX/product pass, also read `docs/UX_NEXT.md`; for
+**2026-07-06**. For the next editor UX/product pass, also read `docs/UX_NEXT.md`; for
 composing a video as an agent, **`docs/LLM_WORKFLOW.md`**.
+
+> **★ NEWEST (2026-07-06 overnight): THE RECETTEAR DEEP DIVE IS CUT + EXPORTED (video-002).**
+> `../slopstudio-projects/recettear/recettear.slop.json` → `exports/recettear.mp4` (13:52, 1080p60,
+> 299MB, credits sidecar) — the first video written+composed end-to-end with the recalibrated skills
+> (packaging-first → fact/voice/doctor → skeleton → adopt/genvo → lint → retention gate → taste gate).
+> 10 acts: dungeon-strip hook · sourced HISTORY act (`research-history.md`; the muracha reveal pays off
+> in the hikari act) · the six decisions · the ACCOMPLICE act (Godot `--flyout` cheats-reveal dolly +
+> retail light-debug) · rebuild/side-by-side · ingenuity THESIS ("cheat beautifully"). Thumbs a/b/c/d in
+> `recettear/thumbs/` (D "floating planes" pairs the locked title "The sunbeams in Recettear are
+> furniture"). **Editor default shipped:** fullscreen media under a bust/closeup host now shrinks +
+> corners her (`span_has_fullscreen_content` → `avatar_fit` overFootage) — luckymas3 did this by hand.
+> AWAITING OWNER: watch the export, pick the T&C title/thumb set, approve upload.
 
 > **★ NEWEST (2026-07-06 pm): REFERENCE-VIDEO STUDY PIPELINE + skill recalibration.**
 > **`tools/study.py`** (yt-dlp now in the flake): `run <url>` → study dir in
