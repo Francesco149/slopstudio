@@ -997,8 +997,20 @@ static void panel_canvas() {
         ImVec2 q0(p0.x + sz.x - pw - 10, p0.y + 10);
         dl->AddRectFilled(ImVec2(q0.x - 3, q0.y - 3), ImVec2(q0.x + pw + 3, q0.y + ph + 3), IM_COL32(20, 20, 26, 235));
         dl->AddImage((ImTextureID)(intptr_t)g_app.previewSrv, q0, ImVec2(q0.x + pw, q0.y + ph));
+        // YouTube stamps a ~fixed 20px duration pill bottom-right on long-form (not Shorts) —
+        // at feed size it eats a big fraction, so draw it here to gauge face<->pill collisions.
+        // Preview-only overlay (not in render_doc → exports stay byte-identical).
+        if (cw >= chh) {
+            std::string dur = g_app.doc.value("preview_dur", std::string("12:00"));
+            ImVec2 ts = ImGui::CalcTextSize(dur.c_str());
+            float padx = 5.f, pady = 2.f, m = 4.f;
+            ImVec2 b1(q0.x + pw - m, q0.y + ph - m);
+            ImVec2 b0(b1.x - (ts.x + 2 * padx), b1.y - (ts.y + 2 * pady));
+            dl->AddRectFilled(b0, b1, IM_COL32(0, 0, 0, 205), 3.f);
+            dl->AddText(ImVec2(b0.x + padx, b0.y + pady), IM_COL32(255, 255, 255, 235), dur.c_str());
+        }
         dl->AddRect(ImVec2(q0.x - 3, q0.y - 3), ImVec2(q0.x + pw + 3, q0.y + ph + 3), IM_COL32(120, 120, 140, 255));
-        dl->AddText(ImVec2(q0.x, q0.y + ph + 6), IM_COL32(150, 150, 160, 255), "feed size");
+        dl->AddText(ImVec2(q0.x, q0.y + ph + 6), IM_COL32(150, 150, 160, 255), "feed size + pill");
     }
 }
 
