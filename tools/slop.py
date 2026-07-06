@@ -1276,7 +1276,11 @@ def _tts_norm(t):
         return _spoken_two(hi)+" "+_spoken_two(lo)
     return re.sub(r"(?<![0-9A-Za-z])[12][0-9]{3}(?![0-9A-Za-z])", year, t or "")
 def cmd_adopt(p, a):
-    src=load(a.src)
+    import shutil
+    global PROJDIR
+    dstdir=os.path.dirname(os.path.abspath(a.project))
+    src=load(a.src)                       # NB: load() re-points PROJDIR at the SRC project dir…
+    srcdir=PROJDIR
     speech={}; vis={}
     for ak,ad in src.get("assets",{}).items():
         if ad.get("status")!="ready" or not ad.get("uri"): continue
@@ -1285,16 +1289,28 @@ def cmd_adopt(p, a):
             k=_norm_text(ad.get("params",{}).get("text"))
             speech.setdefault(k,(ak,ad)); speech.setdefault(_norm_text(_tts_norm(k)),(ak,ad))
         if ad.get("type")=="visemes": vis.setdefault(_norm_text(ad.get("params",{}).get("dialog")),(ak,ad))
+    def install(ak,ad):
+        # project dirs are portable: copy the cached file INTO this project (keeping its
+        # "assets/…" relative uri) instead of carrying a uri that only resolves in the src dir
+        ad=json.loads(json.dumps(ad), object_pairs_hook=OD)
+        uri=ad["uri"]
+        sp=uri if os.path.isabs(uri) else os.path.join(srcdir,uri.replace("cache://","cache/"))
+        if not os.path.isabs(uri):
+            dp=os.path.join(dstdir,uri)
+            if not os.path.exists(dp):
+                os.makedirs(os.path.dirname(dp),exist_ok=True); shutil.copy2(sp,dp)
+        p.setdefault("assets",OD())[ak]=ad
     nv=na=0
     for cid,c in p["clips"].items():
         if p["rows"].get(c.get("row",""),{}).get("type")!="tts": continue
         key=_norm_text(c.get("params",{}).get("text"))
         hit=speech.get(key) or speech.get(_norm_text(_tts_norm(key)))
         if hit:
-            ak,ad=hit; p["assets"][ak]=ad; c["asset"]=ak; nv+=1
+            ak,ad=hit; install(ak,ad); c["asset"]=ak; nv+=1
             m=re.match(r"(b\d+)_vo$",cid)   # pair the beat's avatar clip with the matching viseme track
             if m and key in vis and f"{m.group(1)}_av" in p["clips"]:
-                vk,vd=vis[key]; p["assets"][vk]=vd; p["clips"][f"{m.group(1)}_av"]["asset"]=vk; na+=1
+                vk,vd=vis[key]; install(vk,vd); p["clips"][f"{m.group(1)}_av"]["asset"]=vk; na+=1
+    PROJDIR=dstdir
     save(p,a.out or a.project)
     print(f"adopted {nv} VO takes + {na} viseme tracks from {a.src} (genvo fills the rest)")
 
@@ -1302,6 +1318,18 @@ def cmd_adopt(p, a):
 # then retime. The one command between "skeleton compiled" and "watchable cut". ──
 def cmd_genvo(a):
     exe=a.exe or "./build/slopstudio.exe"
+    def _vo_text_for(p, av_cid, av_clip):
+        """text of the VO a viseme track lip-syncs to: the beat-paired bNN_vo,
+        else the tts clip with the most time overlap."""
+        m=re.match(r"(b\d+)_av$",av_cid)
+        if m and f"{m.group(1)}_vo" in p["clips"]:
+            return p["clips"][f"{m.group(1)}_vo"].get("params",{}).get("text","")
+        s,e=av_clip["start"],av_clip["start"]+av_clip["dur"]; best=None; bov=0
+        for vid,vc in p["clips"].items():
+            if p["rows"].get(vc.get("row",""),{}).get("type")!="tts": continue
+            ov=min(e,vc["start"]+vc["dur"])-max(s,vc["start"])
+            if ov>bov: bov=ov; best=vc.get("params",{}).get("text","")
+        return best or ""
     for phase,rt in (("VO","tts"),("visemes","avatar")):
         p=load(a.project)   # reload — the editor writes the file after each gen
         todo=[]
@@ -1310,7 +1338,18 @@ def cmd_genvo(a):
             if rt=="tts" and not c.get("params",{}).get("text"): continue
             ak=c.get("asset"); ad=p.get("assets",{}).get(ak) if ak else None
             if ad and ad.get("status")=="ready" and ad.get("uri"):
-                if os.path.exists(resolve_uri(ad["uri"])): continue   # regenerate if the cache file was pruned
+                if os.path.exists(resolve_uri(ad["uri"])):
+                    # a ready cache file — but reuse it ONLY if the text still matches. A
+                    # reworded line (lint's STALE-VO) must regenerate, not play stale audio.
+                    if rt=="tts":
+                        ct=c.get("params",{}).get("text","")
+                        at=ad.get("params",{}).get("text","")
+                        if at in ("",ct,_tts_norm(ct)): continue   # unchanged → keep the take
+                    else:
+                        # viseme: stale if the line it lip-syncs to was reworded
+                        dlg=ad.get("params",{}).get("dialog","")
+                        vt=_vo_text_for(p,cid,c)
+                        if not vt or dlg in ("",vt): continue
             todo.append(cid)
         print(f"genvo: {len(todo)} {phase} clips to generate")
         for i,cid in enumerate(todo):
@@ -1341,9 +1380,10 @@ def main():
         s.add_argument("--scale", default=None, help="transform scale (one number, or 'sx,sy')")
     s=sub.add_parser("set"); common(s); s.add_argument("clip"); s.add_argument("kv", nargs="+", help="dotted.key=value")
     s=sub.add_parser("reasset"); common(s); s.add_argument("clip")
-    s.add_argument("--uri", required=True, help="image/video file to point the clip at")
+    s.add_argument("--uri", required=True, help="image/video/audio file to point the clip at")
     s.add_argument("--key", default=None, help="asset key (default: a fresh clip-derived key, so shared assets aren't clobbered)")
-    s.add_argument("--type", default=None, choices=["image","video"], help="asset type (default: infer from the row)")
+    s.add_argument("--type", default=None, choices=["image","video","audio"],
+                   help="asset type (default: infer from the row; audio = a ready speech asset, e.g. a presets/voice-snips take on a tts row)")
     s=sub.add_parser("rowset"); common(s); s.add_argument("row"); s.add_argument("kv", nargs="+", help="param=value (JSON value) — lane params: gain_db, normalize, normalize_db, voice_preset, driven_by, rig")
     s=sub.add_parser("kfprune"); common(s); s.add_argument("--clip", default=None, help="limit to one clip")
     s.add_argument("--keep-opacity", action="store_true", help="keep redundant opacity-fade tracks (the default transition handles fades)")
@@ -1441,8 +1481,9 @@ def main():
 
     if a.cmd=="reasset":
         c=p["clips"][a.clip]
-        key=a.key or (a.clip.replace("c_","")+"_img")   # fresh key by default → won't clobber a shared asset
-        atype=a.type or ("video" if p["rows"].get(c.get("row",""),{}).get("type")=="video" else "image")
+        rowtype=p["rows"].get(c.get("row",""),{}).get("type")
+        key=a.key or (a.clip.replace("c_","")+("_aud" if (a.type=="audio" or rowtype=="tts") else "_img"))
+        atype=a.type or ("video" if rowtype=="video" else ("audio" if rowtype=="tts" else "image"))
         # store the uri PROJECT-RELATIVE when the file lives under the project dir — project dirs
         # are portable ("assets/..." convention); a CWD-relative path would break on any other box
         uri=a.uri
@@ -1451,8 +1492,15 @@ def main():
             rel=os.path.relpath(os.path.abspath(uri), pdir)
             if not rel.startswith(".."): uri=rel.replace(os.sep,"/")
         except ValueError: pass
+        meta=OD()
+        if atype=="audio":
+            # a ready speech asset: probe duration so retime can size the beat (mirrors genvo's meta)
+            atype="speech"
+            import soundfile as _sf
+            info=_sf.info(a.uri)
+            meta=OD([("duration",round(info.frames/info.samplerate,3)),("sample_rate",info.samplerate)])
         p.setdefault("assets",OD())[key]=OD([("provider","external"),("type",atype),
-            ("status","ready"),("uri",uri),("meta",OD())])
+            ("status","ready"),("uri",uri),("meta",meta)])
         c["asset"]=key
         save(p,out); print(f"reasset {a.clip} -> {key} ({atype}) {uri}"); return
 
