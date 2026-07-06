@@ -25,6 +25,26 @@ session**). The reference cut + all conventions are in `docs/LLM_WORKFLOW.md`; f
    quality gates from `docs/AGENT_TOOLING.md`.)
 6. **Render** — `bash tools/export.sh <proj> --cache cache`. Use `--remux-from` for audio-only re-mux.
 
+## Visual authoring rules (from the studied reference corpus — SYNTHESIS.md in
+`../slopstudio-projects/research/video-study/`)
+- **Say it → show it, ≤1 beat.** Any named artifact (game, file, paper, person, UI
+  element) gets a visual in the same beat — a named UI element gets a zoom-crop of
+  exactly that element. A beat whose `visual` merely HOLDS while new things are named
+  is a bug.
+- **The visual floor is perceived motion**: host floats OVER footage/diagrams (never a
+  full-screen talking head while a subject exists); bare-host beats need an ambient-
+  animated backdrop; long shots are fine only while something in-shot animates
+  (typewriter, bars, sim running).
+- **One canonical diagram per system, grown across the video** — re-show the SAME diagram
+  asset with layers added (cascade unveil) as rules accumulate; don't mint a new diagram
+  per fact.
+- **Receipts on screen:** quote cards with the key phrase highlighted, paper/patent/commit
+  screenshots, code cropped to the load-bearing lines only.
+- **Teach a chart's grammar before plotting the reveal on it**; big numbers get stat
+  cards.
+- When no footage exists for a claim, STAGE it (A/B mockup, repro save, XP-VM capture) —
+  fabricating the demonstration is the normal path, not extra credit.
+
 ## Editing existing cuts
 Use the CLI verbs (`overview` to read the timeline; `add`/`insert`/`ripple`/`rebase`/`retime`/`bed`/
 `transcript`), NOT hand-written JSON — extend the CLI rather than one-off scripts. `overview` is the

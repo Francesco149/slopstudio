@@ -5,6 +5,21 @@ in the same change that lands work, so a fresh session reorients in ~60s. Last u
 **2026-07-05**. For the next editor UX/product pass, also read `docs/UX_NEXT.md`; for
 composing a video as an agent, **`docs/LLM_WORKFLOW.md`**.
 
+> **★ NEWEST (2026-07-06 pm): REFERENCE-VIDEO STUDY PIPELINE + skill recalibration.**
+> **`tools/study.py`** (yt-dlp now in the flake): `run <url>` → study dir in
+> `../slopstudio-projects/research/video-study/` with pruned metadata, ≤480p video (gitignored),
+> timestamped transcript from YT subs, `analysis.json` (scene cuts, per-minute cuts/visual-events/words,
+> WPM, longest-static-span), timestamped contact sheets (1 frame/5s → llm-feed), and a single `DIGEST.md`.
+> New **`studying-video` skill** = the workflow (digest → read sheets → hand-write STUDY.md → promote to
+> SYNTHESIS + skills). **Corpus seeded with 5 top explainers** (Juniper, Newbie/RCT, LaurieWired ×2,
+> Tastemaker; 246k–1M views) — per-video STUDY.md + cross-video **SYNTHESIS.md** committed in the projects
+> repo. Skills recalibrated from measured data: `retention-editing` (WPM 160–195 — old 130–150 was too
+> slow; visual floor = perceived motion not cut-count; flat pacing beats escalation; callback close),
+> `script-doctor` (new **verification/anti-handwave pass**: every claim = exact sourced number | staged
+> demonstration | explicit pointer; dead-end acts; metaphor registry; objection-voice),
+> `composing-slop` (say-it-show-it ≤1 beat; growing canonical diagram; receipts; stage-the-demo),
+> `writing-gemma` (corpus moves that fit Gemma). NEXT: write the openrecet lighting video with these.
+>
 > **★ NEWEST (2026-07-06): CONTROL-PANEL DASHBOARD + yutu YouTube MCP + luckymas publish-prep.**
 > **`tools/dashboard.py`** (stdlib `http.server`, `vid dashboard` → :8080) — a local web control panel:
 > **Social** (post queue grouped by ready/upcoming/trigger, per-platform cadence with DUE + queue-depth,

@@ -31,12 +31,24 @@ thumbnails), `docs/LLM_WORKFLOW.md` (the current authoring path), `../gemma-bran
    accuracy. Research/fact-check to a locked draft, then apply the Gemma voice layer.
 
 ## Encodable heuristics (the ones worth hard-coding)
-**Retention / pacing** (only YouTube's 30s "Intro" metric is official; the rest is corroborated, treat as
-defaults): long-form hook ≤15s (cap 30s), target APV **40–55%** for 10–15min, ≥1 open loop live at all
-times, re-hook at 40–60%, visual-change floor every ~8–15s, **end abruptly**, narration **130–150 WPM**
-(120–140 dense). Shorts: hook ≤2.5s, reverse-structure (payoff first), cut every 2–4s, target **VVSA
+**Retention / pacing** (only YouTube's 30s "Intro" metric is official; the rest is corroborated research
+**recalibrated 2026-07-06 against a measured reference corpus** — 5 top explainers digested with
+`tools/study.py`, patterns + numbers in `../slopstudio-projects/research/video-study/SYNTHESIS.md`):
+long-form hook ≤15s (cap 30s) with branding AFTER the hook, target APV **40–55%** for 10–15min, ≥1 open
+loop live at all times (long teases OK if re-teased + overpaid), re-hook at 40–60%, **visual floor =
+perceived motion** (host over footage / in-shot animation / ambient backdrop — measured hard-cut rates
+vary 2.8–7.5/min with no invariant; static-host-over-static-frame >15s is the violation), per-minute
+pacing FLAT across the runtime (consistency beats escalation), **end abruptly** with a callback close,
+narration **160–195 WPM measured** (reserve <150 for dense math; the old 130–150 default is below the
+winning register). Shorts: hook ≤2.5s, reverse-structure (payoff first), cut every 2–4s, target **VVSA
 70–90%**, author the first 3s + last 3s first and loop the end into the start. Length = the longest you
 can hold near-100% VVSA — don't reflexively cap at 30s.
+
+**Verification ethos (anti-handwave — from the corpus, enforced by `script-doctor`):** every claim
+carries an exact sourced number, a filmable demonstration (stage it if reality doesn't provide it), or an
+explicit depth-delegation pointer — never silent omission. Dead ends + honest negative results are acts,
+not waste. History is told as character-arcs-with-receipts and always cashed out into the present.
+Metaphors: one per concept, verbatim on every recurrence, visualized by the climax.
 
 **Scripting / comedy** (mechanical, applicable): **misconception-first** teaching spine (Veritasium) for
 deep-dives; the **ABT rule** ("and-then" = dead → must be "but"/"therefore"); **rule of three** with the
@@ -73,6 +85,7 @@ lines + one real gotcha); grow each with a ≥3-scenario eval as it's used in an
 | **`packaging-first`** | Forces title + thumbnail concept before scripting; verifies the first 30s pays the promise off. (See `../gemma-branding/PACKAGING.md`.) |
 | **`taste-review`** | Evidence-driven meta-critic that scores only dimensions it has evidence for; the single "good enough to show the human?" gate, calibrated on the golden cut. |
 | **`gemma-voice-tts`** | Codifies the TTS gotchas (design-in-JP→switch-EN, golden = gemma-san-deep-jp, one clip/sentence, per-clip intonation, clone-fallback, rate-aware sampling trap). |
+| **`studying-video`** (added 2026-07-06) | The reference-video study pipeline: `tools/study.py` (fetch/analyze/digest → metrics + transcript + contact sheets) → hand-written STUDY.md → promote recurring patterns into SYNTHESIS.md + the skills above. Corpus: `../slopstudio-projects/research/video-study/`. |
 
 ---
 

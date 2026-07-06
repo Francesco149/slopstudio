@@ -93,6 +93,7 @@
             # ── media / providers ─────────────────────────────────────────
             ffmpeg               # decode/encode/mux + frame tooling (host side)
             imagemagick          # sprite-sheet slicing, asset prep
+            yt-dlp               # reference-video study pipeline (tools/study.py)
             pythonEnv
 
             # ── general dev ───────────────────────────────────────────────
