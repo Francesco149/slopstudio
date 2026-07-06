@@ -71,9 +71,10 @@ sprite browser lists) · `watermark` · `templates` (named ready-to-fill layer s
 ## GUI
 Layers panel (reorder/dup/hide) · Inspector with palette swatches · brand template buttons ·
 sprite browser (from `sprite_roots`, click = add layer) · canvas with drag-move,
-ctrl+wheel scale, and a live **168px squint inset** ("feed size") — which draws YouTube's
-**duration pill** bottom-right (long-form only; text = the doc's optional `preview_dur`, default
-`12:00`) so you can gauge subject↔pill collisions live · **history panel**
+ctrl+wheel scale, and a live **channel-size squint inset** ("channel feed size", ~240px) — which
+draws YouTube's **measured duration pill** + **red resume-progress bar** bottom (long-form only;
+pill text = the doc's optional `preview_dur`, default `12:00`) so you can gauge subject↔pill
+collisions live at their true proportion · **history panel**
 (sibling `*.thumb.json` = A/B variants; `history/` snapshots with PNG previews, click to
 restore — undoable) · Snapshot / Export PNG buttons · 16:9↔9:16 toggle.
 
@@ -89,8 +90,9 @@ restore — undoable) · Snapshot / Export PNG buttons · 16:9↔9:16 toggle.
 `new` (--brand/--template/--portrait/--title) · `overview` · `set <layer> k=v…` (dotted
 keys descend, `\n` ok in text) · `docset` · `add <type>` · `rm` · `order` · `render`
 (exports PNG + `--proof` 168px + info sidecar, pushes both to the llm-feed; **`--badge [--dur
-14:55]`** also emits a duration-pill sim — the thumb at real feed widths (360/246/168/120px)
-with YouTube's pill drawn, so face↔pill collisions are visible) · `lint` · `snapshot` (save
+14:55]`** also emits a duration-pill sim — the thumb at **measured** real feed widths
+(400/340/210px: home·channel·sidebar) with YouTube's pill + resume bar drawn, so face↔pill
+collisions are visible at true proportion) · `lint` · `snapshot` (save
 doc+PNG into `history/` — the A/B bank) · `variants`.
 
 **Hard lint gates** (from `../gemma-branding/research/thumbnail-pipeline-2026-07.md` +
