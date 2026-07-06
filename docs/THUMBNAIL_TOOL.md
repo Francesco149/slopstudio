@@ -98,12 +98,12 @@ doc+PNG into `history/` — the A/B bank) · `variants`.
 **Hard lint gates** (from `../gemma-branding/research/thumbnail-pipeline-2026-07.md` +
 `vtuber-branding-2026-07.md`): total words ≤ `lint.max_words` (default 3) · headline must
 NOT repeat title words (stopwords excluded — thumb+title form a curiosity gap, not an echo)
-· no text in the bottom-right duration-stamp zone (20%×16%) · **warn if the subject fills the
-bottom-right duration-pill footprint** (`lint.br_subject_zone`, default 28%×24% — the pill is a
-~fixed 20px on-screen, so it eats a big fraction at channel-list/sidebar sizes and can cover the
-face; keep the face out of that corner — verify with `render --badge`) · warn if the largest
-subject is <12% of frame or there's no image layer at all. The fuzzy rest (emotion read, focal
-clarity, in-feed pop) goes through the **frame-critic** skill on the rendered PNG + proof.
+· no text in the bottom-right duration-stamp zone (20%×16%) · warn if the largest subject is
+<12% of frame or there's no image layer at all. **Subject↔duration-pill collision is a VISUAL
+check**, not a lint gate — `render --badge` (thumb across measured feed sizes with the pill) and
+the editor's feed-size inset show it accurately; a bbox test can't tell a face in the corner from
+a wing. The fuzzy rest (emotion read, focal clarity, in-feed pop) goes through the **frame-critic**
+skill on the rendered PNG + proof.
 
 ## The @GemmaExplains thumbnail format (locked defaults)
 VTuber-meta geometry (research: `vtuber-branding-2026-07.md` §2, §7): bg + Gemma cutout +

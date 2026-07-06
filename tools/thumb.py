@@ -357,16 +357,8 @@ def cmd_lint(a):
         area = (biggest["bbox"][2] - biggest["bbox"][0]) * (biggest["bbox"][3] - biggest["bbox"][1]) / (cw * ch)
         if area < 0.12:
             warns.append(f"largest subject '{biggest['id']}' covers only {area:.0%} of frame — likely too small at feed size")
-        # subject in the small-size duration-pill footprint (covered on channel list / watch sidebar)
-        zw, zh = lint_cfg.get("br_subject_zone", [0.28, 0.24])   # worst-case pill footprint @ ~168px
-        zx, zy, za = cw * (1 - zw), ch * (1 - zh), (cw * zw) * (ch * zh)
-        for l in imgs:
-            x0, y0, x1, y1 = l["bbox"]
-            cover = max(0, min(x1, cw) - max(x0, zx)) * max(0, min(y1, ch) - max(y0, zy))
-            if cover > 0.45 * za:
-                warns.append(f"subject '{l['id']}' fills the bottom-right duration-pill zone — it's covered "
-                             f"at channel-list/sidebar sizes; pull it out of the bottom-right ~{int(zw*100)}%×{int(zh*100)}% "
-                             f"(run: thumb.py render {os.path.basename(a.doc)} --badge  to see)")
+        # NB: subject↔duration-pill collision is a VISUAL check (`render --badge` + the editor's
+        # feed-size inset) — a bbox test can't tell a face in the corner from a wing, so it's not linted.
     else:
         warns.append("no image layer — face/subject is the #1 CTR lever")
 
