@@ -831,9 +831,17 @@ static void panel_inspector() {
         }
         ch |= num_field("x", L, "x", canvas_w() / 2.0); ImGui::SameLine(); ch |= num_field("y", L, "y", canvas_h() / 2.0);
         ch |= num_field("px", L, "px", 0, 1, 0, 800);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = style default");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = style default. Text wider than max_w auto-shrinks to fit it — raise max_w (or cut words) for bigger text.");
         ch |= num_field("rot", L, "rot", 0, 0.2f, -180, 180);
         ch |= num_field("max_w", L, "max_w", 0, 2, 0, 4000);
+        // surface the silent cap: when the rendered text is filling max_w, px is being
+        // auto-shrunk to fit — raising px does nothing until max_w goes up.
+        if (jf(L, "max_w", 0) > 0 && g_app.sel >= 0 && g_app.sel < (int)g_app.layerInfo.size()) {
+            const LayerInfo& li = g_app.layerInfo[g_app.sel];
+            if (li.x1 - li.x0 >= jf(L, "max_w", 0))
+                ImGui::TextColored(ImVec4(0.92f, 0.72f, 0.32f, 1.f),
+                                   "  \xe2\x86\xb3 auto-fit: filling max_w \xe2\x80\x94 raise it or cut words for bigger text");
+        }
         ch |= color_field("fill", L, "fill", "");
         ch |= color_field("grad_to", L, "grad_to", "");
         ch |= num_field("stroke_px", L, "stroke_px", -1, 0.2f, -1, 60);
