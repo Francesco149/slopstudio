@@ -991,9 +991,10 @@ static void panel_canvas() {
             dl->AddRect(ImVec2(p0.x + li.x0 * sc, p0.y + li.y0 * sc), ImVec2(p0.x + li.x1 * sc, p0.y + li.y1 * sc),
                         IM_COL32(255, 200, 60, 200), 0, 0, 1.5f);
     }
-    // squint-test inset: the thumbnail at real feed size (168x94 / 94x168)
+    // squint-test inset: the thumb at ~channel-page display size (measured off youtube.com,
+    // grid thumb ≈240-340px) so YouTube's fixed ~38x20px pill reads at its true proportion.
     if (g_app.showSquint) {
-        float pw = chh > cw ? 94.f : 168.f, ph = chh > cw ? 168.f : 94.f;
+        float pw = chh > cw ? 135.f : 240.f, ph = chh > cw ? 240.f : 135.f;
         ImVec2 q0(p0.x + sz.x - pw - 10, p0.y + 10);
         dl->AddRectFilled(ImVec2(q0.x - 3, q0.y - 3), ImVec2(q0.x + pw + 3, q0.y + ph + 3), IM_COL32(20, 20, 26, 235));
         dl->AddImage((ImTextureID)(intptr_t)g_app.previewSrv, q0, ImVec2(q0.x + pw, q0.y + ph));
@@ -1003,14 +1004,17 @@ static void panel_canvas() {
         if (cw >= chh) {
             std::string dur = g_app.doc.value("preview_dur", std::string("12:00"));
             ImVec2 ts = ImGui::CalcTextSize(dur.c_str());
-            float padx = 5.f, pady = 2.f, m = 4.f;
+            float padx = 4.f, pady = 1.f, m = 8.f;              // measured: 8px margin, 4px pad, radius 4, bg rgba(0,0,0,.6)
             ImVec2 b1(q0.x + pw - m, q0.y + ph - m);
             ImVec2 b0(b1.x - (ts.x + 2 * padx), b1.y - (ts.y + 2 * pady));
-            dl->AddRectFilled(b0, b1, IM_COL32(0, 0, 0, 205), 3.f);
+            dl->AddRectFilled(b0, b1, IM_COL32(0, 0, 0, 153), 4.f);
             dl->AddText(ImVec2(b0.x + padx, b0.y + pady), IM_COL32(255, 255, 255, 235), dur.c_str());
+            float pbh = 3.f;                                     // red resume progress bar (partially-watched videos)
+            dl->AddRectFilled(ImVec2(q0.x, q0.y + ph - pbh), ImVec2(q0.x + pw, q0.y + ph), IM_COL32(255, 255, 255, 70));
+            dl->AddRectFilled(ImVec2(q0.x, q0.y + ph - pbh), ImVec2(q0.x + pw * 0.45f, q0.y + ph), IM_COL32(255, 0, 0, 235));
         }
         dl->AddRect(ImVec2(q0.x - 3, q0.y - 3), ImVec2(q0.x + pw + 3, q0.y + ph + 3), IM_COL32(120, 120, 140, 255));
-        dl->AddText(ImVec2(q0.x, q0.y + ph + 6), IM_COL32(150, 150, 160, 255), "feed size + pill");
+        dl->AddText(ImVec2(q0.x, q0.y + ph + 6), IM_COL32(150, 150, 160, 255), "channel feed size");
     }
 }
 

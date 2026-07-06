@@ -213,9 +213,13 @@ def out_paths(docpath):
 # (channel list, watch sidebar) it eats a big fraction and can cover the subject's
 # face. This renders the thumb at real feed widths with the pill drawn so collisions
 # are visible, and `lint` warns when the subject fills that corner.
-FEED_WIDTHS = [(360, "home ~360px"), (246, "channel list ~246px"),
-               (168, "watch sidebar ~168px"), (120, "compact ~120px")]
-PILL_PX = 20          # YouTube duration pill height in on-screen px (≈constant across sizes)
+# real desktop display widths (measured off youtube.com, 2026-07): the duration pill is a
+# ~fixed 38x20px on-screen, so its FRACTION shrinks as the thumb grows — rendering the thumb
+# too small makes the pill look oversized. home/search ~400px, channel grid ~340px (both give
+# a ~9-10% pill), watch sidebar is the genuinely small one.
+FEED_WIDTHS = [(400, "home / search"), (340, "channel page"), (210, "watch sidebar")]
+PILL_PX = 20          # measured pill height (px); width ≈ text + pad, margin 8px, radius 4, bg rgba(0,0,0,.6)
+PROGRESS_PX = 4       # red "resume" progress bar (shown on partially-watched videos)
 
 
 def _font(size):
@@ -231,18 +235,28 @@ def _font(size):
 
 
 def _draw_pill(img, dur, ph=PILL_PX):
-    """Draw a YouTube-style duration pill bottom-right at `ph` on-screen px."""
+    """Draw YouTube's duration pill bottom-right at its measured size (ph≈20px on-screen,
+    12px text, 4px pad, 8px margin, radius 4, bg rgba(0,0,0,0.6))."""
     from PIL import ImageDraw
     W, H = img.size
     d = ImageDraw.Draw(img, "RGBA")
-    font = _font(round(ph * 0.62))
+    font = _font(round(ph * 0.6))                     # ~12px at ph=20
     tb = d.textbbox((0, 0), dur, font=font); tw = tb[2] - tb[0]
-    pw = tw + round(ph * 0.8)
-    m = max(2, round(H * 0.04))
+    pw = tw + 8                                        # ~4px padding each side
+    m = 8                                             # 8px from the thumb edges
     x1, y1 = W - m, H - m; x0, y0 = x1 - pw, y1 - ph
-    d.rounded_rectangle([x0, y0, x1, y1], radius=max(2, ph // 6), fill=(0, 0, 0, 205))
+    d.rounded_rectangle([x0, y0, x1, y1], radius=4, fill=(0, 0, 0, 153))
     d.text((x0 + (pw - tw) // 2 - tb[0], y0 + (ph - (tb[3] - tb[1])) // 2 - tb[1]),
            dur, font=font, fill=(255, 255, 255, 235))
+
+
+def _draw_progress(img, frac=0.45, ph=PROGRESS_PX):
+    """Draw YouTube's red resume-progress bar along the very bottom (gray track + red fill)."""
+    from PIL import ImageDraw
+    W, H = img.size
+    d = ImageDraw.Draw(img, "RGBA")
+    d.rectangle([0, H - ph, W, H], fill=(255, 255, 255, 70))          # track
+    d.rectangle([0, H - ph, int(W * frac), H], fill=(255, 0, 0, 235))  # watched
 
 
 def duration_montage(png_path, out_path, dur="12:00"):
@@ -255,9 +269,10 @@ def duration_montage(png_path, out_path, dur="12:00"):
     for w, name in FEED_WIDTHS:
         h = round(w * base.height / base.width)
         t = base.resize((w, h), Image.LANCZOS)
-        _draw_pill(t, dur)
-        t = t.resize((round(w * cellH / h), cellH), Image.NEAREST)   # zoom, keep proportion
-        cells.append((t, f"{name} · pill≈{round(100*PILL_PX/h)}% tall"))
+        _draw_pill(t, dur)          # 20px absolute → its real fraction at this display size
+        _draw_progress(t)           # red resume bar
+        t = t.resize((round(w * cellH / h), cellH), Image.NEAREST)   # zoom for visibility, proportion kept
+        cells.append((t, f"{name} ~{w}px · pill {round(100*PILL_PX/h)}% tall"))
     canvas = Image.new("RGBA", (sum(c[0].width for c in cells) + pad * (len(cells) + 1),
                                 cellH + pad * 2 + lbl), (18, 18, 22, 255))
     d = ImageDraw.Draw(canvas); f = _font(14); x = pad
