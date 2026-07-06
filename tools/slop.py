@@ -1443,10 +1443,18 @@ def main():
         c=p["clips"][a.clip]
         key=a.key or (a.clip.replace("c_","")+"_img")   # fresh key by default → won't clobber a shared asset
         atype=a.type or ("video" if p["rows"].get(c.get("row",""),{}).get("type")=="video" else "image")
+        # store the uri PROJECT-RELATIVE when the file lives under the project dir — project dirs
+        # are portable ("assets/..." convention); a CWD-relative path would break on any other box
+        uri=a.uri
+        try:
+            pdir=os.path.dirname(os.path.abspath(a.project))
+            rel=os.path.relpath(os.path.abspath(uri), pdir)
+            if not rel.startswith(".."): uri=rel.replace(os.sep,"/")
+        except ValueError: pass
         p.setdefault("assets",OD())[key]=OD([("provider","external"),("type",atype),
-            ("status","ready"),("uri",a.uri),("meta",OD())])
+            ("status","ready"),("uri",uri),("meta",OD())])
         c["asset"]=key
-        save(p,out); print(f"reasset {a.clip} -> {key} ({atype}) {a.uri}"); return
+        save(p,out); print(f"reasset {a.clip} -> {key} ({atype}) {uri}"); return
 
     if a.cmd=="rowset":
         if a.row not in p["rows"]: print(f"no row {a.row}"); return
