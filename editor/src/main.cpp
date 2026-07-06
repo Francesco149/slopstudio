@@ -4893,6 +4893,8 @@ static bool span_has_fullscreen_content(const Project& p, double t0, double t1) 
     for (auto& tk : p.tracks) {
         if (tk.kind != "video") continue;
         for (auto& rid : tk.rows) {
+            if (rid == "r_bg") continue;   // the room BACKDROP is not hero footage — a host over a
+                                           // fullscreen roomday bg should stand IN it, not corner over it
             auto rit = p.rows.find(rid);
             if (rit == p.rows.end()) continue;
             const std::string& rt = rit->second.type;
