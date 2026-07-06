@@ -86,14 +86,19 @@ restore — undoable) · Snapshot / Export PNG buttons · 16:9↔9:16 toggle.
 ## Agent workflow (`tools/thumb.py`)
 `new` (--brand/--template/--portrait/--title) · `overview` · `set <layer> k=v…` (dotted
 keys descend, `\n` ok in text) · `docset` · `add <type>` · `rm` · `order` · `render`
-(exports PNG + `--proof` 168px + info sidecar, pushes both to the llm-feed) · `lint` ·
-`snapshot` (save doc+PNG into `history/` — the A/B bank) · `variants`.
+(exports PNG + `--proof` 168px + info sidecar, pushes both to the llm-feed; **`--badge [--dur
+14:55]`** also emits a duration-pill sim — the thumb at real feed widths (360/246/168/120px)
+with YouTube's pill drawn, so face↔pill collisions are visible) · `lint` · `snapshot` (save
+doc+PNG into `history/` — the A/B bank) · `variants`.
 
 **Hard lint gates** (from `../gemma-branding/research/thumbnail-pipeline-2026-07.md` +
 `vtuber-branding-2026-07.md`): total words ≤ `lint.max_words` (default 3) · headline must
 NOT repeat title words (stopwords excluded — thumb+title form a curiosity gap, not an echo)
-· no text in the bottom-right duration-stamp zone (20%×16%) · warn if the largest subject
-is <12% of frame or there's no image layer at all. The fuzzy rest (emotion read, focal
+· no text in the bottom-right duration-stamp zone (20%×16%) · **warn if the subject fills the
+bottom-right duration-pill footprint** (`lint.br_subject_zone`, default 28%×24% — the pill is a
+~fixed 20px on-screen, so it eats a big fraction at channel-list/sidebar sizes and can cover the
+face; keep the face out of that corner — verify with `render --badge`) · warn if the largest
+subject is <12% of frame or there's no image layer at all. The fuzzy rest (emotion read, focal
 clarity, in-feed pop) goes through the **frame-critic** skill on the rendered PNG + proof.
 
 ## The @GemmaExplains thumbnail format (locked defaults)

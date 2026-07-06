@@ -208,17 +208,85 @@ def out_paths(docpath):
     return base + ".png", base + "-proof.png", base + ".info.json"
 
 
+# ── duration-badge simulation (how the thumb reads at small feed sizes) ─────────
+# YouTube stamps a ~fixed-pixel duration pill bottom-right; at small display sizes
+# (channel list, watch sidebar) it eats a big fraction and can cover the subject's
+# face. This renders the thumb at real feed widths with the pill drawn so collisions
+# are visible, and `lint` warns when the subject fills that corner.
+FEED_WIDTHS = [(360, "home ~360px"), (246, "channel list ~246px"),
+               (168, "watch sidebar ~168px"), (120, "compact ~120px")]
+PILL_PX = 20          # YouTube duration pill height in on-screen px (≈constant across sizes)
+
+
+def _font(size):
+    import glob
+    from PIL import ImageFont
+    for p in glob.glob("/nix/store/*dejavu*/**/DejaVuSans.ttf", recursive=True) + \
+             [os.path.join(ROOT, "assets-src", "fonts", "ArchivoBlack-Regular.ttf")]:
+        try:
+            return ImageFont.truetype(p, size)
+        except Exception:
+            pass
+    return ImageFont.load_default()
+
+
+def _draw_pill(img, dur, ph=PILL_PX):
+    """Draw a YouTube-style duration pill bottom-right at `ph` on-screen px."""
+    from PIL import ImageDraw
+    W, H = img.size
+    d = ImageDraw.Draw(img, "RGBA")
+    font = _font(round(ph * 0.62))
+    tb = d.textbbox((0, 0), dur, font=font); tw = tb[2] - tb[0]
+    pw = tw + round(ph * 0.8)
+    m = max(2, round(H * 0.04))
+    x1, y1 = W - m, H - m; x0, y0 = x1 - pw, y1 - ph
+    d.rounded_rectangle([x0, y0, x1, y1], radius=max(2, ph // 6), fill=(0, 0, 0, 205))
+    d.text((x0 + (pw - tw) // 2 - tb[0], y0 + (ph - (tb[3] - tb[1])) // 2 - tb[1]),
+           dur, font=font, fill=(255, 255, 255, 235))
+
+
+def duration_montage(png_path, out_path, dur="12:00"):
+    """Thumb at each real feed width with the pill drawn; small cells zoomed to a common
+    height so the pill's true proportion (and any face collision) is obvious."""
+    from PIL import Image, ImageDraw
+    base = Image.open(png_path).convert("RGBA")
+    cellH, pad, lbl = 300, 14, 22
+    cells = []
+    for w, name in FEED_WIDTHS:
+        h = round(w * base.height / base.width)
+        t = base.resize((w, h), Image.LANCZOS)
+        _draw_pill(t, dur)
+        t = t.resize((round(w * cellH / h), cellH), Image.NEAREST)   # zoom, keep proportion
+        cells.append((t, f"{name} · pill≈{round(100*PILL_PX/h)}% tall"))
+    canvas = Image.new("RGBA", (sum(c[0].width for c in cells) + pad * (len(cells) + 1),
+                                cellH + pad * 2 + lbl), (18, 18, 22, 255))
+    d = ImageDraw.Draw(canvas); f = _font(14); x = pad
+    for img, label in cells:
+        canvas.paste(img, (x, pad + lbl), img)
+        d.text((x + 2, pad), label, font=f, fill=(205, 205, 215, 255))
+        x += img.width + pad
+    canvas.convert("RGB").save(out_path)
+    return out_path
+
+
 def cmd_render(a):
     png, proof, info = out_paths(a.doc)
     args = [os.path.relpath(a.doc, ROOT), "--export", os.path.relpath(png, ROOT), "--info", os.path.relpath(info, ROOT)]
     if a.proof:
         args += ["--proof", os.path.relpath(proof, ROOT)]
     run_exe(args)
+    sim = None
+    if a.badge:
+        sim = re.sub(r"\.thumb\.json$", "-badge.png", a.doc)
+        duration_montage(png, sim, a.dur)
+        print(f"badge sim → {os.path.relpath(sim, ROOT)}  (pill at {', '.join(str(w) for w, _ in FEED_WIDTHS)}px feed sizes)")
     if not a.no_feed:
         doc = load(a.doc)
         feed_push(png, f"thumb: {os.path.basename(a.doc)} — {doc.get('title', '')}")
         if a.proof:
             feed_push(proof, f"thumb 168px proof: {os.path.basename(a.doc)}")
+        if sim:
+            feed_push(sim, f"thumb duration-pill sim (feed sizes): {os.path.basename(a.doc)}")
 
 
 STOPWORDS = {"the", "a", "an", "of", "to", "in", "and", "or", "is", "it", "that", "this", "for", "on", "with", "how", "why", "what"}
@@ -274,6 +342,16 @@ def cmd_lint(a):
         area = (biggest["bbox"][2] - biggest["bbox"][0]) * (biggest["bbox"][3] - biggest["bbox"][1]) / (cw * ch)
         if area < 0.12:
             warns.append(f"largest subject '{biggest['id']}' covers only {area:.0%} of frame — likely too small at feed size")
+        # subject in the small-size duration-pill footprint (covered on channel list / watch sidebar)
+        zw, zh = lint_cfg.get("br_subject_zone", [0.28, 0.24])   # worst-case pill footprint @ ~168px
+        zx, zy, za = cw * (1 - zw), ch * (1 - zh), (cw * zw) * (ch * zh)
+        for l in imgs:
+            x0, y0, x1, y1 = l["bbox"]
+            cover = max(0, min(x1, cw) - max(x0, zx)) * max(0, min(y1, ch) - max(y0, zy))
+            if cover > 0.45 * za:
+                warns.append(f"subject '{l['id']}' fills the bottom-right duration-pill zone — it's covered "
+                             f"at channel-list/sidebar sizes; pull it out of the bottom-right ~{int(zw*100)}%×{int(zh*100)}% "
+                             f"(run: thumb.py render {os.path.basename(a.doc)} --badge  to see)")
     else:
         warns.append("no image layer — face/subject is the #1 CTR lever")
 
@@ -332,6 +410,8 @@ def main():
     s = sub.add_parser("rm"); s.add_argument("doc"); s.add_argument("layer")
     s = sub.add_parser("order"); s.add_argument("doc"); s.add_argument("layer"); s.add_argument("--to", type=int, required=True)
     s = sub.add_parser("render"); s.add_argument("doc"); s.add_argument("--proof", action="store_true"); s.add_argument("--no-feed", action="store_true")
+    s.add_argument("--badge", action="store_true", help="also emit a duration-pill sim across feed sizes")
+    s.add_argument("--dur", default="12:00", help="duration text for the badge sim (e.g. 14:55)")
     s = sub.add_parser("lint"); s.add_argument("doc"); s.add_argument("--title", default="")
     s = sub.add_parser("snapshot"); s.add_argument("doc")
     s = sub.add_parser("variants"); s.add_argument("doc")
