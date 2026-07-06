@@ -9,9 +9,16 @@ cut or a static split doesn't read — the motion of the reveal IS the explanati
 Brand tokens (fonts/colours) from gemma-branding/brand-package/brand.json. Encodes with
 the flake ffmpeg (NVENC not required — this is short).
 
+--before/--after may each be a STILL image or a VIDEO (.mp4/.mov/.mkv/.webm/.avi);
+videos are cover-fit to the output size, looped to the duration, and their motion
+is preserved (e.g. the real-game shop idle behind a retail on/off comparison).
+
 Usage (from slopstudio repo root, inside nix develop):
     python tools/ab-slider.py --before A.png --after B.png --out demo.mp4 \
         --label-before "OFF" --label-after "×2" --dur 6
+    # video A/B (retail toggle footage, same framing):
+    python tools/ab-slider.py --before all_on.mp4 --after mod2x_off.mp4 --out r.mp4 \
+        --label-before "ON" --label-after "OFF" --dur 10
 
 Defaults: 1920x1080, 30fps, 6s, two full pingpong sweeps, holds briefly at each end.
 """
@@ -22,6 +29,8 @@ import subprocess
 import sys
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
+
+VIDEO_EXT = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v")
 
 BRAND = json.load(open("/opt/src/gemma-branding/brand-package/brand.json"))
 PAL = BRAND["palette"]
@@ -47,6 +56,42 @@ def load_fit(path, w, h):
     return im.crop((x, y, x + w, y + h))
 
 
+def is_video(path):
+    return str(path).lower().endswith(VIDEO_EXT)
+
+
+class Source:
+    """Yields W×H RGB frames — either a still repeated, or a looping video
+    decoded cover-fit via an ffmpeg rawvideo pipe. `anchor` is the vertical
+    crop position 0..1 (0 = keep the TOP, e.g. sunbeams/windows; 0.5 = centre)."""
+    def __init__(self, path, W, H, fps, anchor=0.5):
+        self.W, self.H, self.nbytes = W, H, W * H * 3
+        if is_video(path):
+            self.still = None
+            vf = (f"scale={W}:{H}:force_original_aspect_ratio=increase,"
+                  f"crop={W}:{H}:(iw-{W})/2:(ih-{H})*{anchor},fps={fps}")
+            self.proc = subprocess.Popen(
+                ["ffmpeg", "-stream_loop", "-1", "-i", str(path), "-an",
+                 "-vf", vf, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        else:
+            self.still = load_fit(path, W, H)
+            self.proc = None
+
+    def next(self):
+        if self.still is not None:
+            return self.still
+        buf = self.proc.stdout.read(self.nbytes)
+        if len(buf) < self.nbytes:            # loop guard (should not hit with -stream_loop -1)
+            return Image.new("RGB", (self.W, self.H))
+        return Image.frombytes("RGB", (self.W, self.H), buf)
+
+    def close(self):
+        if self.proc:
+            self.proc.stdout.close()
+            self.proc.terminate()
+
+
 def label_chip(draw, text, cx, cy, font, fill_hex, text_hex):
     b = draw.textbbox((0, 0), text, font=font)
     tw, th = b[2] - b[0], b[3] - b[1]
@@ -70,11 +115,13 @@ def main():
     ap.add_argument("-H", "--height", type=int, default=1080)
     ap.add_argument("--sweeps", type=int, default=2, help="full left↔right pingpong cycles")
     ap.add_argument("--margin", type=float, default=0.16, help="line travel margin (keeps both labels always visible)")
+    ap.add_argument("--anchor", type=float, default=0.5,
+                    help="video vertical crop position 0..1 (0 = keep the TOP — windows/sunbeams)")
     a = ap.parse_args()
 
     W, H = a.width, a.height
-    before = load_fit(a.before, W, H)
-    after = load_fit(a.after, W, H)
+    before_src = Source(a.before, W, H, a.fps, a.anchor)
+    after_src = Source(a.after, W, H, a.fps, a.anchor)
     lo, hi = a.margin * W, (1 - a.margin) * W
 
     fbig = ImageFont.truetype(str(FONTDIR / "Anton-Regular.ttf"), 96)
@@ -104,6 +151,8 @@ def main():
             e = ease_in_out((u - hold) / (1 - 2 * hold))
         x = round(lo + e * (hi - lo))
 
+        before = before_src.next()
+        after = after_src.next()
         frame = before.copy()
         frame.paste(after.crop((x, 0, W, H)), (x, 0))   # AFTER on the right of the line
         d = ImageDraw.Draw(frame)
@@ -121,6 +170,8 @@ def main():
         ff.stdin.write(frame.tobytes())
     ff.stdin.close()
     ff.wait()
+    before_src.close()
+    after_src.close()
     print(a.out)
 
 
