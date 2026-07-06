@@ -1264,7 +1264,7 @@ static AvatarFace avatar_face(const std::string& uri) {
 struct AvatarFit { bool ok = false; ImVec2 a, b; };
 static AvatarFit avatar_fit(const std::string& uri, Tex* tex, const std::string& framing,
                             ImVec2 f0, float fw, float fh, float posX, float posY,
-                            float sclX, float sclY, bool solo = false) {
+                            float sclX, float sclY, bool solo = false, bool overFootage = false) {
     AvatarFit f;
     bool closeup = (framing == "closeup" || framing == "face");
     bool bust = (framing == "bust");
@@ -1274,6 +1274,12 @@ static AvatarFit avatar_fit(const std::string& uri, Tex* tex, const std::string&
     if (!fc.ok) return f;
     float faceFrac  = closeup ? 0.42f : bust ? 0.30f : 0.34f;   // detected face width as a fraction of the frame WIDTH
     float eyeFrameY = closeup ? 0.45f : bust ? 0.48f : 0.24f;   // eye-line down the frame (bust sits lower — host default)
+    if (overFootage) {          // FULLSCREEN media under her: the footage is the shot — she floats
+                                // over it as a small cornered commentator (feet off-frame, low),
+                                // never a center-frame presenter head covering the hero footage.
+        faceFrac  = closeup ? 0.27f : bust ? 0.19f : 0.22f;
+        eyeFrameY = 0.66f;
+    }
     if (fh > fw * 1.2f) {   // PORTRAIT (shorts): the tall frame fits her whole body, so the landscape
                             // fractions read enormous + centered — smaller face, eye-line in the lower
                             // third → she presents from the BOTTOM band under the content.
@@ -4850,6 +4856,30 @@ static bool span_has_content(const Project& p, double t0, double t1) {
     return false;
 }
 
+// Is there a FULLSCREEN media clip (image/video layout=fullscreen) under the span? Fullscreen
+// footage is the shot — the host must float over it small + cornered, not stand center-frame
+// at presenter size (the "giant head over the hero footage" bug this default replaces; the
+// luckymas3 cut fixed it by hand-nudging every fullscreen beat's host pos).
+static bool span_has_fullscreen_content(const Project& p, double t0, double t1) {
+    for (auto& tk : p.tracks) {
+        if (tk.kind != "video") continue;
+        for (auto& rid : tk.rows) {
+            auto rit = p.rows.find(rid);
+            if (rit == p.rows.end()) continue;
+            const std::string& rt = rit->second.type;
+            if (rt != "image" && rt != "video") continue;
+            for (auto& cid : rit->second.clips) {
+                auto cit = p.clips.find(cid);
+                if (cit == p.clips.end()) continue;
+                const Clip& c = cit->second;
+                if (c.start + c.dur <= t0 || c.start >= t1) continue;
+                if (jstr(c.params, "layout") == "fullscreen") return true;
+            }
+        }
+    }
+    return false;
+}
+
 // The current sprite of the top-most active AVATAR clip (resolved rig → emotion → front pose), or
 // null. Lets the `filler` fill with a blurred copy of the HOST when no image plate is on screen —
 // else the fill is pure black the instant she's alone (the user's "not pure black when it's only
@@ -5466,7 +5496,12 @@ static void composite_frame(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0, 
                     // content ABOVE a big bottom host, so a horizontal auto-offset just shoves her off-center
                     // with no way to get back to 0 (the user's "pos says 0,0 but she's on the left"). Off in portrait.
                     bool landscape = fw >= fh;
+                    // FULLSCREEN media under this host beat: the footage is the shot — tuck her
+                    // small into the lower-left instead of center-presenter (see avatar_fit).
+                    bool overFootage = faceShot && avDefaultPos && landscape &&
+                                       span_has_fullscreen_content(p, c.start, c.start + c.dur);
                     float autoOffX = (side != 0 && avDefaultPos && landscape) ? -side * fw * 0.24f : 0.0f;
+                    if (overFootage && autoOffX == 0.0f) autoOffX = -fw * 0.335f;
                     // A centered jp_lesson plate IS the shot — the host steps well aside (hard left)
                     // instead of standing under it (distilled from the user's etymology-beat tweak).
                     if (autoOffX == 0.0f && side == 0 && avDefaultPos && landscape)
@@ -5506,7 +5541,7 @@ static void composite_frame(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0, 
                         bool soloShot = !span_has_content(p, c.start, c.start + c.dur);
                         AvatarFit fit = avatar_fit(spPath, sp, framing, f0, fw, fh,
                                                    cx - center.x + autoOffX, cy - center.y, effSclX, eSclY,
-                                                   soloShot);
+                                                   soloShot, overFootage);
                         float w, h; ImVec2 a, b;
                         float bobOff = 0.0f;   // current bob displacement (px; <0 = lifted UP). The contact shadow
                                                // stays on the GROUND (undoes this) + grows/fades with the lift.
