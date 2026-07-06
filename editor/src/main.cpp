@@ -533,10 +533,23 @@ static int video_frame_index(const VideoMeta& vm, const Clip& c, double T) {
     double local = T - c.start;                               // timeline-local seconds
     double in    = c.params.value("in", 0.0);
     double speed = c.params.value("speed", 1.0);
-    bool   loop  = c.params.value("loop", true);   // default: loop, so extending a short clip past its source repeats it (loop:false = hold the last frame)
+    // params.loop: true = wrap at source EOF (default — extending a short clip repeats it) ·
+    // false = hold the last frame · "pingpong" = bounce forward/backward over the source, so
+    // moving b-roll loops without the hard rewind seam.
+    bool loop = true, pingpong = false;
+    if (c.params.is_object() && c.params.contains("loop")) {
+        const json& lj = c.params["loop"];
+        if (lj.is_boolean())     loop = lj.get<bool>();
+        else if (lj.is_string()) pingpong = (lj.get<std::string>() == "pingpong");
+    }
     double proxyDur = vm.frames / vm.fps;                     // seconds covered by the proxy
-    double srcT = in + (local < 0 ? 0 : local) * speed;
-    if (loop && proxyDur - in > 1e-6) srcT = in + std::fmod((local < 0 ? 0 : local) * speed, proxyDur - in);
+    double span = proxyDur - in;
+    double t = (local < 0 ? 0 : local) * speed;
+    double srcT = in + t;
+    if (pingpong && span > 1e-6) {
+        double ph = std::fmod(t, span * 2.0);
+        srcT = in + (ph < span ? ph : span * 2.0 - ph);
+    } else if (loop && span > 1e-6) srcT = in + std::fmod(t, span);
     int idx = (int)std::lround(srcT * vm.fps);
     if (idx < 0) idx = 0;
     if (idx >= vm.frames) idx = vm.frames - 1;
@@ -627,11 +640,14 @@ struct VideoDecoder {
     }
     // Decode the frame nearest `idx` (at source fps) → RGBA `out`. Reuses the held frame on a
     // small forward step; seeks to the prior keyframe otherwise.
-    bool decode_index(int idx, std::vector<unsigned char>& out) {
+    bool decode_index(int idx, std::vector<unsigned char>& out, bool retried = false) {
         if (!ok) return false;
         if (idx < 0) idx = 0;
         if (frames > 0 && idx >= frames) idx = frames - 1;
-        if (idx == cur_idx) return to_rgba(out);                       // already held
+        if (idx == cur_idx) {                                          // already held…
+            if (to_rgba(out)) return true;
+            cur_idx = -1;                                              // …unless a failed receive wiped it
+        }
         int64_t target = (int64_t)((double)idx / fps / av_q2d(tb) + 0.5);
         bool needSeek = (cur_idx < 0) || (idx < cur_idx) || (idx - cur_idx > 30);
         if (needSeek) {
@@ -655,7 +671,16 @@ struct VideoDecoder {
                 if (pts == AV_NOPTS_VALUE || cur_idx >= idx || (frames > 0 && cur_idx >= frames - 1)) { reached = true; break; }
             }
         }
-        return to_rgba(out);   // best frame held (exact, or the last before EOF)
+        // Container metadata can OVERPROMISE (nb_frames/duration past the real stream — e.g. a
+        // 16.5s demo declaring 1130 frames with 990 decodable): hitting EOF short of the target
+        // used to leave a "can't decode source" placeholder for the whole phantom tail before the
+        // loop wrapped. Learn the REAL count so the loop wraps at true EOF, and a failed receive
+        // (which unrefs the held frame) retries the last real frame instead of drawing nothing.
+        if (eof && !reached && cur_idx >= 0 && cur_idx + 1 < frames) frames = cur_idx + 1;
+        if (to_rgba(out)) return true;     // best frame held (exact, or the last before EOF)
+        cur_idx = -1;                      // whatever was held is gone — don't fake a hit next call
+        if (!retried && frames > 0) return decode_index(frames - 1, out, true);
+        return false;
     }
 };
 
@@ -1841,6 +1866,10 @@ static std::vector<MixSrc> collect_audio(Project& p) {
     for (auto& kv : p.clips) {
         const Clip& c = kv.second;
         if (c.asset.empty() || c.params.value("mute_audio", false)) continue;
+        // retimed footage (speed ≠ 1 / pingpong loop) plays its frames off the audio clock —
+        // its own sound would desync, so it goes silent (it's 12%-volume b-roll ambience anyway)
+        if (std::fabs(c.params.value("speed", 1.0) - 1.0) > 1e-3) continue;
+        if (c.params.is_object() && c.params.contains("loop") && c.params["loop"].is_string()) continue;
         auto rit = p.rows.find(c.row);
         if (rit == p.rows.end() || rit->second.type != "video") continue;
         double vol = c.params.value("video_volume", 0.12);
@@ -5491,7 +5520,13 @@ static void composite_frame(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0, 
                     // wins. Gating on the FULL default (x AND y both 0, no pos keyframes) — not just x==0 —
                     // kills the old discontinuity where typing X=0 on a Y-nudged host re-triggered the
                     // offset (host jumped between "aside" and "literal" as the slider crossed 0).
-                    bool avDefaultPos = c.tx_pos[0] == 0.0 && c.tx_pos[1] == 0.0 && !c.keyframes.count("transform.pos");
+                    // An anchor with a HORIZONTAL component (e.g. "code_host" x=+660) is explicit side
+                    // placement too — the auto-offsets used to stack on top of it (anchor +660 then
+                    // presenter +0.24·fw pushed her clean off-frame right on every anchored code beat).
+                    // A purely VERTICAL anchor ("bust" = a y nudge) keeps the smart horizontal defaults
+                    // (presenter side-step, over-footage shrink+corner).
+                    bool avDefaultPos = c.tx_pos[0] == 0.0 && c.tx_pos[1] == 0.0 &&
+                                        !c.keyframes.count("transform.pos") && fabsf(anc.x) < 0.5f;
                     // Presenter side-offset is a LANDSCAPE idea (host beside content). PORTRAIT/shorts stack
                     // content ABOVE a big bottom host, so a horizontal auto-offset just shoves her off-center
                     // with no way to get back to 0 (the user's "pos says 0,0 but she's on the left"). Off in portrait.
@@ -5661,6 +5696,7 @@ static void composite_frame(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0, 
                             VideoDecoder* d = get_decoder(resolve_asset(vm.src));
                             if (d) {
                                 if (vm.fps <= 0) { vm.fps = d->fps; vm.frames = d->frames; vm.w = d->w; vm.h = d->h; }
+                                vm.frames = d->frames;   // stays synced when the decoder LEARNS the real EOF (bogus container counts)
                                 ft = get_decoded_frame_tex(vm.src, video_frame_index(vm, c, T), d);
                             }
                         }
@@ -9204,6 +9240,26 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
             // keyframe editor for every animatable (visual) clip type
             if (c.type != "tts" && c.type != "music") draw_keyframes_panel(c, st.playhead);
 
+            // ── video playback: speed + loop mode. pingpong bounces the source forward/backward —
+            //    the loop seam disappears on moving b-roll; retimed clips play silent (mixer rule). ──
+            if (c.type == "video") {
+                ImGui::SeparatorText("playback");
+                float spd = (float)c.params.value("speed", 1.0);
+                ImGui::SetNextItemWidth(180);
+                if (ImGui::SliderFloat("speed", &spd, 0.25f, 2.0f, "%.2fx")) c.params["speed"] = (double)spd;
+                int lm = 0;   // 0 loop · 1 hold last · 2 pingpong
+                if (c.params.contains("loop")) {
+                    const json& lj = c.params["loop"];
+                    if (lj.is_boolean() && !lj.get<bool>()) lm = 1;
+                    else if (lj.is_string() && lj.get<std::string>() == "pingpong") lm = 2;
+                }
+                ImGui::SetNextItemWidth(180);
+                if (ImGui::Combo("loop mode", &lm, "loop\0hold last frame\0pingpong\0"))
+                    c.params["loop"] = (lm == 0) ? json(true) : (lm == 1) ? json(false) : json("pingpong");
+                if (spd < 0.999f || spd > 1.001f || lm == 2)
+                    ImGui::TextDisabled("retimed: this clip's own audio is muted (would desync).");
+            }
+
             // ── video audio: a video clip carries its OWN sound (NOT a separate track), low default
             //    volume (12%). "Split to audio track" (tools/slop.py splitaudio) for advanced editing. ──
             if (c.type == "video") {
@@ -9597,6 +9653,9 @@ static void write_export_plan(Project& p, const std::string& path, int W, int H,
     for (auto& kv : p.clips) {
         Clip& c = kv.second;
         if (c.asset.empty() || c.params.value("mute_audio", false)) continue;
+        // retimed footage (speed ≠ 1 / pingpong loop) goes silent — mirror the preview mixer
+        if (std::fabs(c.params.value("speed", 1.0) - 1.0) > 1e-3) continue;
+        if (c.params.is_object() && c.params.contains("loop") && c.params["loop"].is_string()) continue;
         auto rit = p.rows.find(c.row);
         if (rit == p.rows.end() || rit->second.type != "video") continue;
         double vol = c.params.value("video_volume", 0.12);

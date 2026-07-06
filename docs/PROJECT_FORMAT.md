@@ -282,7 +282,10 @@ source (`uri`/`src`) and the decoder fills `fps`/`frames`/`w`/`h`. **Fallback pr
 --key K]` extracts a decimated-JPEG `proxy` dir → `cache://video/<name>`. **A video clip needs a
 `type:"video"` ROW** (a clip's type comes from its row); dropping a video file/library item auto-creates one.
 - retime (live): **`in`** (source in-point seconds), **`speed`** (×, e.g. 0.5 slow-mo / 2 fast), **`loop`**
-  (bool — wrap back to `in` instead of holding the last frame past the proxy end).
+  (`true` wrap back to `in` · `false` hold the last frame · `"pingpong"` bounce forward/backward — moving
+  b-roll loops without the hard rewind seam). A retimed clip (`speed`≠1 or pingpong) plays its own audio
+  MUTED (it would desync). Loop wrapping uses the REAL decoded stream end — containers that overpromise
+  `nb_frames`/duration are learned + corrected at the first tail decode (no "can't decode source" gap).
 - presentation (live): **`dim`** + **`temperature`**/**`tint`** (same draw-time tint as image) + the full
   `transform` (pos/scale/anchor/opacity, all keyframeable → Ken Burns over moving footage). *Not* supported
   on video: `blur`/`saturation`/`contrast` (those are texture-PROCESSED + path-keyed; skipped so a scrub

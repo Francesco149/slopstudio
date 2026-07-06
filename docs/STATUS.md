@@ -5,7 +5,22 @@ in the same change that lands work, so a fresh session reorients in ~60s. Last u
 **2026-07-06**. For the next editor UX/product pass, also read `docs/UX_NEXT.md`; for
 composing a video as an agent, **`docs/LLM_WORKFLOW.md`**.
 
-> **★ NEWEST (2026-07-06 overnight): THE RECETTEAR DEEP DIVE IS CUT + EXPORTED (video-002).**
+> **★ NEWEST (2026-07-06 eve): RECETTEAR OWNER-REVIEW FIX PASS (video-002) + three editor fixes.**
+> Owner's first-watch list cleared on `recettear.slop.json` (re-exported): new real-game idle
+> footage (`assets/footage/idle_2026-07-06.mp4`) replaces the flashing 2.7s retail loop on the
+> hook/intro/depth-sort/pixel-crunchy beats; b84 hikari-stills layout redone (big side-by-side over
+> dimmed footage); town-backdrop beat retargeted to the flyout window-dip (interim — owner records
+> the real-game outside showcase once the **openrecet study toggles** land); script rewrites
+> (chuuni upgrade, "assets" anti-thesis, hand-painted misconception dropped, olive→pale-yellow,
+> TTS respell "Rucettia" with `params.transcript` keeping the true spelling for captions) + 10-line
+> genvo/retime; 2 misplaced awkward stings removed. **Editor:** (1) an anchor with a horizontal
+> component (e.g. `code_host`) now counts as explicit placement — presenter/over-footage auto-offsets
+> no longer stack on it (was pushing anchored hosts off-frame right); (2) `VideoDecoder` learns the
+> REAL stream end when containers overpromise `nb_frames` (killed the "(can't decode source)" tail
+> before loop wrap); (3) `loop:"pingpong"` + a playback inspector section (speed slider · loop mode);
+> retimed clips (speed≠1/pingpong) auto-mute their own audio in preview + export.
+
+> **★ (2026-07-06 overnight): THE RECETTEAR DEEP DIVE IS CUT + EXPORTED (video-002).**
 > `../slopstudio-projects/recettear/recettear.slop.json` → `exports/recettear.mp4` (13:52, 1080p60,
 > 299MB, credits sidecar) — the first video written+composed end-to-end with the recalibrated skills
 > (packaging-first → fact/voice/doctor → skeleton → adopt/genvo → lint → retention gate → taste gate).
