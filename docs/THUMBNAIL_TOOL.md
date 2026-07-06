@@ -71,7 +71,9 @@ sprite browser lists) · `watermark` · `templates` (named ready-to-fill layer s
 ## GUI
 Layers panel (reorder/dup/hide) · Inspector with palette swatches · brand template buttons ·
 sprite browser (from `sprite_roots`, click = add layer) · canvas with drag-move,
-ctrl+wheel scale, and a live **168px squint inset** ("feed size") · **history panel**
+ctrl+wheel scale, and a live **168px squint inset** ("feed size") — which draws YouTube's
+**duration pill** bottom-right (long-form only; text = the doc's optional `preview_dur`, default
+`12:00`) so you can gauge subject↔pill collisions live · **history panel**
 (sibling `*.thumb.json` = A/B variants; `history/` snapshots with PNG previews, click to
 restore — undoable) · Snapshot / Export PNG buttons · 16:9↔9:16 toggle.
 
