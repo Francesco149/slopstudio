@@ -21,14 +21,15 @@ OD = collections.OrderedDict
 # ── clip-type defaults: row + a sensible param skeleton (what the compositor reads) ──
 ROW_OF = {"code":"r_code","caption":"r_cap","text":"r_cap","shape":"r_shape","gradient":"r_grade",
           "image":"r_img","video":"r_video","avatar":"r_av","tts":"r_vo","music":"r_music","blur":"r_blur",
-          "diagram":"r_diagram","filler":"r_fill"}
+          "diagram":"r_diagram","filler":"r_fill","anchor":"r_capanchor"}
 TRACK_OF = {"r_code":("tk_code","Decompile","video"),"r_cap":("tk_cap","Captions","video"),
             "r_shape":("tk_shape","Callouts","video"),"r_grade":("tk_grade","Grade","video"),
             "r_img":("tk_img","Footage","video"),"r_video":("tk_video","Video","video"),
             "r_av":("tk_av","Gemma","video"),"r_blur":("tk_blur","Blur","video"),
             "r_diagram":("tk_diagram","Diagram","video"),"r_fill":("tk_fill","Backdrop","video"),
             "r_vo":("tk_vo","Narration","audio"),"r_music":("tk_music","Music","audio"),
-            "r_transcript":("tk_transcript","Transcript","video")}
+            "r_transcript":("tk_transcript","Transcript","video"),
+            "r_capanchor":("tk_capanchor","Cap anchor","video")}
 
 PROJDIR = "."   # dir of the loaded project — plain uris resolve CWD-first, then here
                 # (a project dir is portable: it can live outside the code repo)
@@ -87,7 +88,7 @@ def ensure_row_after(p, rid, after, typ="image"):
 def gen_id(p, typ):
     base = {"caption":"c_cap","text":"c_cap","code":"c_cd","shape":"c_sh","gradient":"c_vig",
             "image":"c_im","video":"c_vid","avatar":"c_av","tts":"v_","music":"c_mus","blur":"c_blur",
-            "diagram":"c_diag","filler":"c_fill"}.get(typ,"c_")
+            "diagram":"c_diag","filler":"c_fill","anchor":"c_anc"}.get(typ,"c_")
     i=1
     while f"{base}{i}" in p["clips"]: i+=1
     return f"{base}{i}"
@@ -1065,6 +1066,54 @@ def cmd_transcript(p, a):
     save(p,a.out or a.project); print(f"transcript: {n} chunks on r_transcript")
 
 
+# ── anchor: a caption MOVE HANDLE — one clip whose transform.pos shifts every caption/text
+# clip STARTING inside its span (editor: caption_anchor_off; params.rows narrows the targets,
+# default = every caption row). Because `transcript` rewrites only the r_transcript chunks,
+# an anchor's offset SURVIVES a caption regen — author time-range caption moves HERE, never
+# as per-chunk pos nudges (those are wiped on regen). Overlapping anchors sum.
+def _beat_span(p, beat):
+    ids=[cid for cid in p["clips"] if cid.startswith(beat+"_")]
+    if not ids: sys.exit(f"no clips for beat {beat}")
+    return (min(p["clips"][i].get("start",0) for i in ids),
+            max(p["clips"][i].get("start",0)+p["clips"][i].get("dur",0) for i in ids))
+
+def cmd_anchor(p, a):
+    rid="r_capanchor"
+    if a.rm:
+        if a.rm not in p["clips"]: sys.exit(f"no clip {a.rm}")
+        p["clips"].pop(a.rm)
+        for r in p["rows"].values():
+            if a.rm in r.get("clips",[]): r["clips"].remove(a.rm)
+        save(p, a.out or a.project); print(f"removed {a.rm}"); return
+    if a.pos is None:   # no --pos → list mode
+        anchors=[(cid,p["clips"][cid]) for cid in p["rows"].get(rid,{}).get("clips",[])]
+        if not anchors: print("no caption anchors"); return
+        for cid,c in anchors:
+            rows=c.get("params",{}).get("rows")
+            print(f"{cid}: {c['start']:.2f}-{c['start']+c['dur']:.2f}  pos {c['transform']['pos']}"
+                  + (f"  rows {rows}" if rows else ""))
+        return
+    if a.beat:
+        b0,_,b1=a.beat.partition("..")
+        t0=_beat_span(p,b0)[0]; t1=_beat_span(p,b1 or b0)[1]
+    elif a.t0 is not None and a.t1 is not None:
+        t0,t1=a.t0,a.t1
+    else:
+        sys.exit("need --beat bNN[..bMM] or --t0/--t1")
+    prm=OD()
+    if a.rows: prm["rows"]=[r.strip() for r in a.rows.split(",") if r.strip()]
+    cid=new_clip(p,"anchor",rid,t0,t1-t0,prm,a.id)
+    c=p["clips"][cid]
+    c["transform"]["pos"]=[float(x) for x in a.pos.split(",")]
+    c["notes"]="cap anchor"   # the editor's timeline label
+    n=sum(1 for c2 in p["clips"].values()
+          if p["rows"].get(c2.get("row",""),{}).get("type") in ("caption","text")
+          and t0-1e-4 <= c2.get("start",0) < t1-1e-4
+          and (not prm.get("rows") or c2.get("row") in prm["rows"]))
+    save(p, a.out or a.project)
+    print(f"anchor {cid}: {t0:.2f}-{t1:.2f}  pos {a.pos}  — moves {n} caption clip(s)")
+
+
 def _ts(t, sep=","):   # seconds -> HH:MM:SS,mmm (srt) / HH:MM:SS.mmm (vtt)
     t=max(0.0,float(t)); h=int(t//3600); m=int(t%3600//60); s=int(t%60); ms=int(round((t-int(t))*1000))
     if ms==1000: s+=1; ms=0
@@ -1415,6 +1464,14 @@ def main():
     s=sub.add_parser("adopt", help="reuse generated VO/viseme assets from another project by text match"); common(s)
     s.add_argument("--src", required=True, help="project to adopt generated assets from")
     s=sub.add_parser("retime", help="snap the timeline to real generated VO durations (time-warp)"); common(s)
+    s=sub.add_parser("anchor", help="caption move-handle clip: its pos shifts every caption starting in its span (survives `transcript` regen)"); common(s)
+    s.add_argument("--pos", default=None, help="X,Y px offset, e.g. 0,442 (omit to LIST existing anchors)")
+    s.add_argument("--t0", type=float, default=None, help="span start (s)")
+    s.add_argument("--t1", type=float, default=None, help="span end (s)")
+    s.add_argument("--beat", default=None, help="bNN or bNN..bMM — span = those beats' clips (instead of --t0/--t1)")
+    s.add_argument("--rows", default=None, help="comma row ids to move (default: every caption row)")
+    s.add_argument("--id", default=None)
+    s.add_argument("--rm", default=None, help="remove an anchor clip by id")
     s=sub.add_parser("transcript", help="(re)generate the animated on-screen transcript from the VO lines"); common(s)
     s=sub.add_parser("captions", help="export the spoken VO transcript (txt/srt/vtt) for YouTube subtitles"); common(s)
     s.add_argument("--fmt", choices=["txt","srt","vtt"], default="txt", help="stdout format (default txt = paste into YouTube auto-sync)")
@@ -1437,6 +1494,7 @@ def main():
     if a.cmd=="lint": sys.exit(cmd_lint(p,a))
     if a.cmd=="adopt": cmd_adopt(p,a); return
     if a.cmd=="retime": cmd_retime(p,a); return
+    if a.cmd=="anchor": cmd_anchor(p,a); return
     if a.cmd=="transcript": cmd_transcript(p,a); return
     if a.cmd=="captions": cmd_captions(p,a); return
     if a.cmd=="bed": cmd_bed(p,a); return

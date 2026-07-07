@@ -187,6 +187,15 @@ the param UI from the schema, so adding a model needs no editor change.
   Current categories: `bust` (host bust shots), `code_host` (the host while a code card is up),
   `tr_room` / `tr_scene` / `tr_content` / `tr_code` (the shorts transcript bands: solo-room ·
   room-with-scene-backdrop · content beat · code beat).
+- **caption-anchor clips** (row type **`anchor`**, conventional row `r_capanchor`): a clip that is
+  a **move handle for a TIME RANGE of captions** — every caption/text clip whose *start* falls
+  inside the anchor clip's span renders shifted by the anchor's `transform.pos`. Because
+  `slop.py transcript` rewrites only the transcript chunks, the offset **survives a caption
+  regen** — author time-range caption moves as an anchor clip, never as per-chunk pos nudges
+  (those are wiped on regen). Overlapping anchors sum; `params.rows` (array of row ids)
+  narrows the targets (default: every caption/text row). The clip draws nothing itself.
+  Author via **`slop.py anchor <proj> --beat b04[..b06] | --t0 T --t1 T --pos X,Y`** (no
+  `--pos` lists; `--rm <id>` removes), or in-editor: Edit ▸ Add special clip ▸ Caption anchor.
 - `keyframes` maps a dotted param path → an ordered list of keyframes. Each keyframe has
   `t`, `v`, and an `interp` (`linear · bezier · constant · spring`); `bezier` adds
   `in`/`out` handle vectors, `spring` adds `{stiffness,damping}`. **Any** numeric param is

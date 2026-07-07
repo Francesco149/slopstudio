@@ -2,10 +2,28 @@
 
 Hand-maintained "what's true right now." **Read this first after `CLAUDE.md`** and update it
 in the same change that lands work, so a fresh session reorients in ~60s. Last updated:
-**2026-07-07**. For the next editor UX/product pass, also read `docs/UX_NEXT.md`; for
+**2026-07-08**. For the next editor UX/product pass, also read `docs/UX_NEXT.md`; for
 composing a video as an agent, **`docs/LLM_WORKFLOW.md`**.
 
-> **★ NEWEST (2026-07-07): RECETTEAR REVIEW-PASS-2 FIXES — avatar seam slides, border toggle, code nudge, plate pins.**
+> **★ NEWEST (2026-07-08): CAPTION-ANCHOR CLIPS — move a time range of captions with ONE clip, regen-proof.**
+> Owner (while finetuning the capitalism-ho short): per-chunk transcript pos nudges are wiped by every
+> `slop.py transcript` regen. New clip type **`anchor`** (row `r_capanchor`): every caption/text clip whose
+> START falls in the anchor clip's span renders shifted by the anchor's `transform.pos` — one handle moves
+> the whole range, and regen can't touch it (transcript rewrites only the chunk clips). Overlapping anchors
+> sum; `params.rows` narrows targets (default: all caption rows). **Editor:** offset applied in the caption
+> composite branch (`caption_anchor_off`, composes with auto-corner placement); draws nothing itself (like
+> `blur`); timeline color + inspector section (target-row checkboxes, live covered-count) + the generic
+> pos/start/dur widgets; Edit ▸ Add special clip ▸ Caption anchor; "anchor" in the Add-Track types.
+> **slop.py:** `anchor` verb (`--beat b04[..b06]` | `--t0/--t1`, `--pos X,Y`, `--rows`, `--rm`, no-args =
+> list) + ROW_OF/TRACK_OF/gen_id wiring. Docs: PROJECT_FORMAT §clips; composing-slop skill rule (range
+> moves = anchor clip, never chunk nudges). **Applied to `recettear-short2-capitalismho`** (owner reworded
+> lines + regen'd VO in-editor first): the 22 hand-nudged chunks (b04 +442, b06 +486) became 2 anchor
+> clips (`anc_b04`, `anc_b06`), then the captions regenerated (71 chunks, all wav-timed; b01 gets
+> `params.transcript` = "Recettear's…" true spelling over the TTS respell "Resittear's"). Verified via
+> `--shot-frame` at 26/47.5/16/1.5 (anchored ranges sit at the owner's tuned band, unanchored beats
+> unchanged); lint 0 warnings / 1 pre-existing note.
+
+> **★ (2026-07-07): RECETTEAR REVIEW-PASS-2 FIXES — avatar seam slides, border toggle, code nudge, plate pins.**
 > Owner's second list, all landed. **Editor:** (1) **avatar seam teleports fixed** — the pose-swap
 > signature now includes the AUTO-PLACEMENT state (`avatar_place_sig`: presenter side, over-footage
 > shrink+corner, jp_lesson step-aside, portrait solo; memoized per clip per frame — the SFX scheduler

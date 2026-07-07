@@ -3300,6 +3300,7 @@ static ImU32 type_color(const std::string& t) {
     if (t == "caption") return IM_COL32(200, 200, 110, 255);
     if (t == "gradient") return IM_COL32(110, 130, 175, 255);
     if (t == "blur")    return IM_COL32(150, 185, 215, 255);
+    if (t == "anchor")  return IM_COL32( 95, 220, 185, 255);   // caption anchor — the caption-move handle
     if (t == "diagram") return IM_COL32(120, 205, 235, 255);
     if (t == "filler")  return IM_COL32( 90, 110, 130, 255);
     return IM_COL32(150, 150, 150, 255);
@@ -4053,6 +4054,30 @@ static void draw_code_clip(ImDrawList* dl, float cx, float cy, float s, Clip& c,
 // draw_song_credit so the now-playing chip dodges the ACTUAL boxes on screen (a hand-moved plate
 // included — no style/place guessing).
 static std::vector<ImVec4> g_frameTextBoxes;
+
+// ── caption-anchor clips (`anchor` rows) ─────────────────────────────────────
+// A MOVE HANDLE for captions: every caption/text clip whose START falls inside an anchor
+// clip's span renders offset by that anchor's transform.pos — one clip moves a whole time
+// range of captions at once, and because regeneration (slop.py transcript) rewrites only
+// the caption clips themselves, the offset SURVIVES a caption regen. Overlapping anchors
+// sum; params.rows (array of row ids) narrows the targets (default: every caption/text
+// clip in the span). The clip draws nothing — the timeline rect + inspector are its UI.
+static ImVec2 caption_anchor_off(Project& p, const Clip& cap, double T) {
+    ImVec2 off(0, 0);
+    for (auto& kv : p.clips) {
+        Clip& a = kv.second;
+        if (a.type != "anchor") continue;
+        if (cap.start < a.start - 1e-4 || cap.start >= a.start + a.dur - 1e-4) continue;
+        if (a.params.is_object() && a.params.contains("rows") && a.params["rows"].is_array()) {
+            bool m = false;
+            for (auto& r : a.params["rows"]) if (r.is_string() && r.get<std::string>() == cap.row) { m = true; break; }
+            if (!m) continue;
+        }
+        off.x += (float)anim_xform(a, "transform.pos", 0, T, a.tx_pos[0]);
+        off.y += (float)anim_xform(a, "transform.pos", 1, T, a.tx_pos[1]);
+    }
+    return off;
+}
 
 // ───────────────────────── captions / text overlays ─────────────────────────
 // A `caption` (or `text`) clip draws styled on-screen text: lower-thirds, term pop-ups, and
@@ -5438,6 +5463,10 @@ static void composite_frame(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0, 
                 // above the host (opposite the side content), top-left over fullscreen footage,
                 // top-right otherwise — never mid-frame.
                 if (c.type == "caption" || c.type == "text") {
+                    // caption-anchor clips covering this caption's start shift it (see caption_anchor_off) —
+                    // composes with auto-corner placement below exactly like the clip's own pos offset does.
+                    ImVec2 capA = caption_anchor_off(p, c, st.playhead);
+                    cx += capA.x * s; cy += capA.y * s;
                     int autoCorner = -1;
                     std::string place = jstr(c.params, "place");
                     std::string capStyle = jstr(c.params, "style");
@@ -5577,6 +5606,10 @@ static void composite_frame(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0, 
                 // host, captions, code, insets — not just one image plate. The clip is just the
                 // timing/strength source; skip it in the per-clip draw.
                 if (c.type == "blur") continue;
+
+                // caption anchor: a move handle for the captions in its span (caption_anchor_off,
+                // applied in the caption branch above) — the clip itself draws nothing.
+                if (c.type == "anchor") continue;
 
                 // avatar: a STATIC pose per expression + an audio-reactive bob + light-up.
                 // (SD and authored-sheet frame ANIMATION aren't stable enough to feel good, so
@@ -7146,7 +7179,7 @@ static void color_param(const char* label, json& P, const char* key, ImU32 def) 
 // Inspector widgets for the native compositing clips (code / caption / shape) — these are NOT
 // generated, so they had no inspector at all (JSON-only). Each field reads c.params live and
 // writes back on edit (instant, like the transform widgets).
-static void draw_native_params(Clip& c) {
+static void draw_native_params(Project& p, Clip& c) {
     json& P = c.params;
     if (c.type == "code") {
         ImGui::SeparatorText("code card");
@@ -7293,6 +7326,42 @@ static void draw_native_params(Clip& c) {
         if (ImGui::InputText("title", tb, sizeof tb)) P["title"] = std::string(tb);
         color_param("accent",   P, "accent", IM_COL32(120, 205, 235, 255));
         color_param("box fill", P, "fill",   IM_COL32(26, 30, 40, 235));
+    } else if (c.type == "anchor") {
+        ImGui::SeparatorText("caption anchor");
+        ImGui::TextDisabled("A move handle: every caption whose START falls inside this clip's span\n"
+                            "renders shifted by `pos (px)` above — one drag moves a whole time range\n"
+                            "of captions, and the offset survives a transcript regen (slop.py rewrites\n"
+                            "only the caption clips, not this one). Overlapping anchors sum.");
+        // target rows: default = every caption/text row; params.rows narrows it
+        std::vector<std::string> capRows;
+        for (auto& kv : p.rows) if (kv.second.type == "caption" || kv.second.type == "text") capRows.push_back(kv.first);
+        bool all = !(P.contains("rows") && P["rows"].is_array());
+        auto rowOn = [&](const std::string& rid) {
+            if (all) return true;
+            for (auto& r : P["rows"]) if (r.is_string() && r.get<std::string>() == rid) return true;
+            return false;
+        };
+        ImGui::TextDisabled("moves captions on:");
+        bool changed = false; std::vector<std::string> onRows;
+        for (auto& rid : capRows) {
+            bool on = rowOn(rid);
+            if (ImGui::Checkbox(rid.c_str(), &on)) changed = true;
+            if (on) onRows.push_back(rid);
+        }
+        if (changed) {
+            if (onRows.size() == capRows.size()) P.erase("rows");   // all checked = the default (no param)
+            else { json arr = json::array(); for (auto& r : onRows) arr.push_back(r); P["rows"] = arr; }
+        }
+        // live readout: how many captions this anchor is moving right now
+        int n = 0;
+        for (auto& kv : p.clips) {
+            const Clip& oc = kv.second;
+            if (oc.type != "caption" && oc.type != "text") continue;
+            if (oc.start < c.start - 1e-4 || oc.start >= c.start + c.dur - 1e-4) continue;
+            if (!rowOn(oc.row)) continue;
+            n++;
+        }
+        ImGui::Text("%d caption clip(s) in range", n);
     }
 }
 
@@ -7591,6 +7660,7 @@ static std::string add_native_clip_at(Project& p, const std::string& type, doubl
     else if (type == "diagram")  { dur = 5.0; params = json::object(); label = "diagram"; }
     else if (type == "blur")     { dur = 1.5; params = json{{"blur",30.0}}; label = "blur"; t = std::max(0.0, t - dur * 0.5); }  // center the bell on the playhead
     else if (type == "filler")   { dur = 5.0; params = json{{"source","auto"},{"blur",30.0},{"dim",0.55}}; label = "bg fill"; }
+    else if (type == "anchor")   { dur = 8.0; params = json::object(); label = "cap anchor"; }   // caption move-handle: pos shifts every caption starting in its span
 
     std::string row;
     for (auto& kv : p.rows) if (kv.second.type == type) { row = kv.first; break; }
@@ -8767,6 +8837,7 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
                     {"Code card",                "code"},
                     {"Shape / callout",          "shape"},
                     {"Diagram (boxes + arrows)", "diagram"},
+                    {"Caption anchor (move captions in range)", "anchor"},
                 };
                 for (auto& nt : NTS)
                     if (ImGui::MenuItem(nt.label)) {
@@ -8821,7 +8892,7 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
     if (g_openAddTrack) { ImGui::OpenPopup("Add Track"); g_openAddTrack = false; }
     if (ImGui::BeginPopupModal("Add Track", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         static int tIdx = 0; static char tName[64] = "";
-        const char* TYPES[] = {"image", "caption", "code", "shape", "gradient", "filler", "avatar", "tts", "music"};
+        const char* TYPES[] = {"image", "caption", "code", "shape", "gradient", "filler", "avatar", "tts", "music", "anchor"};
         ImGui::Combo("type", &tIdx, TYPES, IM_ARRAYSIZE(TYPES));
         ImGui::InputText("name (optional)", tName, sizeof tName);
         if (ImGui::Button("Add", ImVec2(120, 0))) { add_track(p, TYPES[tIdx], tName); tName[0] = 0; ImGui::CloseCurrentPopup(); }
@@ -9417,7 +9488,7 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
                 else if (gi != gen.end() && gi->second.state == 3)
                     ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "ERR: %s", gi->second.message.c_str());
             } else {
-                draw_native_params(c);  // code / caption / shape — the native compositing clips
+                draw_native_params(p, c);  // code / caption / shape — the native compositing clips
             }
             // keyframe editor for every animatable (visual) clip type
             if (c.type != "tts" && c.type != "music") draw_keyframes_panel(c, st.playhead);

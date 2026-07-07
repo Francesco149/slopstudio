@@ -47,9 +47,11 @@ session**). The reference cut + all conventions are in `docs/LLM_WORKFLOW.md`; f
 
 ## Editing existing cuts
 Use the CLI verbs (`overview` to read the timeline; `add`/`insert`/`ripple`/`rebase`/`retime`/`bed`/
-`transcript`), NOT hand-written JSON — extend the CLI rather than one-off scripts. `overview` is the
+`transcript`/`anchor`), NOT hand-written JSON — extend the CLI rather than one-off scripts. `overview` is the
 LLM-facing timeline view today (a compact `digest` is planned). After any take swap, **run `retime`** (it's
 the canonical follow-up — durs must be ÷speech_rate for 1.3× shorts, or you leave a dead gap).
+**Moving captions over a time range** = a caption-anchor clip (`slop.py anchor <proj> --beat b04 --pos 0,442`),
+NEVER per-chunk pos nudges — `transcript` regen wipes chunk transforms but anchors survive (their own row).
 
 ## House rules
 - **Show visuals on the llm-feed** as you go (`curl -F file=@shot.png localhost:8777/push`) — fire-and-forget.
