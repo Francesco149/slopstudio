@@ -1294,9 +1294,11 @@ def cmd_adopt(p, a):
         # "assets/…" relative uri) instead of carrying a uri that only resolves in the src dir
         ad=json.loads(json.dumps(ad), object_pairs_hook=OD)
         uri=ad["uri"]
-        sp=uri if os.path.isabs(uri) else os.path.join(srcdir,uri.replace("cache://","cache/"))
+        rel=uri.replace("cache://","cache/")
+        sp=uri if os.path.isabs(uri) else os.path.join(srcdir,rel)
+        if not os.path.exists(sp): sp=resolve_uri(uri)   # not localized into the src dir → the shared repo cache
         if not os.path.isabs(uri):
-            dp=os.path.join(dstdir,uri)
+            dp=os.path.join(dstdir,rel)                  # cache:// lands in <proj>/cache/… (never a literal "cache:" dir)
             if not os.path.exists(dp):
                 os.makedirs(os.path.dirname(dp),exist_ok=True); shutil.copy2(sp,dp)
         p.setdefault("assets",OD())[ak]=ad
