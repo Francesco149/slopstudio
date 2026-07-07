@@ -403,6 +403,19 @@ def engage_mut(body):
     return start_job("engage-" + op, argv, ROOT)
 
 
+def engage_upload(name, data):
+    """Stash a browser-uploaded exporter JSON and ingest it (raw/ keeps its own copy)."""
+    if not data:
+        raise ValueError("empty upload")
+    json.loads(data)  # must be JSON — catches a wrong-file drop before it hits ingest
+    name = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(name)) or "export.json"
+    updir = os.path.join(ROOT, "cache", "engage-uploads")
+    os.makedirs(updir, exist_ok=True)
+    path = os.path.join(updir, f"{int(time.time())}-{name}")
+    open(path, "wb").write(data)
+    return start_job("engage-ingest", eng("ingest", path), ROOT)
+
+
 # ── social mutations ──────────────────────────────────────────────────────────
 def mark_posted(pid, platform, url, date):
     argv = soc("post", pid)
@@ -552,6 +565,13 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         u = urllib.parse.urlparse(self.path)
         n = int(self.headers.get("Content-Length", 0))
+        if u.path == "/api/engage-upload":  # raw file body, not JSON-wrapped
+            q = urllib.parse.parse_qs(u.query)
+            try:
+                jid = engage_upload(q.get("name", ["export.json"])[0], self.rfile.read(n))
+                return self._send(200, {"job": jid})
+            except Exception as e:
+                return self._send(400, {"error": str(e)})
         try:
             body = json.loads(self.rfile.read(n) or b"{}")
         except Exception:
@@ -863,17 +883,20 @@ function renderEngage(){
   const e=S.engage;
   if(e.error){$('w-engage').innerHTML='<div class="card">engage error: '+esc(e.error)+'</div>';return}
   const flagged=e.pending.filter(c=>c.flagged), ok=e.pending.filter(c=>!c.flagged);
-  let h=`<div class="card"><div class="row" style="align-items:center">
+  let h=`<div class="card" id="eng-drop" ondragover="event.preventDefault();this.style.borderColor='var(--acc)'"
+    ondragleave="this.style.borderColor=''" ondrop="engDrop(event)"><div class="row" style="align-items:center">
     <span class="chip">pending ${ok.length}</span>
     <span class="chip">⚠ flagged ${flagged.length}</span>
     <span class="chip">engaged ${e.engaged.length}</span>
     <span class="chip">skipped ${e.skipped}</span>
     <input type="text" id="eng-src" placeholder="YouTube/reddit/HN URL or exporter .json path" style="flex:1;min-width:260px">
     <button class="sm pri" onclick="engIngest()">capture</button>
+    <button class="sm pri" onclick="$('eng-file').click()">upload .json</button>
+    <input type="file" id="eng-file" accept=".json,application/json" class="hidden" onchange="engUpload(this.files[0]);this.value=''">
     <button class="sm" onclick="engOp({op:'check'})">⟳ check reply metrics</button></div>
     <div class="muted" style="font-size:12px;margin-top:6px">tweets: browse with the twitter-web-exporter
-    userscript → export JSON → paste the file path here. Triage + reply drafting: ask Claude
-    (engaging-gemma skill). Hard rule: ⚠ flagged = drama/politics — skip, never argue.</div></div>`;
+    userscript → export JSON → <b>upload / drop the file anywhere on this box</b>. Triage + reply drafting:
+    ask Claude (engaging-gemma skill). Hard rule: ⚠ flagged = drama/politics — skip, never argue.</div></div>`;
   if(ok.length){h+='<h2>pending ('+ok.length+')</h2><div class="posts">'+ok.map(engCard).join('')+'</div>'}
   if(flagged.length){h+='<h2>⚠ flagged — skip these ('+flagged.length+')</h2><div class="posts">'+flagged.map(engCard).join('')+'</div>'}
   if(!e.pending.length){h+='<div class="card muted" style="margin-top:12px">nothing pending — capture something above</div>'}
@@ -914,6 +937,16 @@ function engRespondForm(id){
 function engIngest(){
   const src=$('eng-src').value.trim(); if(!src){flash('paste a URL or .json path first');return}
   engOp({op:'ingest',source:src}); openLog();
+}
+async function engUpload(f){
+  if(!f)return;
+  const r=await fetch('/api/engage-upload?name='+encodeURIComponent(f.name),{method:'POST',body:f});
+  const j=await r.json(); if(j.error){flash('✗ '+j.error);return}
+  watch(j.job); openLog();
+}
+function engDrop(ev){
+  ev.preventDefault(); $('eng-drop').style.borderColor='';
+  engUpload(ev.dataTransfer.files[0]);
 }
 async function engOp(body){
   const r=await fetch('/api/engage',{method:'POST',body:JSON.stringify(body)});
