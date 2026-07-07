@@ -111,13 +111,17 @@ def find_card(cards, cid, kinds=KINDS):
     raise SystemExit(f"no card '{cid}'")
 
 
-def write_card(base, cid, meta, body, quiet=False):
+def write_card(base, cid, meta, body, quiet=False, refresh=False):
     path = os.path.join(edir(base, "cards"), cid + ".md")
-    for kind in KINDS:  # never resurrect an already-triaged capture
-        if os.path.exists(os.path.join(base, kind, cid + ".md")):
+    for kind in KINDS:  # never silently resurrect an already-triaged capture
+        old = os.path.join(base, kind, cid + ".md")
+        if not os.path.exists(old):
+            continue
+        if not refresh or kind == "engaged":  # engaged history is immutable
             if not quiet:
                 print(f"  = {cid} already captured ({kind}/) — skipped")
             return None
+        os.remove(old)  # --refresh: recapture fresh (skipped/ cards return to triage)
     meta = {k: v for k, v in meta.items() if v}
     open(path, "w", encoding="utf-8").write(dump_card({"id": cid, "meta": meta, "body": body}))
     flag = " ⚠ " + meta["safety"] if meta.get("safety", "").startswith("flagged") else ""
@@ -173,7 +177,49 @@ def n(x):
         return "?"
 
 
+# ── channel dossiers (recurring memes/gags per creator — fan-signal fuel) ─────
+def chan_slug(s):
+    return re.sub(r"[^\w]+", "-", (s or "channel").lower()).strip("-") or "channel"
+
+
+def update_dossier(base, channel, cid, title, date):
+    """Track every capture per channel; the notes section is maintained at triage."""
+    path = os.path.join(edir(base, "channels"), chan_slug(channel) + ".md")
+    if not os.path.exists(path):
+        open(path, "w", encoding="utf-8").write(
+            f"# {channel} — channel dossier\n\n"
+            "## notes (recurring memes, gags, community bits — update at every triage)\n\n"
+            "(none recorded yet)\n\n## captures\n")
+    text = open(path, encoding="utf-8").read()
+    prior = text.count("\n- ")
+    if cid not in text:
+        open(path, "a", encoding="utf-8").write(f"- {date} · {cid} — {title}\n")
+    return path, prior
+
+
 # ── ingest: YouTube (official API via yutu — no scraping) ─────────────────────
+def yt_transcript(vid):
+    """Plain-text transcript from YT subs via yt-dlp (manual or auto); '' if none."""
+    import shutil as _sh, tempfile
+    if not _sh.which("yt-dlp"):
+        print("  (yt-dlp not found — transcript skipped; run inside nix develop)")
+        return ""
+    with tempfile.TemporaryDirectory() as td:
+        subprocess.run(["yt-dlp", "--no-warnings", "-q", "--skip-download",
+                        "--write-subs", "--write-auto-subs", "--sub-langs", "en,en-orig",
+                        "--sub-format", "json3", "-o", os.path.join(td, "v.%(ext)s"),
+                        f"https://youtu.be/{vid}"], capture_output=True, timeout=180)
+        subs = [f for f in os.listdir(td) if f.endswith(".json3")]
+        if not subs:
+            return ""
+        data = json.loads(open(os.path.join(td, subs[0]), encoding="utf-8").read())
+    words = []
+    for ev in data.get("events", []):
+        for seg in ev.get("segs") or []:
+            w = (seg.get("utf8") or "").strip()
+            if w:
+                words.append(w)
+    return re.sub(r"\s+", " ", " ".join(words)).strip()
 def yt_video_id(url):
     u = urllib.parse.urlparse(url)
     if u.netloc.endswith("youtu.be"):
@@ -184,7 +230,7 @@ def yt_video_id(url):
     return urllib.parse.parse_qs(u.query).get("v", [None])[0]
 
 
-def ingest_youtube(base, cfg, url, session):
+def ingest_youtube(base, cfg, url, session, refresh=False):
     vid = yt_video_id(url)
     if not vid:
         raise SystemExit(f"can't find a video id in {url}")
@@ -215,13 +261,22 @@ def ingest_youtube(base, cfg, url, session):
             com_text.append(txt)
             lines.append(f"- {c.get('authorDisplayName', '?')} (+{c.get('likeCount', 0)}, "
                          f"{t['snippet'].get('totalReplyCount', 0)} replies · thread {t.get('id', '')}): {txt}")
+    trans = yt_transcript(vid)
+    if trans:
+        save_raw(base, f"yt-{vid}.transcript.txt", trans)
+        lines += ["", "## transcript (from subs)",
+                  trans[:18000] + ("… (truncated — full text in raw/)" if len(trans) > 18000 else "")]
+    dossier, prior = update_dossier(base, sn.get("channelTitle", "?"), f"yt-{vid}",
+                                    sn.get("title", ""), str(sn.get("publishedAt", ""))[:10])
+    print(f"  channel dossier: {os.path.relpath(dossier, base)} ({prior} prior capture(s))"
+          + (" — read the notes before drafting" if prior else ""))
     meta = {"platform": "youtube", "url": f"https://youtu.be/{vid}",
             "author": sn.get("channelTitle", "?"), "date": str(sn.get("publishedAt", ""))[:10],
             "captured": today(), "session": session,
             "stats": f"{n(st.get('viewCount'))} views · {n(st.get('likeCount'))} likes · "
                      f"{n(st.get('commentCount'))} comments",
             "safety": safety_scan(cfg, sn.get("title"), desc[:1500], *com_text), "raw": raw}
-    return [write_card(base, f"yt-{vid}", meta, "\n".join(lines))]
+    return [write_card(base, f"yt-{vid}", meta, "\n".join(lines), refresh=refresh)]
 
 
 # ── ingest: twitter-web-exporter JSON (passive GraphQL capture; both the plain
@@ -377,7 +432,7 @@ def cmd_ingest(base, cfg, args):
     else:
         host = urllib.parse.urlparse(src).netloc.lower()
         if "youtube.com" in host or "youtu.be" in host:
-            made = ingest_youtube(base, cfg, src, session)
+            made = ingest_youtube(base, cfg, src, session, refresh=args.refresh)
         elif "reddit.com" in host:
             made = ingest_reddit(base, cfg, src, session)
         elif "news.ycombinator.com" in host:
@@ -507,6 +562,8 @@ def main():
     ip = sub.add_parser("ingest"); ip.add_argument("source", help="URL or exporter .json")
     ip.add_argument("--session", help="capture-session tag (default: today)")
     ip.add_argument("--min-faves", type=int, default=0, help="tweet floor for timeline dumps")
+    ip.add_argument("--refresh", action="store_true",
+                    help="recapture an existing card (skipped/ returns to triage; engaged/ is immutable)")
     lp = sub.add_parser("list"); lp.add_argument("--platform"); lp.add_argument("--session")
     lp.add_argument("--engaged", action="store_true"); lp.add_argument("--skipped", action="store_true")
     sp = sub.add_parser("show"); sp.add_argument("id")
