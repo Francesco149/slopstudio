@@ -170,7 +170,12 @@ def engage_state():
 
     def cj(c):
         m = c["meta"]
+        sug = []
+        if "## suggested replies" in c["body"]:
+            sug = [ln[2:].strip() for ln in c["body"].split("## suggested replies", 1)[1].splitlines()
+                   if ln.startswith("- ")]
         return {"id": c["id"], "platform": m.get("platform", "?"), "url": m.get("url", ""),
+                "suggestions": sug,
                 "author": m.get("author", ""), "captured": m.get("captured", ""),
                 "session": m.get("session", ""), "stats": m.get("stats", ""),
                 "flagged": m.get("safety", "").startswith("flagged"), "safety": m.get("safety", ""),
@@ -687,6 +692,10 @@ border:1px solid var(--line);display:flex;align-items:center;justify-content:cen
 .gi img{width:100%;height:112px;object-fit:cover;display:block;background:#0e0e14}
 .gi .cap{font-size:10.5px;color:var(--dim);padding:4px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .gi .tag{position:absolute;top:5px;left:5px;font-size:10px;padding:1px 6px;border-radius:5px}
+/* engage: suggested replies */
+.sug{background:#15151c;border:1px solid var(--line);border-radius:7px;padding:6px 9px;margin-top:5px;
+font-size:12.5px;cursor:pointer;white-space:pre-wrap}
+.sug:hover{border-color:var(--acc)}
 .tag.used{background:#233a2a;color:var(--good)}.tag.free{background:#3a3320;color:var(--warn)}
 /* launcher */
 .acts{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}
@@ -915,6 +924,8 @@ function engCard(c){
       <span class="chip">${esc(c.author)}</span><span class="chip">${esc(done?('engaged '+c.responded):c.captured)}</span></div>
     <div class="muted" style="font-size:12px">${esc(c.stats)}${perf}</div>
     <div class="txt" id="etxt-${c.id}">${esc(c.body)}</div>
+    ${!done&&(c.suggestions||[]).length?'<div class="muted" style="font-size:11px;margin-top:6px">suggested replies — click to copy</div>'
+      +c.suggestions.map((s,i)=>`<div class="sug" onclick="copySug('${c.id}',${i})">${esc(s)}</div>`).join(''):''}
     <div class="acts">
       <button class="sm" onclick="$('etxt-${c.id}').classList.toggle('full')">show</button>
       <a href="${esc(c.url)}" target="_blank"><button class="sm">open ↗</button></a>
@@ -923,13 +934,20 @@ function engCard(c){
           <button class="sm" onclick="engOp({op:'skip',id:'${c.id}'${c.flagged?",reason:'safety'":''}})">skip${c.flagged?' (safety)':''}</button>`}
     </div><div id="eform-${c.id}"></div></div></div>`;
 }
+let lastSug={};
+function copySug(id,i){
+  const c=S.engage.pending.concat(S.engage.engaged).find(x=>x.id==id); if(!c)return;
+  navigator.clipboard.writeText(c.suggestions[i]); lastSug[id]=c.suggestions[i];
+  flash('copied — post it, then mark engaged (text prefilled)');
+  const t=$('er-text-'+id); if(t)t.value=c.suggestions[i];
+}
 function engRespondForm(id){
   const f=$('eform-'+id); if(f.innerHTML){f.innerHTML='';return}
   f.innerHTML=`<div class="card" style="margin-top:8px">
     <div class="muted" style="font-size:11px;margin-bottom:4px">what Gemma said + where (YouTube: use the
     comment permalink with &amp;lc= so <i>check</i> can track likes)</div>
     <textarea id="er-text-${id}" placeholder="the reply as posted" style="width:100%;min-height:70px;font:13px/1.4 ui-monospace,monospace;
-      background:#15151c;color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:8px"></textarea>
+      background:#15151c;color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:8px">${esc(lastSug[id]||'')}</textarea>
     <div class="opts" style="margin-top:8px"><label class="opt">url <input type="text" id="er-url-${id}" size="34" placeholder="link to our reply"></label></div>
     <button class="sm pri" onclick="engOp({op:'respond',id:'${id}',url:$('er-url-${id}').value,text:$('er-text-${id}').value})">confirm → engaged/</button>
     <button class="sm" onclick="$('eform-${id}').innerHTML=''">cancel</button></div>`;

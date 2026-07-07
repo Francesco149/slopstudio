@@ -14,6 +14,7 @@ the engaging-gemma skill.
                                                            # twitter-web-exporter JSON drop
   python tools/engage.py list [--engaged|--skipped] [--platform x] [--session S]
   python tools/engage.py show ID
+  python tools/engage.py draft ID --text "..."             # attach a suggested reply (dashboard: click-to-copy)
   python tools/engage.py respond ID --url U [--text T]     # record what Gemma said → engaged/
   python tools/engage.py skip ID [--reason R]              # pass (safety / stale / meh)
   python tools/engage.py check                             # refresh metrics on our YT replies
@@ -481,6 +482,15 @@ def move_card(base, c, kind):
     return dst
 
 
+def cmd_draft(base, cards, args):
+    kind, c = find_card(cards, args.id, kinds=("cards",))
+    if "## suggested replies" not in c["body"]:
+        c["body"] += "\n\n## suggested replies"
+    c["body"] += "\n- " + " ".join(args.text.split())  # one line per option
+    open(c["path"], "w", encoding="utf-8").write(dump_card(c))
+    print(f"draft attached to {args.id}")
+
+
 def cmd_respond(base, cards, args):
     kind, c = find_card(cards, args.id)
     if kind == "skipped":
@@ -567,6 +577,7 @@ def main():
     lp = sub.add_parser("list"); lp.add_argument("--platform"); lp.add_argument("--session")
     lp.add_argument("--engaged", action="store_true"); lp.add_argument("--skipped", action="store_true")
     sp = sub.add_parser("show"); sp.add_argument("id")
+    dp = sub.add_parser("draft"); dp.add_argument("id"); dp.add_argument("--text", required=True)
     rp = sub.add_parser("respond"); rp.add_argument("id"); rp.add_argument("--url")
     rp.add_argument("--text"); rp.add_argument("--date")
     kp = sub.add_parser("skip"); kp.add_argument("id"); kp.add_argument("--reason")
@@ -578,6 +589,7 @@ def main():
         return cmd_ingest(base, cfg, args)
     cards = load_all(base)
     {"list": lambda: cmd_list(cards, args), "show": lambda: cmd_show(cards, args.id),
+     "draft": lambda: cmd_draft(base, cards, args),
      "respond": lambda: cmd_respond(base, cards, args), "skip": lambda: cmd_skip(base, cards, args),
      "check": lambda: cmd_check(base, cards), "status": lambda: cmd_status(cards)}[args.cmd]()
 
