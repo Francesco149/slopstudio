@@ -407,6 +407,73 @@ def ingest_reddit(base, cfg, url, session):
     return [write_card(base, f"rd-{post['id']}", meta, "\n".join(lines))]
 
 
+def ingest_bsky(base, cfg, url, session):
+    """bsky.app/profile/<handle|did>/post/<rkey>. Unlike X, Bluesky's AppView API is
+    public and unauthenticated for public posts — a plain URL is enough (no userscript)."""
+    m = re.search(r"bsky\.app/profile/([^/]+)/post/([a-z0-9]+)", url)
+    if not m:
+        raise SystemExit(f"{url}: not a bsky.app post url (expected /profile/<handle>/post/<rkey>)")
+    actor, rkey = m.group(1), m.group(2)
+    api = "https://public.api.bsky.app/xrpc/"
+    did = actor if actor.startswith("did:") else json.loads(
+        fetch(api + "com.atproto.identity.resolveHandle?handle=" + urllib.parse.quote(actor)))["did"]
+    at = f"at://{did}/app.bsky.feed.post/{rkey}"
+    data = json.loads(fetch(api + "app.bsky.feed.getPostThread?uri=" + urllib.parse.quote(at)
+                            + "&depth=1&parentHeight=0"))
+    th = data.get("thread", {})
+    post = th.get("post") or {}
+    if not post:
+        raise SystemExit(f"{url}: post not found / not public ({th.get('$type', '?')})")
+    raw = save_raw(base, f"bsky-{rkey}.json", json.dumps(data, indent=1))
+    rec = post.get("record", {})
+    au = post.get("author", {})
+    handle, disp = au.get("handle", "?"), au.get("displayName", "")
+    lines = [rec.get("text", "").strip()]
+
+    def embed_lines(emb, depth=0):
+        out = []
+        t = (emb or {}).get("$type", "")
+        if t.startswith("app.bsky.embed.images"):
+            imgs = emb.get("images", [])
+            alts = [i.get("alt", "").strip() for i in imgs if i.get("alt", "").strip()]
+            out.append(f"\n({len(imgs)} image{'s' if len(imgs) > 1 else ''}"
+                       + (" — alt: " + " | ".join(a[:200] for a in alts) if alts else " — open the post to see them") + ")")
+        elif t.startswith("app.bsky.embed.video"):
+            out.append("\n(video attachment" + (f" — alt: {emb.get('alt', '')[:200]}" if emb.get("alt") else " — open the post to watch") + ")")
+        elif t.startswith("app.bsky.embed.external"):
+            ex = emb.get("external", {})
+            out.append(f"\nlinks to: {ex.get('uri', '')}" + (f" — {ex.get('title', '')[:120]}" if ex.get("title") else ""))
+        elif t.startswith("app.bsky.embed.recordWithMedia"):
+            out += embed_lines(emb.get("media"), depth)
+            out += embed_lines({"$type": "app.bsky.embed.record#view", **emb.get("record", {})}, depth)
+        elif t.startswith("app.bsky.embed.record"):
+            q = emb.get("record", {})
+            if q.get("$type", "").endswith("viewRecord"):
+                qa = q.get("author", {})
+                out.append(f"\n## quoted post — @{qa.get('handle', '?')}\n{q.get('value', {}).get('text', '')[:500]}")
+            elif q.get("$type", ""):
+                out.append(f"\n(quoted post unavailable: {q['$type'].split('#')[-1]})")
+        return out
+
+    lines += embed_lines(post.get("embed"))
+    reps = [r.get("post") for r in th.get("replies", []) if r.get("post")][:8]
+    if reps:
+        lines.append("\n## top replies")
+        for r in reps:
+            ra, rr = r.get("author", {}), r.get("record", {})
+            lines.append(f"- @{ra.get('handle', '?')} (+{r.get('likeCount', 0)}): {rr.get('text', '')[:280]}")
+    meta = {"platform": "bsky", "url": f"https://bsky.app/profile/{handle}/post/{rkey}",
+            "author": f"@{handle}" + (f" ({disp})" if disp else ""),
+            "date": (rec.get("createdAt") or "")[:10], "captured": today(), "session": session,
+            "stats": f"{n(post.get('likeCount', 0))} likes · {n(post.get('repostCount', 0))} reposts · "
+                     f"{n(post.get('replyCount', 0))} replies"
+                     + (f" · {n(post.get('quoteCount', 0))} quotes" if post.get("quoteCount") else ""),
+            "safety": safety_scan(cfg, rec.get("text", ""),
+                                  *[r.get("record", {}).get("text", "")[:300] for r in reps]),
+            "raw": raw}
+    return [write_card(base, f"bsky-{rkey}", meta, "\n".join(lines))]
+
+
 def ingest_hn(base, cfg, url, session):
     hid = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["id"][0]
     it = json.loads(fetch(f"https://hn.algolia.com/api/v1/items/{hid}"))
@@ -462,6 +529,8 @@ def cmd_ingest(base, cfg, args):
             made = ingest_reddit(base, cfg, src, session)
         elif "news.ycombinator.com" in host:
             made = ingest_hn(base, cfg, src, session)
+        elif "bsky.app" in host:
+            made = ingest_bsky(base, cfg, src, session)
         elif host.startswith(("x.com", "twitter.com")) or ".x.com" in host:
             raise SystemExit("single tweets can't be fetched logged-out — open it in the browser "
                              "with the twitter-web-exporter userscript, export JSON, then "
