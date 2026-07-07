@@ -2440,20 +2440,36 @@ static json build_params(Project& p, Clip& c, const std::string& capType) {
 // For an align-driven clip (avatar), find the audio asset that drives it: the `driven_by`
 // row's clip overlapping this clip's time. The asset KEY is the provider content hash, which
 // align resolves zero-copy from the sibling cache; we also pass a fetchable uri as fallback.
-static bool resolve_driven_audio(Project& p, Clip& c, json& inputs, std::string& dialog, std::string& err) {
+static bool resolve_driven_audio(Project& p, Clip& c, const std::string& clipId,
+                                 json& inputs, std::string& dialog, std::string& err) {
     auto rit = p.rows.find(c.row);
     std::string drivenRow = (rit != p.rows.end()) ? jstr(rit->second.params, "driven_by") : "";
     if (drivenRow.empty()) { err = "avatar row has no 'driven_by' (the VO row to lip-sync)"; return false; }
     auto drit = p.rows.find(drivenRow);
     if (drit == p.rows.end()) { err = "driven_by row '" + drivenRow + "' not found"; return false; }
     Clip* best = nullptr;
-    for (auto& cid : drit->second.clips) {
-        auto dc = p.clips.find(cid);
-        if (dc == p.clips.end() || dc->second.asset.empty()) continue;
-        Clip& d = dc->second;
-        bool overlap = !(d.start + d.dur <= c.start || d.start >= c.start + c.dur);
-        if (overlap) { best = &d; break; }
-        if (!best) best = &d;  // fallback: first generated clip on the row
+    // the compiler pairs beats by id (bNN_av ↔ bNN_vo) — honor that first. Time overlap
+    // lies before retime: a freshly generated neighbour VO grows to its raw take length
+    // and swallows the estimated spans of the beats after it.
+    if (clipId.size() > 3 && clipId.compare(clipId.size() - 3, 3, "_av") == 0) {
+        std::string vid = clipId.substr(0, clipId.size() - 3) + "_vo";
+        auto dc = p.clips.find(vid);
+        if (dc != p.clips.end() && !dc->second.asset.empty() && dc->second.row == drivenRow)
+            best = &dc->second;
+    }
+    if (!best) {  // fallback: the driven-row clip with the MOST overlap (ties → closest start)
+        double bov = -1.0, bdist = 1e18;
+        Clip* first = nullptr;
+        for (auto& cid : drit->second.clips) {
+            auto dc = p.clips.find(cid);
+            if (dc == p.clips.end() || dc->second.asset.empty()) continue;
+            Clip& d = dc->second;
+            if (!first) first = &d;
+            double ov = std::min(d.start + d.dur, c.start + c.dur) - std::max(d.start, c.start);
+            double dist = std::abs(d.start - c.start);
+            if (ov > bov + 1e-9 || (ov > bov - 1e-9 && dist < bdist)) { bov = ov; bdist = dist; best = &d; }
+        }
+        if (!best) best = first;  // nothing overlaps at all → first generated clip on the row
     }
     if (!best) { err = "drive row '" + drivenRow + "' has no generated audio yet — generate the VO first"; return false; }
     std::string hash = best->asset, ext = "wav", uri;
@@ -2612,7 +2628,7 @@ static void start_generate(Project& p, const std::string& clipId) {
     json inputs = json::array();
     if (capType == "visemes" || capType == "word_timing") {  // align: needs the driven audio
         std::string dialog, err;
-        if (!resolve_driven_audio(p, c, inputs, dialog, err)) { gen_set(clipId, 3, 0, err); return; }
+        if (!resolve_driven_audio(p, c, clipId, inputs, dialog, err)) { gen_set(clipId, 3, 0, err); return; }
         if (!dialog.empty()) params["dialog"] = dialog;  // improves Rhubarb accuracy
     }
     GenReq* req = new GenReq{clipId, pc->second.url, provKey, capType, g_cacheDir,
