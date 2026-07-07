@@ -137,7 +137,9 @@ bundle — is a *possible later* smooth-deformation upgrade; **not supported tod
   `../gemma-branding/README.md` — the map; playbooks `PACKAGING.md` + `SOCIAL.md` + research live there.
 - **Social presence ops — canonical bios/description · cadence · the post queue + daily scheduler:**
   `../gemma-branding/SOCIAL.md` (CLI: `tools/social.py status`; **web dashboard: `tools/video.py dashboard`**
-  = the social queue + video launcher at a glance; content: `../gemma-branding/social/`)
+  = the social queue + video launcher at a glance; content: `../gemma-branding/social/`).
+  **Comment-section engagement** (in-character replies on others' content): `tools/engage.py` +
+  the dashboard Engage tab + the `engaging-gemma` skill; SOCIAL.md § Engagement.
 - **The live YouTube channel IS yours to inspect + manage** — the **`yutu` MCP** is wired (YouTube Data
   API: channel/video/playlist/comment/caption/analytics; its tools load every session). So on any
   @GemmaExplains task you can check subscriber/view counts, list/update uploads, read + reply to comments,

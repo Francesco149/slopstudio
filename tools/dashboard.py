@@ -46,6 +46,8 @@ YUTU_TOKEN = os.path.join(YUTU_DIR, "youtube.token.json")  # exists ⇒ OAuth do
 
 sys.path.insert(0, TOOLS)
 import social  # reuse the queue parser / window logic — one source of truth
+import engage  # same for the engagement cards
+ENGAGE_DIR = os.path.join(SOCIAL_DIR, "engagement")
 
 IMG_EXT = (".png", ".jpg", ".jpeg", ".webp", ".gif")
 VID_EXT = (".mp4", ".mov", ".webm", ".mkv")
@@ -159,6 +161,29 @@ def social_state(today):
             "stale": [p["id"] for p in queue if p["image_kind"] in ("image", "video") and not p["image_ok"]]}
 
 
+# ── state: engagement (cards live in social/engagement/, see tools/engage.py) ──
+def engage_state():
+    try:
+        cards = engage.load_all(ENGAGE_DIR)
+    except Exception as e:
+        return {"error": str(e), "pending": [], "engaged": [], "skipped": 0}
+
+    def cj(c):
+        m = c["meta"]
+        return {"id": c["id"], "platform": m.get("platform", "?"), "url": m.get("url", ""),
+                "author": m.get("author", ""), "captured": m.get("captured", ""),
+                "session": m.get("session", ""), "stats": m.get("stats", ""),
+                "flagged": m.get("safety", "").startswith("flagged"), "safety": m.get("safety", ""),
+                "responded": m.get("responded", ""), "response_url": m.get("response-url", ""),
+                "likes": m.get("response-likes", ""), "replies": m.get("response-replies", ""),
+                "body": c["body"]}
+
+    return {"pending": [cj(c) for c in cards["cards"]],
+            "engaged": [cj(c) for c in sorted(cards["engaged"],
+                                              key=lambda c: c["meta"].get("responded", ""), reverse=True)],
+            "skipped": len(cards["skipped"])}
+
+
 # ── state: projects ───────────────────────────────────────────────────────────
 def projects_state():
     out = []
@@ -241,6 +266,10 @@ def vid(*a):
 
 def soc(*a):
     return [sys.executable, os.path.join(TOOLS, "social.py"), *a]
+
+
+def eng(*a):
+    return [sys.executable, os.path.join(TOOLS, "engage.py"), *a]
 
 
 ACTIONS = {
@@ -350,6 +379,28 @@ def job_detail(jid):
             return None
         return {"id": j["id"], "action": j["action"], "cmd": " ".join(j["cmd"]),
                 "status": j["status"], "rc": j["rc"], "output": list(j["output"])}
+
+
+# ── engagement mutations (drive tools/engage.py — one source of truth) ────────
+def engage_mut(body):
+    op = body.get("op")
+    if op == "ingest":
+        argv = eng("ingest", body["source"])
+        if body.get("session"):
+            argv += ["--session", body["session"]]
+    elif op == "skip":
+        argv = eng("skip", body["id"]) + (["--reason", body["reason"]] if body.get("reason") else [])
+    elif op == "respond":
+        argv = eng("respond", body["id"])
+        if body.get("url"):
+            argv += ["--url", body["url"]]
+        if body.get("text"):
+            argv += ["--text", body["text"]]
+    elif op == "check":
+        argv = eng("check")
+    else:
+        raise ValueError(f"unknown engage op '{op}'")
+    return start_job("engage-" + op, argv, ROOT)
 
 
 # ── social mutations ──────────────────────────────────────────────────────────
@@ -465,7 +516,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(204); self.end_headers(); return
         if u.path == "/api/state":
             today = social.pdate(q["date"][0]) if "date" in q else datetime.date.today()
-            state = {"today": str(today), "social": social_state(today), "projects": projects_state(),
+            state = {"today": str(today), "social": social_state(today), "engage": engage_state(),
+                     "projects": projects_state(),
                      "actions": {k: {"label": v["label"], "group": v["group"], "params": v["params"],
                                      "note": v.get("note", ""), "confirm": v.get("confirm", False)}
                                  for k, v in ACTIONS.items()},
@@ -518,6 +570,8 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/edit":
                 edit_post(body["id"], body.get("body"), body.get("fields"))
                 return self._send(200, {"ok": True})
+            if u.path == "/api/engage":
+                return self._send(200, {"job": engage_mut(body)})
         except Exception as e:
             return self._send(400, {"error": str(e)})
         return self._send(404, {"error": "not found"})
@@ -656,6 +710,7 @@ display:inline-block;animation:sp .7s linear infinite}@keyframes sp{to{transform
 <div class="tabs" id="tabs"></div>
 <main>
   <div class="wrap" id="w-social"></div>
+  <div class="wrap" id="w-engage"></div>
   <div class="wrap" id="w-launcher"></div>
   <div class="wrap" id="w-projects"></div>
   <div class="wrap" id="w-channel"></div>
@@ -674,14 +729,14 @@ const thumb=(p,w=200)=>'/api/thumb?w='+w+'&path='+encodeURIComponent(p);
 
 async function load(){
   const r=await fetch('/api/state'); S=await r.json();
-  renderEnv(); renderTabs(); renderSocial(); renderLauncher(); renderProjects(); renderJobs();
+  renderEnv(); renderTabs(); renderSocial(); renderEngage(); renderLauncher(); renderProjects(); renderJobs();
 }
 function renderEnv(){
   const e=S.env, d=(on,l)=>`<span><span class="dot" style="background:${on?'var(--good)':'var(--bad)'}"></span>${l}</span>`;
   $('env').innerHTML = `today ${S.today} · `+d(e.feed,'feed')+d(e.lame,'lame')+d(e.editor,'editor')+d(e.thumbtool,'thumbtool');
 }
 function renderTabs(){
-  const tabs=[['social','Social'],['launcher','Launcher'],['projects','Projects'],['channel','Channel']];
+  const tabs=[['social','Social'],['engage','Engage'],['launcher','Launcher'],['projects','Projects'],['channel','Channel']];
   $('tabs').innerHTML=tabs.map(([k,l])=>`<div class="tab ${k==TAB?'on':''}" onclick="setTab('${k}')">${l}</div>`).join('');
   for(const [k] of tabs) $('w-'+k).classList.toggle('on',k==TAB);
 }
@@ -802,6 +857,69 @@ async function doPair(id){
   closeModal(); flash('paired '+id); load();
 }
 function galClick(name,path){ lightbox(path); }
+
+/* ---------- ENGAGE (tools/engage.py — comment-section presence) ---------- */
+function renderEngage(){
+  const e=S.engage;
+  if(e.error){$('w-engage').innerHTML='<div class="card">engage error: '+esc(e.error)+'</div>';return}
+  const flagged=e.pending.filter(c=>c.flagged), ok=e.pending.filter(c=>!c.flagged);
+  let h=`<div class="card"><div class="row" style="align-items:center">
+    <span class="chip">pending ${ok.length}</span>
+    <span class="chip">⚠ flagged ${flagged.length}</span>
+    <span class="chip">engaged ${e.engaged.length}</span>
+    <span class="chip">skipped ${e.skipped}</span>
+    <input type="text" id="eng-src" placeholder="YouTube/reddit/HN URL or exporter .json path" style="flex:1;min-width:260px">
+    <button class="sm pri" onclick="engIngest()">capture</button>
+    <button class="sm" onclick="engOp({op:'check'})">⟳ check reply metrics</button></div>
+    <div class="muted" style="font-size:12px;margin-top:6px">tweets: browse with the twitter-web-exporter
+    userscript → export JSON → paste the file path here. Triage + reply drafting: ask Claude
+    (engaging-gemma skill). Hard rule: ⚠ flagged = drama/politics — skip, never argue.</div></div>`;
+  if(ok.length){h+='<h2>pending ('+ok.length+')</h2><div class="posts">'+ok.map(engCard).join('')+'</div>'}
+  if(flagged.length){h+='<h2>⚠ flagged — skip these ('+flagged.length+')</h2><div class="posts">'+flagged.map(engCard).join('')+'</div>'}
+  if(!e.pending.length){h+='<div class="card muted" style="margin-top:12px">nothing pending — capture something above</div>'}
+  if(e.engaged.length){
+    h+='<h2>engaged (latest '+Math.min(e.engaged.length,12)+' of '+e.engaged.length+')</h2><div class="posts">'
+      +e.engaged.slice(0,12).map(engCard).join('')+'</div>';
+  }
+  $('w-engage').innerHTML=h;
+}
+function engCard(c){
+  const done=!!c.responded;
+  const perf=done&&c.likes?` · our reply <b>+${esc(c.likes)}</b>${c.replies?' / '+esc(c.replies)+' replies':''}`:'';
+  return `<div class="post card"><div class="body">
+    <div class="id">${c.flagged?'<span class="miss">⚠ '+esc(c.safety)+'</span> ':''}${esc(c.id)}</div>
+    <div class="row" style="gap:5px;margin:3px 0"><span class="badge">${esc(c.platform)}</span>
+      <span class="chip">${esc(c.author)}</span><span class="chip">${esc(done?('engaged '+c.responded):c.captured)}</span></div>
+    <div class="muted" style="font-size:12px">${esc(c.stats)}${perf}</div>
+    <div class="txt" id="etxt-${c.id}">${esc(c.body)}</div>
+    <div class="acts">
+      <button class="sm" onclick="$('etxt-${c.id}').classList.toggle('full')">show</button>
+      <a href="${esc(c.url)}" target="_blank"><button class="sm">open ↗</button></a>
+      ${done?(c.response_url?`<a href="${esc(c.response_url)}" target="_blank"><button class="sm">our reply ↗</button></a>`:'')
+        :`<button class="sm pri" onclick="engRespondForm('${c.id}')">mark engaged</button>
+          <button class="sm" onclick="engOp({op:'skip',id:'${c.id}'${c.flagged?",reason:'safety'":''}})">skip${c.flagged?' (safety)':''}</button>`}
+    </div><div id="eform-${c.id}"></div></div></div>`;
+}
+function engRespondForm(id){
+  const f=$('eform-'+id); if(f.innerHTML){f.innerHTML='';return}
+  f.innerHTML=`<div class="card" style="margin-top:8px">
+    <div class="muted" style="font-size:11px;margin-bottom:4px">what Gemma said + where (YouTube: use the
+    comment permalink with &amp;lc= so <i>check</i> can track likes)</div>
+    <textarea id="er-text-${id}" placeholder="the reply as posted" style="width:100%;min-height:70px;font:13px/1.4 ui-monospace,monospace;
+      background:#15151c;color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:8px"></textarea>
+    <div class="opts" style="margin-top:8px"><label class="opt">url <input type="text" id="er-url-${id}" size="34" placeholder="link to our reply"></label></div>
+    <button class="sm pri" onclick="engOp({op:'respond',id:'${id}',url:$('er-url-${id}').value,text:$('er-text-${id}').value})">confirm → engaged/</button>
+    <button class="sm" onclick="$('eform-${id}').innerHTML=''">cancel</button></div>`;
+}
+function engIngest(){
+  const src=$('eng-src').value.trim(); if(!src){flash('paste a URL or .json path first');return}
+  engOp({op:'ingest',source:src}); openLog();
+}
+async function engOp(body){
+  const r=await fetch('/api/engage',{method:'POST',body:JSON.stringify(body)});
+  const j=await r.json(); if(j.error){flash('✗ '+j.error);return}
+  watch(j.job);
+}
 
 /* ---------- LAUNCHER ---------- */
 function renderLauncher(){
@@ -927,7 +1045,7 @@ async function pollJob(){
   $('logout').scrollTop=$('logout').scrollHeight;
   const st=j.status=='running'?'<span class="spin"></span> running':j.status=='done'?'✓ done':'✗ failed (rc '+j.rc+')';
   $('logstat').innerHTML=esc(j.action)+' — '+st;
-  if(j.status!='running'){clearInterval(poll);poll=null; if(['post','pair'].some(x=>j.action.startsWith(x)))load();}
+  if(j.status!='running'){clearInterval(poll);poll=null; if(['post','pair','engage'].some(x=>j.action.startsWith(x)))load();}
 }
 function openLog(){$('log').classList.add('up')}
 function toggleLog(){$('log').classList.toggle('up')}
