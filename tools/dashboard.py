@@ -167,6 +167,7 @@ def social_state(today):
 def engage_state():
     try:
         cards = engage.load_all(ENGAGE_DIR)
+        engage.auto_prune(ENGAGE_DIR, cards, quiet=True)  # stale pending auto-skip (x/bsky >24h, yt >7d)
     except Exception as e:
         return {"error": str(e), "pending": [], "engaged": [], "skipped": 0}
 

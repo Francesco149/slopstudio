@@ -638,6 +638,35 @@ def cmd_check(base, cards):
           "nothing to check — YouTube engagements need a response-url with &lc=<comment id>")
 
 
+def auto_prune(base, cards, quiet=False):
+    """Auto-skip pending cards past their engagement window — the reply would land in a
+    dead thread anyway. x/bsky (and reddit/HN/pages): post date older than YESTERDAY
+    (day-resolution "24h+", so nothing that might be under 24h is skipped early);
+    youtube: older than 7 days. Cards with suggested replies are the owner's queue and
+    are never auto-skipped. Runs on status/list and every dashboard engage view."""
+    t = datetime.date.today()
+    n = 0
+    for c in list(cards["cards"]):
+        m = c["meta"]
+        if "## suggested replies" in c["body"]:
+            continue
+        d = m.get("date") or m.get("captured") or ""
+        try:
+            age = (t - datetime.date.fromisoformat(d)).days
+        except ValueError:
+            continue
+        if age > (7 if m.get("platform") == "youtube" else 1):
+            m["skipped"] = today()
+            m["skip-reason"] = "stale"
+            move_card(base, c, "skipped")
+            cards["cards"].remove(c)
+            cards["skipped"].append(c)
+            n += 1
+    if n and not quiet:
+        print(f"  (auto-skipped {n} stale card(s) — x/bsky >24h, youtube >7d; drafted cards kept)")
+    return n
+
+
 def cmd_status(cards):
     pend = cards["cards"]
     flagged = [c for c in pend if c["meta"].get("safety", "").startswith("flagged")]
@@ -691,6 +720,8 @@ def main():
     if args.cmd == "ingest":
         return cmd_ingest(base, cfg, args)
     cards = load_all(base)
+    if args.cmd in ("list", "status"):
+        auto_prune(base, cards)   # stale pending → skipped/ before any view of the queue
     {"list": lambda: cmd_list(cards, args), "show": lambda: cmd_show(cards, args.id),
      "draft": lambda: cmd_draft(base, cards, args),
      "respond": lambda: cmd_respond(base, cards, args), "skip": lambda: cmd_skip(base, cards, args),
