@@ -9746,6 +9746,14 @@ static void write_export_plan(Project& p, const std::string& path, int W, int H,
                 if (rit->second.type == "tts") gdb += p.speechGainDb;
                 // tts clips take the project default speech rate when they carry none (shorts ~1.3x)
                 double defRate = rit->second.type == "tts" ? p.speechRate : 1.0;
+                // A clip nudged past timeline zero (start < 0) must NOT reach ffmpeg raw: adelay
+                // rejects a negative delay and the whole filtergraph dies (the hook-footage export
+                // failure). Clamp = trim the head: shift the in-point by the clipped span (at
+                // source rate) and shorten dur — exactly what the preview mixer audibly plays.
+                double crate = c.params.value("rate", defRate);
+                double cstart = c.start, cdur = c.dur, cin = c.params.value("in", 0.0);
+                if (cstart < 0) { cin += -cstart * crate; cdur += cstart; cstart = 0.0; }
+                if (cdur <= 1e-6) continue;                        // entirely before t=0
                 // keyframed gain_db = the music-lane volume RAMP → a piecewise-linear ffmpeg volume
                 // EXPRESSION in clip-local time (the exact envelope the preview mixer evaluates). The
                 // static gain_db becomes lane+normalize only (the keyframes carry the clip gain).
@@ -9760,7 +9768,7 @@ static void write_export_plan(Project& p, const std::string& path, int W, int H,
                     // TRUNCATED it → a malformed expr that ffmpeg evaluated to 0 in spots = dropouts).
                     std::string tail = num(lin(ks.back().v.empty() ? 0.0 : ks.back().v[0]));
                     for (int i = (int)ks.size() - 2; i >= 0; --i) {
-                        double T0 = ks[i].t - c.start, T1 = ks[i + 1].t - c.start;
+                        double T0 = ks[i].t - cstart, T1 = ks[i + 1].t - cstart;   // clip-local (post-clamp)
                         double G0 = lin(ks[i].v.empty() ? 0.0 : ks[i].v[0]);
                         double G1 = lin(ks[i + 1].v.empty() ? 0.0 : ks[i + 1].v[0]);
                         std::string body = (T1 - T0 < 1e-4)
@@ -9769,20 +9777,20 @@ static void write_export_plan(Project& p, const std::string& path, int W, int H,
                         tail = "if(lt(t," + num(T1) + ")," + body + "," + tail + ")";
                     }
                     double first = lin(ks.front().v.empty() ? 0.0 : ks.front().v[0]);
-                    envExpr = "if(lt(t," + num(ks.front().t - c.start) + ")," + num(first) + "," + tail + ")";
+                    envExpr = "if(lt(t," + num(ks.front().t - cstart) + ")," + num(first) + "," + tail + ")";
                     gdb -= c.params.value("gain_db", 0.0);          // static volume = lane+normalize; kf carries the rest
                 }
-                json entry = json{{"path", ap}, {"start", c.start}, {"dur", c.dur},
-                                  {"in", c.params.value("in", 0.0)}, {"gain_db", gdb},
-                                  {"rate", c.params.value("rate", defRate)}};
+                json entry = json{{"path", ap}, {"start", cstart}, {"dur", cdur},
+                                  {"in", cin}, {"gain_db", gdb},
+                                  {"rate", crate}};
                 // music duck: an ffmpeg volume EXPRESSION in clip-local time, the exact
                 // duck_factor shape the preview mixer plays (export.sh chains it after the gain)
                 std::string duckExpr;
                 if (rit->second.type == "music" && !duckWins.empty()) {
                     std::string dmax;
                     for (auto& w : duckWins) {
-                        double A = w.first - c.start, B = w.second - c.start;
-                        if (B + DUCK_IN < 0 || A > c.dur) continue;   // window misses this clip
+                        double A = w.first - cstart, B = w.second - cstart;
+                        if (B + DUCK_IN < 0 || A > cdur) continue;   // window misses this clip
                         char term[160];   // commas survive: export.sh single-quotes the whole value
                         snprintf(term, sizeof term, "clip(min((t-(%.3f))/%.2f,((%.3f)-t)/%.2f),0,1)",
                                  A, DUCK_OUT, B + DUCK_IN, DUCK_IN);
@@ -9819,16 +9827,24 @@ static void write_export_plan(Project& p, const std::string& path, int W, int H,
         std::ifstream f(ap); if (!f.good()) continue;
         double gdb = c.params.value("gain_db", 0.0) + 20.0 * std::log10(std::max(1e-4, vol))
                    + rit->second.params.value("gain_db", 0.0);
-        audio.push_back(json{{"path", ap}, {"start", c.start}, {"dur", c.dur},
-                             {"in", c.params.value("in", 0.0)}, {"gain_db", gdb},
-                             {"rate", c.params.value("rate", 1.0)}, {"from_video", true}});
+        // clamp a past-zero start (same recipe as the audio rows — adelay rejects negatives)
+        double vrate = c.params.value("rate", 1.0);
+        double vstart = c.start, vdur = c.dur, vin = c.params.value("in", 0.0);
+        if (vstart < 0) { vin += -vstart * vrate; vdur += vstart; vstart = 0.0; }
+        if (vdur <= 1e-6) continue;
+        audio.push_back(json{{"path", ap}, {"start", vstart}, {"dur", vdur},
+                             {"in", vin}, {"gain_db", gdb},
+                             {"rate", vrate}, {"from_video", true}});
     }
     // built-in transition SFX — the SAME event list the preview mixer plays (meta.sfx gates inside)
     for (auto& e : collect_sfx_events(p)) {
         std::string ap = resolve_asset("library/sfx/" + e.wav);
         std::ifstream f(ap); if (!f.good()) continue;         // stock pack not fetched → none
         Pcm* pc = get_pcm("library/sfx/" + e.wav); if (!pc) continue;
-        audio.push_back(json{{"path", ap}, {"start", e.t}, {"dur", pc->dur}, {"in", 0.0},
+        double st = e.t, sdur = pc->dur, sin2 = 0.0;          // clamp a pre-zero cue (adelay ≥ 0)
+        if (st < 0) { sin2 = -st; sdur += st; st = 0.0; }
+        if (sdur <= 1e-6) continue;
+        audio.push_back(json{{"path", ap}, {"start", st}, {"dur", sdur}, {"in", sin2},
                              {"gain_db", e.gainDb}, {"rate", 1.0}});
     }
     plan["audio"] = audio;
