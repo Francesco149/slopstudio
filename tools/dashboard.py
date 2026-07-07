@@ -135,11 +135,13 @@ def social_state(today):
     queue = [post_json(p) for p in posts["queue"]]
     posted = [post_json(p, True) for p in posts["posted"]]
 
-    # "post today": window-open posts for due platforms (mirror social.py status ordering)
+    # "post today": window-open posts for due platforms — dated windows always surface
+    # (mirror social.py status ordering)
     sug = []
     for p in queue:
-        if p["window_state"] == "open" and any(pl in due_names for pl in p["platforms"]):
-            sug.append((p["window"] != "anytime", p["priority"] != "high", p["id"]))
+        dated = p["window_human"] != "anytime"
+        if p["window_state"] == "open" and (dated or any(pl in due_names for pl in p["platforms"])):
+            sug.append((not dated, p["priority"] != "high", p["id"]))
     sug.sort()
     suggestions = [s[2] for s in sug]
 

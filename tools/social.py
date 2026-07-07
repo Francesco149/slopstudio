@@ -11,7 +11,9 @@ this CLI is the daily check-in: what's due, what to post, what's coming up.
   python tools/social.py post ID [--platform x] [--url U] [--date YYYY-MM-DD]
 
 Post files are markdown with a simple `key: value` frontmatter (see ../gemma-branding/SOCIAL.md).
-Windows: `anytime` | `YYYY-MM-DD` | `YYYY-MM-DD..YYYY-MM-DD` | `manual: <trigger>`.
+Windows: `anytime` | `YYYY-MM-DD` | `YYYY-MM-DD..YYYY-MM-DD` | `manual: <trigger>`
+| `yearly: MM-DD[..MM-DD]` (recurring — festivities; `post` stamps a dated copy into
+posted/ but the post STAYS QUEUED for next year; ranges may wrap the year end).
 `post` stamps the date + moves the file to posted/; with --platform it splits a
 cross-post so the remaining platforms stay queued."""
 import argparse, datetime, os, re, sys, tomllib
@@ -56,6 +58,18 @@ def window_state(win, today):
     win = (win or "anytime").strip()
     if win.startswith("manual"): return ("manual", None, win.split(":", 1)[-1].strip() or "manual")
     if win == "anytime": return ("open", datetime.date.max, "anytime")
+    if win.startswith("yearly"):  # yearly: MM-DD[..MM-DD] — never expires, rolls to next year
+        spec = win.split(":", 1)[-1].strip()
+        a, _, b = spec.partition("..")
+        (sm, sd), (em, ed) = map(int, a.split("-")), map(int, (b or a).split("-"))
+        start, end = datetime.date(today.year, sm, sd), datetime.date(today.year, em, ed)
+        if end < start: end = end.replace(year=end.year + 1)            # window wraps the new year
+        if start.replace(year=start.year - 1) <= today <= end.replace(year=end.year - 1):
+            return ("open", end.replace(year=end.year - 1), f"yearly {spec}")  # in last year's wrap tail
+        if today > end:                                                 # this year's window passed
+            start, end = start.replace(year=start.year + 1), end.replace(year=end.year + 1)
+        return ("open" if start <= today else "upcoming", end if start <= today else start,
+                f"yearly {spec}")
     a, _, b = win.partition("..")
     start, end = pdate(a), pdate(b) if b else pdate(a)
     if today < start: return ("upcoming", start, win)
@@ -83,11 +97,12 @@ def cmd_status(sdir, posts, today):
         lasts = f"last {lp} ({since}d ago)" if lp else "never posted"
         low = "  ⚠ queue low — refill with Claude" if depth < 3 else ""
         print(f"  [{tag}] {plat:<10} every {cad}d · {lasts} · {depth} queued{low}")
-    # suggestions: window-open posts for due platforms; dated windows first, then priority
+    # suggestions: window-open posts for due platforms — but DATED windows always surface
+    # (a festivity misses its day otherwise); dated windows first, then priority
     sug = []
     for p in posts["queue"]:
-        st, key, _ = window_state(p["meta"].get("window"), today)
-        if st == "open" and any(pl in due_plats for pl in p["platforms"]):
+        st, key, human = window_state(p["meta"].get("window"), today)
+        if st == "open" and (human != "anytime" or any(pl in due_plats for pl in p["platforms"])):
             sug.append((key, 0 if p["meta"].get("priority") == "high" else 1, p))
     sug.sort(key=lambda t: (t[0], t[1]))
     if sug:
@@ -142,9 +157,13 @@ def cmd_post(sdir, posts, args, today):
         stamp = dict(p); stamp = {**p, "platforms": done,
                                   "meta": {**p["meta"], "posted": args.date or str(today)}}
         if args.url: stamp["meta"]["posted-url"] = args.url
-        suffix = "" if not rest else "-" + "-".join(done)
+        yearly = (p["meta"].get("window") or "").strip().startswith("yearly")
+        suffix = ("-" + (args.date or str(today))[:4] if yearly else "") \
+                 + ("" if not rest else "-" + "-".join(done))
         open(os.path.join(sdir, "posted", p["id"] + suffix + ".md"), "w", encoding="utf-8").write(dump_post(stamp))
-        if rest:
+        if yearly:  # recurring: the queue file is untouched — it re-opens next year
+            print(f"posted {p['id']} on {','.join(done)} → posted/ (yearly — stays queued for next year)")
+        elif rest:
             keep = {**p, "platforms": rest}
             open(p["path"], "w", encoding="utf-8").write(dump_post(keep))
             print(f"posted {p['id']} on {','.join(done)}; still queued for {','.join(rest)}")
