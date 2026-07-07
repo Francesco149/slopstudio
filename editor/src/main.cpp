@@ -3035,7 +3035,23 @@ static void apply_generations(Project& p, std::string& bufFor) {
             // duration and open a gap between avatar clips. So snap only "speech" assets.
             double md = a.entry.value("meta", json::object()).value("duration", 0.0);
             if (md > 0.01 && a.entry.value("type", std::string()) == "speech") {
-                p.doc["clips"][a.clipId]["dur"] = md;
+                // played dur = RAW audio dur ÷ playback rate (explicit params.rate, else the
+                // project default meta.speech_rate on tts rows — shorts run 1.3x). Snapping to
+                // the raw length left 1.3x clips ~30% long after an in-editor regen, so they
+                // overlapped the next line / left dead air (fixed 2026-07-07).
+                auto& cl = p.doc["clips"][a.clipId];
+                double rate = 1.0;
+                {
+                    std::string rw = cl.value("row", std::string());
+                    if (p.doc.contains("rows") && p.doc["rows"].contains(rw)
+                        && p.doc["rows"][rw].value("type", std::string()) == "tts")
+                        rate = p.speechRate;
+                    if (cl.contains("params") && cl["params"].is_object() && cl["params"].contains("rate"))
+                        rate = cl["params"].value("rate", rate);
+                    if (rate < 0.5) rate = 0.5;
+                    if (rate > 2.0) rate = 2.0;
+                }
+                cl["dur"] = md / rate;
                 // A regenerated speech asset is a FRESH full recording of the line, so any `in` (source
                 // in-point — e.g. left over from a clip SPLIT, which offsets the right half into the OLD
                 // shared audio) now seeks PAST the new audio → silence (the user's split-then-regen bug).
