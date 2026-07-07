@@ -2,10 +2,30 @@
 
 Hand-maintained "what's true right now." **Read this first after `CLAUDE.md`** and update it
 in the same change that lands work, so a fresh session reorients in ~60s. Last updated:
-**2026-07-06**. For the next editor UX/product pass, also read `docs/UX_NEXT.md`; for
+**2026-07-07**. For the next editor UX/product pass, also read `docs/UX_NEXT.md`; for
 composing a video as an agent, **`docs/LLM_WORKFLOW.md`**.
 
-> **★ NEWEST (2026-07-06 eve): RECETTEAR OWNER-REVIEW FIX PASS (video-002) + three editor fixes.**
+> **★ NEWEST (2026-07-07): RECETTEAR REVIEW-PASS-2 FIXES — avatar seam slides, border toggle, code nudge, plate pins.**
+> Owner's second list, all landed. **Editor:** (1) **avatar seam teleports fixed** — the pose-swap
+> signature now includes the AUTO-PLACEMENT state (`avatar_place_sig`: presenter side, over-footage
+> shrink+corner, jp_lesson step-aside, portrait solo; memoized per clip per frame — the SFX scheduler
+> re-runs it over every clip while playing), so a fullscreen clip starting/ending exactly at a host
+> seam fires the slide+motion-blur instead of a corner↔center teleport (recettear b116→b117,
+> b134→b135 + two more instances found by sweep; deadpan/fond both resolve to the neutral sprite so
+> the old sprite-only sig saw "no change"). Plus an explicit **`transition: {"in"|"out": "swap"}`**
+> override (combo entry too) that forces the dip and is RECIPROCAL across the seam (used on the
+> final b142 beat where sprite AND placement are identical). (2) **inset border fixes + manual
+> toggle** — `glow:{enabled:false}` (the UI's off state) no longer suppresses the default frame
+> (`glow_enabled()`), the inset decision now uses the clip's BASE size (transform × layout; motion
+> zoom_in used to strip the border mid-clip when it crossed 90% frame), and the Look section gained
+> a **border auto/on/off** tri-state (`params.frame`). (3) **`dock:"top"` code cards honor pos.y**
+> as a nudge from the docked spot (vertical moves were ignored). (4) **caption/plate one-click
+> `place` pins** in the inspector: (manual)/auto/tl/tr/bl/br/strap. **Project:** counter-line card
+> recut (bark→line, gloss off the kanji, full-height layout), `ca5_code` nudged down (+170),
+> `b142_av` gets the forced swap. Verified via `--shot-frame` at 221/223.9/232/831.15/831.32/
+> 919.75/919.95/980.95/981.15; lint unchanged (4 pre-existing warnings).
+
+> **★ (2026-07-06 eve): RECETTEAR OWNER-REVIEW FIX PASS (video-002) + three editor fixes.**
 > Owner's first-watch list cleared on `recettear.slop.json` (re-exported): new real-game idle
 > footage (`assets/footage/idle_2026-07-06.mp4`) replaces the flashing 2.7s retail loop on the
 > hook/intro/depth-sort/pixel-crunchy beats; b84 hikari-stills layout redone (big side-by-side over

@@ -3939,8 +3939,10 @@ static void draw_code_clip(ImDrawList* dl, float cx, float cy, float s, Clip& c,
     float x0 = cx - W * anchorX;
     float y0 = cy - H * anchorY;
     // dock:"top" (the skeleton's code default): center the card horizontally and pin it near the
-    // top edge — the host sits small in the lower-right corner below it.
-    if (fw > 1 && jstr(P, "dock") == "top") { x0 = cx - W * 0.5f; y0 = f0.y + fh * 0.055f; }
+    // top edge — the host sits small in the lower-right corner below it. transform.pos stays a
+    // NUDGE from the docked spot (cy carries pos.y; default pos.y=0 ⇒ cy = frame center ⇒ offset 0)
+    // — a docked card used to ignore vertical moves entirely.
+    if (fw > 1 && jstr(P, "dock") == "top") { x0 = cx - W * 0.5f; y0 = f0.y + fh * 0.055f + (cy - (f0.y + fh * 0.5f)); }
     float aF = alpha / 255.0f;
     float rad = 10.0f * scaleX * s;
 
@@ -4516,6 +4518,14 @@ static MotionFx clip_motion(Clip& c, double T) {
 // Avatar pose-swap slide constants — shared by the transition math and the SFX scheduler.
 static const double AV_SWAP_SW = 0.20, AV_SWAP_DIST = 640.0, AV_GLIDE = 0.35;
 
+// fwd (defined below with the other span queries): the pose-swap signature includes the avatar's
+// AUTO-PLACEMENT state so a placement flip at a contiguous seam fires the slide.
+static void content_centroid_span(const Project& p, double t0, double t1,
+                                  ImVec2 center, float s, float fw, bool& has, float& cx);
+static bool span_has_content(const Project& p, double t0, double t1);
+static bool span_has_fullscreen_content(const Project& p, double t0, double t1);
+static std::string avatar_place_sig(const Project& p, const Clip& c);
+
 // The DECISION half of clip_transition — which transition fires on each edge, edge contiguity,
 // and the avatar pose-swap/glide detection — pulled out so the built-in SFX scheduler can ask
 // "what plays when" without duplicating the rules (the sounds always match the compositor).
@@ -4585,12 +4595,30 @@ static TransInfo clip_trans_info(Project& p, Clip& c) {
             std::string e = jstr(k.params, "emotion");
             if (e.empty() || e == "auto") e = "neutral";
             std::string sp = arig ? avatar_sprite_path(arig, e) : emotion_from_text(e);
+            // + the auto-placement state: a placement flip (over-footage corner/shrink, presenter
+            // side-step, …) at a seam is a visible re-staging even when the sprite is identical —
+            // it must slide, not teleport.
             return sp + "|" + jstr(k.params, "framing") + "|" +
-                   jstr(k.params, "pose") + "|" + jstr(k.params, "face");
+                   jstr(k.params, "pose") + "|" + jstr(k.params, "face") + "|" + avatar_place_sig(p, k);
         };
         std::string mySig = sig(c);
         ti.swapOut = ti.nbOut && sig(*ti.nbOut) != mySig;
         ti.swapIn  = ti.nbIn  && sig(*ti.nbIn)  != mySig;
+        // explicit override: transition in/out = "swap" FORCES the pose-swap slide on that edge —
+        // for a beat where sprite AND placement are identical (the auto detection rightly sees no
+        // change) but the cut wants a deliberate re-entrance dip (e.g. a final-beat punchline).
+        // RECIPROCAL across the seam: the dip needs both halves (out through the floor, then in
+        // from it) — a one-sided force would leave the neighbour standing until a 1-frame vanish.
+        auto forcesSwap = [](const Clip* nb, const char* side) {
+            if (!nb || !nb->params.is_object() || !nb->params.contains("transition")) return false;
+            const json& tr = nb->params["transition"];
+            if (!tr.is_object() || !tr.contains(side)) return false;
+            const json& sp = tr[side];
+            return (sp.is_string() && sp.get<std::string>() == "swap") ||
+                   (sp.is_object() && sp.value("type", std::string()) == "swap");
+        };
+        if (ti.inType  == "swap" || forcesSwap(ti.nbIn,  "out")) ti.swapIn  = true;
+        if (ti.outType == "swap" || forcesSwap(ti.nbOut, "in"))  ti.swapOut = true;
         // SAME sprite, DIFFERENT spot → glide (see clip_transition)
         if (ti.nbIn && !ti.swapIn) {
             double gdx = (double)ti.nbIn->tx_pos[0] - c.tx_pos[0];
@@ -4772,6 +4800,18 @@ static void draw_clip_glow(ImDrawList* dl, ImVec2 a, ImVec2 b, const json& g, fl
     }
 }
 
+// Is the outer glow ACTUALLY on? A `glow` param left behind as {enabled:false} (the UI's off-
+// toggle keeps the styling for a later re-enable) must NOT count as "has glow" — presence-only
+// checks suppressed the default inset frame forever after one glow on/off round-trip (the
+// user's 220s "border never came back" bug).
+static bool glow_enabled(const json& params) {
+    if (!params.is_object() || !params.contains("glow")) return false;
+    const json& g = params["glow"];
+    if (g.is_boolean()) return g.get<bool>();
+    if (g.is_object()) return !(g.contains("enabled") && g["enabled"].is_boolean() && !g["enabled"].get<bool>());
+    return false;
+}
+
 // Soft DROP SHADOW behind a floating inset (drawn BEFORE the image) — offset down/right so the inset
 // lifts off the background like a card. Layered fills (no shader). Part of the `frame` treatment.
 static void draw_inset_shadow(ImDrawList* dl, ImVec2 a, ImVec2 b, float radius, float s, float op = 1.0f) {
@@ -4909,6 +4949,62 @@ static bool span_has_fullscreen_content(const Project& p, double t0, double t1) 
         }
     }
     return false;
+}
+
+// The avatar AUTO-PLACEMENT signature over a clip's span — a project-space mirror of the
+// draw-time decisions (presenter side-step, over-footage shrink+corner, jp_lesson step-aside,
+// portrait solo sizing; see the avatar branch of the media draw). Folded into the pose-swap
+// signature: when a fullscreen clip starts/ends EXACTLY at a host seam the placement flips while
+// the sprite stays identical — same-sprite detection saw "no change" and the host TELEPORTED
+// corner↔center with no transition (recettear b116→b117 / b134→b135). Placement flip ⇒ slide.
+static uint64_t g_placeSigEpoch = 1;   // bumped once per UI frame (see undo_checkpoint call site)
+static std::string avatar_place_sig(const Project& p, const Clip& c) {
+    // Memoized per clip per frame: the SFX scheduler re-runs clip_trans_info over EVERY visual
+    // clip each frame while audio plays, and the span scans here are O(clips) each — uncached
+    // that's O(clips²) per frame on the interactive loop. An edit shows next frame (sub-frame
+    // staleness only). Export/headless never mutate mid-run, so a static epoch is a pure win.
+    static std::map<const Clip*, std::pair<uint64_t, std::string>> cache;
+    auto cit = cache.find(&c);
+    if (cit != cache.end() && cit->second.first == g_placeSigEpoch) return cit->second.second;
+    ImVec2 anc = anchor_off(p, c);
+    std::string emo = jstr(c.params, "emotion"); if (emo.empty() || emo == "auto") emo = "neutral";
+    std::string framing = avatar_framing(c.params, emo);
+    bool faceShot = (framing == "bust" || framing == "closeup" || framing == "face");
+    bool defPos = c.tx_pos[0] == 0.0 && c.tx_pos[1] == 0.0 &&
+                  !c.keyframes.count("transform.pos") && fabsf(anc.x) < 0.5f;
+    bool landscape = p.width >= p.height;
+    float fw = (float)p.width;
+    int side = 0;                                  // mirrors the draw's facing/content-side pick
+    std::string faceP = jstr(c.params, "face");
+    if (faceP == "left") side = -1;
+    else if (faceP == "right") side = 1;
+    else {
+        bool hasC; float ccx;
+        content_centroid_span(p, c.start, c.start + c.dur, ImVec2(0, 0), 1.0f, fw, hasC, ccx);
+        if (hasC) {
+            float d = ccx - (anc.x + (float)c.tx_pos[0]);
+            side = d > fw * 0.04f ? 1 : (d < -fw * 0.04f ? -1 : 0);
+        }
+    }
+    bool overFootage = faceShot && defPos && landscape &&
+                       span_has_fullscreen_content(p, c.start, c.start + c.dur);
+    float offX = (side != 0 && defPos && landscape) ? -side * 0.24f : 0.0f;   // fraction of fw
+    if (overFootage && offX == 0.0f) offX = -0.335f;
+    if (offX == 0.0f && side == 0 && defPos && landscape)
+        for (auto& kv : p.clips) {                 // the jp_lesson step-aside (host hard left)
+            const Clip& oc = kv.second;
+            if (oc.type != "caption" || jstr(oc.params, "style") != "jp_lesson") continue;
+            if (oc.start + oc.dur <= c.start || oc.start >= c.start + c.dur) continue;
+            offX = -0.355f; break;
+        }
+    // portrait only: solo flips the host between mid-band-big and bottom-band. Landscape solo
+    // changes nothing placement-wise — including it there would fire pointless dips.
+    bool soloSized = !landscape && !span_has_content(p, c.start, c.start + c.dur);
+    char buf[48];
+    snprintf(buf, sizeof(buf), "s%d|o%d|x%.3f|p%d", side, overFootage ? 1 : 0, offX, soloSized ? 1 : 0);
+    if (cache.size() > 4096) cache.clear();            // reloads strand old Clip addresses — bound it
+    cache[&c] = {g_placeSigEpoch, std::string(buf)};
+    return buf;
 }
 
 // The current sprite of the top-most active AVATAR clip (resolved rig → emotion → front pose), or
@@ -5260,6 +5356,8 @@ static void composite_frame(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0, 
                 // (the distilled content-inset default, computed live so an asset swap or project-res
                 // change stays framed). The clip transform layers ON TOP (pos=nudge, scale=multiplier),
                 // and Ken Burns / transitions compose as usual. Mirrors avatar `framing` philosophy.
+                float layMul = 1.0f;   // layout's uniform scale — the frame/inset decision below
+                                       // sizes from the BASE transform (no motion/transition anim)
                 if (c.type == "image" || c.type == "video") {
                     std::string lay = jstr(c.params, "layout");
                     float nw = 0, nh = 0;
@@ -5270,7 +5368,7 @@ static void composite_frame(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0, 
                             // ALWAYS cover-crop, no degrade — for backdrops (the room bg behind a
                             // portrait short: a 16:9 set in a 9:16 frame is a heavy crop ON PURPOSE).
                             float L = std::max(FW / nw, FH / nh);
-                            eSclX *= L; eSclY *= L;
+                            eSclX *= L; eSclY *= L; layMul = L;
                         } else if (lay == "fullscreen") {
                             // Extreme aspect mismatch (a 5:1 site banner, a phone shot): cover would
                             // crop away most of the source — degrade to CONTAIN so the filler backdrop
@@ -5279,10 +5377,10 @@ static void composite_frame(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0, 
                             float visible = ar > 1 ? 1.f / ar : ar;          // fraction of the source cover keeps
                             float L = visible < 0.45f ? std::min(FW / nw, FH / nh)
                                                       : std::max(FW / nw, FH / nh);
-                            eSclX *= L; eSclY *= L;
+                            eSclX *= L; eSclY *= L; layMul = L;
                         } else if (lay == "fit") {
                             float L = std::min(FW / nw, FH / nh);            // contain (letterbox on a filler)
-                            eSclX *= L; eSclY *= L;
+                            eSclX *= L; eSclY *= L; layMul = L;
                             if (porFrame) cy -= 0.24f * fh;   // portrait: sit in the TOP band (host is big below), not dead-center
                         } else if (lay.rfind("inset", 0) == 0) {
                             // portrait: the content band sits UP TOP (wide, ~40% tall) with the host
@@ -5290,7 +5388,7 @@ static void composite_frame(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0, 
                             float L = porFrame ? std::min(0.86f * FW / nw, 0.42f * FH / nh)
                                                : std::min(0.55f * FW / nw, 0.72f * FH / nh);
                             L = std::max(0.2f, std::min(2.0f, L));
-                            eSclX *= L; eSclY *= L;
+                            eSclX *= L; eSclY *= L; layMul = L;
                             if (porFrame) cy -= 0.24f * fh;
                             else {
                                 float side = (lay == "inset-left") ? -1.f : 1.f; // default: right-of-center (host takes the other corner)
@@ -5718,8 +5816,13 @@ static void composite_frame(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0, 
                             draw_clip_glow(dl, a, b, c.params["glow"], s, alpha / 255.0f);
                         // frame: explicit param, else default-ON for a non-fullscreen INSET with NO glow (e.g.
                         // the CRT) — a pro border + drop shadow that lifts it off the bg. frame:false opts out.
-                        bool hasGlow = c.params.is_object() && c.params.contains("glow");
-                        bool insetClip = ((b.x - a.x) < fw * 0.9f || (b.y - a.y) < fh * 0.9f) && !hasGlow;
+                        // Inset-ness from the BASE size (authored transform × layout — no motion/transition/
+                        // keyframe animation): a motion zoom crossing 90% of the frame used to strip the
+                        // border MID-CLIP, and a pop entrance made a fullscreen clip briefly "inset".
+                        bool hasGlow = glow_enabled(c.params);
+                        float bw = ft->w * cw * fabsf((float)c.tx_scale[0]) * layMul * s;
+                        float bh = ft->h * ch * fabsf((float)c.tx_scale[1]) * layMul * s;
+                        bool insetClip = (bw < fw * 0.9f || bh < fh * 0.9f) && !hasGlow;
                         json frameP = resolve_frame(c.params, insetClip);
                         if (!frameP.is_null() && (!frameP.is_object() || frameP.value("shadow", true)))
                             draw_inset_shadow(dl, a, b, (frameP.is_object() ? (float)frameP.value("radius", 9.0) : 9.0f) * s, s, alpha / 255.0f);
@@ -5768,9 +5871,13 @@ static void composite_frame(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0, 
                     // frame: explicit param, else default-ON for a non-fullscreen INSET with NO glow (a glow
                     // already styles a filler-backed inset; this is the pro border for the bare ones). frame:false opts out.
                     // A source with real transparency (a cutout PNG) gets NO default frame — the border would
-                    // outline an invisible rectangle around the figure.
-                    bool hasGlow = c.params.is_object() && c.params.contains("glow");
-                    bool insetClip = ((b.x - a.x) < fw * 0.9f || (b.y - a.y) < fh * 0.9f) && !hasGlow
+                    // outline an invisible rectangle around the figure. Inset-ness from the BASE size
+                    // (authored transform × layout — no motion/transition/keyframe animation): a motion
+                    // zoom crossing 90% of the frame used to strip the border MID-CLIP.
+                    bool hasGlow = glow_enabled(c.params);
+                    float bw = tex->w * cw * fabsf((float)c.tx_scale[0]) * layMul * s;
+                    float bh = tex->h * ch * fabsf((float)c.tx_scale[1]) * layMul * s;
+                    bool insetClip = (bw < fw * 0.9f || bh < fh * 0.9f) && !hasGlow
                                      && !image_has_alpha(uri);
                     json frameP = resolve_frame(c.params, insetClip);
                     if (!frameP.is_null() && (!frameP.is_object() || frameP.value("shadow", true)))
@@ -7045,6 +7152,24 @@ static void draw_native_params(Clip& c) {
         if (ImGui::BeginCombo("style", style.c_str())) {
             for (auto s2 : STYLES) { bool s = (style == s2); if (ImGui::Selectable(s2, s)) P["style"] = std::string(s2); }
             ImGui::EndCombo();
+        }
+        // place: one-click pins. A plate often needs to hop out of the way of content — the four
+        // corner pins do that instantly (pos then nudges FROM the pinned corner, no jump);
+        // auto = least-busy corner over the clip's span · strap = the bottom lower-third band ·
+        // (manual) = the authored transform only.
+        {
+            static const char* PL[] = {"(manual)", "auto", "tl", "tr", "bl", "br", "strap"};
+            std::string pv = jstr(P, "place");
+            ImGui::AlignTextToFramePadding(); ImGui::TextDisabled("place"); ImGui::SameLine();
+            for (int k = 0; k < 7; k++) {
+                bool sel = (k == 0) ? pv.empty() : (pv == PL[k]);
+                if (k) ImGui::SameLine(0, 4);
+                if (sel) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+                if (ImGui::SmallButton(PL[k])) { if (k == 0) P.erase("place"); else P["place"] = std::string(PL[k]); }
+                if (sel) ImGui::PopStyleColor();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("pin the plate: tl/tr/bl/br = a frame corner (pos nudges from it)\nauto = least-busy top corner · strap = bottom band · (manual) = transform only");
         }
         std::string text = P.value("text", std::string());
         if (ImGui::InputTextMultiline("text", &text, ImVec2(-1, 56))) { P["text"] = text; c.label = snippet(text); }
@@ -8880,7 +9005,7 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
             if (ImGui::DragFloat2("anchor (0..1)", anch, 0.005f, 0.0f, 1.0f)) { c.tx_anchor[0] = anch[0]; c.tx_anchor[1] = anch[1]; }
             // transition: default smooth fade in/out; pick a type per edge ("none" disables).
             {
-                static const char* TT[] = {"fade", "slide_down", "slide_up", "slide_left", "slide_right", "rise", "pop", "none"};
+                static const char* TT[] = {"fade", "slide_down", "slide_up", "slide_left", "slide_right", "rise", "pop", "swap", "none"};
                 auto curType = [&](const char* side) -> int {
                     std::string t = "fade";
                     if (c.params.is_object() && c.params.contains("transition")) {
@@ -8892,7 +9017,7 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
                             else if (sp.is_object()) t = sp.value("type", std::string("fade"));
                         }
                     }
-                    for (int i = 0; i < 8; i++) if (t == TT[i]) return i;
+                    for (int i = 0; i < 9; i++) if (t == TT[i]) return i;
                     return 0;
                 };
                 auto setSide = [&](const char* side, int idx) {
@@ -8902,10 +9027,12 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
                 };
                 int ii = curType("in"), oi = curType("out");
                 ImGui::SetNextItemWidth(110);
-                if (ImGui::Combo("in##tr", &ii, TT, 8)) setSide("in", ii);
+                if (ImGui::Combo("in##tr", &ii, TT, 9)) setSide("in", ii);
                 ImGui::SameLine(); ImGui::SetNextItemWidth(110);
-                if (ImGui::Combo("out##tr", &oi, TT, 8)) setSide("out", oi);
+                if (ImGui::Combo("out##tr", &oi, TT, 9)) setSide("out", oi);
                 ImGui::SameLine(); ImGui::TextDisabled("transition");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("swap = force the host pose-swap dip on that edge (avatar rows;\nfires automatically when the sprite or auto-placement changes)");
             }
             // ── Look: common adjustable effects (outer glow · auto color-grade) for visual clips ──
             if (c.type != "tts" && c.type != "music") {
@@ -8934,6 +9061,27 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
                         for (int k = 0; k < 3; k++) gcol[k] = (float)LP["glow"]["color"][k].get<int>() / 255.f;
                     if (ImGui::ColorEdit3("glow color", gcol, ImGuiColorEditFlags_NoInputs))
                         LP["glow"]["color"] = json::array({(int)(gcol[0] * 255), (int)(gcol[1] * 255), (int)(gcol[2] * 255)});
+                }
+                // border ("frame"): tri-state. AUTO = the default rule (on for a non-fullscreen inset
+                // with no glow); ON forces it at any size/with glow; OFF kills it. Forced states are
+                // the manual override the auto rule can't express (the user's 220s missing-border ask).
+                if (c.type == "image" || c.type == "video") {
+                    int fsel = 0;
+                    if (LP.contains("frame")) {
+                        const json& fj = LP["frame"];
+                        bool off = (fj.is_boolean() && !fj.get<bool>()) ||
+                                   (fj.is_object() && fj.contains("enabled") && fj["enabled"].is_boolean() && !fj["enabled"].get<bool>());
+                        fsel = off ? 2 : 1;
+                    }
+                    static const char* FR[] = {"auto", "on", "off"};
+                    ImGui::SetNextItemWidth(110);
+                    if (ImGui::Combo("border", &fsel, FR, 3)) {
+                        if (fsel == 0) LP.erase("frame");
+                        else if (LP.contains("frame") && LP["frame"].is_object()) LP["frame"]["enabled"] = (fsel == 1);
+                        else LP["frame"] = (fsel == 1);   // keep an authored style object; else plain bool
+                    }
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("the pro inset border + drop shadow.\nauto = on for a non-fullscreen inset with no glow\non = always (any size, even with glow) · off = never");
                 }
                 if (c.type == "image" || c.type == "video" || c.type == "avatar") {
                     bool ag = LP.value("auto_grade", c.type == "avatar");
@@ -9349,6 +9497,7 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
     // AUTOMATIC undo checkpoint — last thing each frame, after every widget/panel + the deferred
     // ops, so IsAnyItemActive() reflects the whole frame. Self-gates to gesture boundaries.
     undo_checkpoint(p);
+    g_placeSigEpoch++;   // avatar_place_sig memo turns over per UI frame (edits show next frame)
 }
 
 // ═══════════════════════════════ export ═══════════════════════════════════
