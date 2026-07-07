@@ -319,7 +319,15 @@ def tweet_fields(t):
             "created": tweet_date(leg.get("created_at", t.get("created_at", "")),
                                   t.get("rest_id") or t.get("id") or leg.get("id_str")),
             "media": len(g(leg, "extended_entities.media", t.get("media") or []) or []),
-            "quoted": g(t, "quoted_status_result.result") or t.get("quoted_status")}
+            "quoted": _unwrap_quoted(g(t, "quoted_status_result.result") or t.get("quoted_status"))}
+
+
+def _unwrap_quoted(q):
+    """quoted tweet value → dict, bare id string (twitter-web-exporter's flattened
+    format references the quote by id), or None. Unwraps TweetWithVisibilityResults."""
+    if isinstance(q, dict) and isinstance(q.get("tweet"), dict):
+        return q["tweet"]
+    return q if isinstance(q, (dict, str)) else None
 
 
 def ingest_xjson(base, cfg, path, session, min_faves):
@@ -330,6 +338,12 @@ def ingest_xjson(base, cfg, path, session, min_faves):
     raw = save_raw(base, f"x-session-{session}-{os.path.basename(path)}",
                    open(path, encoding="utf-8").read())
     made, low = [], 0
+    byid = {}   # id → tweet, to resolve flattened bare-id quote references within the export
+    for t in tweets:
+        if isinstance(t, dict):
+            tid = str(t.get("rest_id") or t.get("id") or (t.get("legacy") or {}).get("id_str") or "")
+            if tid:
+                byid[tid] = t
     for t in tweets:
         f = tweet_fields(t)
         if not f["id"] or not f["text"]:
@@ -341,8 +355,16 @@ def ingest_xjson(base, cfg, path, session, min_faves):
             lines.append(f"\n({f['media']} media attachment{'s' if f['media'] > 1 else ''} — "
                          f"open the tweet to see them)")
         if f["quoted"]:
-            q = tweet_fields(f["quoted"])
-            lines.append(f"\n## quoted tweet — @{q['screen_name']}\n{q['text']}")
+            qt = f["quoted"]
+            if isinstance(qt, str):          # bare id ref → resolve within this export
+                qt = byid.get(qt)
+            if isinstance(qt, dict):
+                q = tweet_fields(qt)
+                if q["text"]:
+                    lines.append(f"\n## quoted tweet — @{q['screen_name']}\n{q['text']}")
+            elif isinstance(f["quoted"], str):   # unresolvable (not captured) → leave a pointer
+                lines.append(f"\n## quoted tweet\nhttps://x.com/i/status/{f['quoted']} "
+                             "(not in this capture — open to read)")
         meta = {"platform": "x", "url": f"https://x.com/{f['screen_name']}/status/{f['id']}",
                 "author": f"@{f['screen_name']}" + (f" ({f['name']})" if f["name"] else ""),
                 "date": f["created"], "captured": today(), "session": session,
