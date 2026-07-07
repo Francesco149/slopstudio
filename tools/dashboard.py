@@ -200,6 +200,12 @@ def projects_state():
             pass
         cuts = [x for x in sorted(glob.glob(os.path.join(d, "*.slop.json")))
                 if os.sep + "history" + os.sep not in x]
+        # LIVE cut first = most recently edited. A plain alphabetical sort put
+        # "recettear-v1.slop.json" ('-' < '.') ahead of the live "recettear.slop.json" —
+        # the Projects tab's "open editor" silently opened the stale v1 cut (the owner's
+        # "no music lane" bug). Canonical-name-first is wrong too (luckymas' live cut is
+        # luckymas3, not luckymas.slop.json); the cut being worked on is the newest one.
+        cuts.sort(key=lambda x: -os.path.getmtime(x))
         sk = sorted(glob.glob(os.path.join(d, "*.skeleton.json")))
         thumbs = sorted(glob.glob(os.path.join(d, "thumbs", "*.thumb.json")))
         pkg = sorted(glob.glob(os.path.join(d, "docs", "*packaging*.md")))
@@ -1042,7 +1048,7 @@ function renderProjects(){
         <button class="sm" onclick="quick('status','project','${p.name}')">status</button>
         <button class="sm" onclick="quick('show','project','${p.name}')">timeline</button>
         <button class="sm" onclick="quick('lint','project','${p.name}')">lint</button>
-        ${p.cuts.length?`<button class="sm" onclick="quickCut('${esc(p.cuts[0].path)}')">open editor</button>`:''}
+        ${p.cuts.length?`<button class="sm" title="${esc(p.cuts[0].path)}" onclick="quickCut('${esc(p.cuts[0].path)}')">open editor · ${esc(p.cuts[0].name)}</button>`:''}
       </div></div>`;
   }
   $('w-projects').innerHTML=h||'<div class="card">no projects</div>';
