@@ -174,8 +174,14 @@ def engage_state():
         m = c["meta"]
         sug = []
         if "## suggested replies" in c["body"]:
-            sug = [ln[2:].strip() for ln in c["body"].split("## suggested replies", 1)[1].splitlines()
-                   if ln.startswith("- ")]
+            for ln in c["body"].split("## suggested replies", 1)[1].splitlines():
+                if not ln.startswith("- "):
+                    continue
+                txt, reply_to = ln[2:].strip(), None
+                mt = re.match(r"\[reply to ([^\]]+)\]\s*(.*)$", txt)  # cmd_draft --reply-to marker
+                if mt:
+                    reply_to, txt = mt.group(1), mt.group(2)
+                sug.append({"text": txt, "reply_to": reply_to})
         return {"id": c["id"], "platform": m.get("platform", "?"), "url": m.get("url", ""),
                 "suggestions": sug,
                 "author": m.get("author", ""), "captured": m.get("captured", ""),
@@ -185,7 +191,10 @@ def engage_state():
                 "likes": m.get("response-likes", ""), "replies": m.get("response-replies", ""),
                 "body": c["body"]}
 
-    return {"pending": [cj(c) for c in cards["cards"]],
+    # cards with suggested replies float to the top — they're the ones waiting on the owner
+    return {"pending": [cj(c) for c in sorted(cards["cards"],
+                                              key=lambda c: ("## suggested replies" not in c["body"],
+                                                             c["meta"].get("captured", "")))],
             "engaged": [cj(c) for c in sorted(cards["engaged"],
                                               key=lambda c: c["meta"].get("responded", ""), reverse=True)],
             "skipped": len(cards["skipped"])}
@@ -929,11 +938,14 @@ function engCard(c){
   return `<div class="post card"><div class="body">
     <div class="id">${c.flagged?'<span class="miss">⚠ '+esc(c.safety)+'</span> ':''}${esc(c.id)}</div>
     <div class="row" style="gap:5px;margin:3px 0"><span class="badge">${esc(c.platform)}</span>
-      <span class="chip">${esc(c.author)}</span><span class="chip">${esc(done?('engaged '+c.responded):c.captured)}</span></div>
+      <span class="chip">${esc(c.author)}</span><span class="chip">${esc(done?('engaged '+c.responded):c.captured)}</span>
+      ${!done&&(c.suggestions||[]).length?'<span class="chip" style="color:var(--acc)">✎ '+c.suggestions.length+' draft'+(c.suggestions.length>1?'s':'')+'</span>':''}</div>
     <div class="muted" style="font-size:12px">${esc(c.stats)}${perf}</div>
     <div class="txt" id="etxt-${c.id}">${esc(c.body)}</div>
     ${!done&&(c.suggestions||[]).length?'<div class="muted" style="font-size:11px;margin-top:6px">suggested replies — click to copy</div>'
-      +c.suggestions.map((s,i)=>`<div class="sug" onclick="copySug('${c.id}',${i})">${esc(s)}</div>`).join(''):''}
+      +c.suggestions.map((s,i)=>`<div class="sug" onclick="copySug('${c.id}',${i})">${
+        s.reply_to?'<span class="badge" title="post this as a reply to this comment, not on the video/post itself">↪ '+esc(s.reply_to)+'</span> ':''
+      }${esc(s.text)}</div>`).join(''):''}
     <div class="acts">
       <button class="sm" onclick="$('etxt-${c.id}').classList.toggle('full')">show</button>
       <a href="${esc(c.url)}" target="_blank"><button class="sm">open ↗</button></a>
@@ -945,9 +957,10 @@ function engCard(c){
 let lastSug={};
 function copySug(id,i){
   const c=S.engage.pending.concat(S.engage.engaged).find(x=>x.id==id); if(!c)return;
-  navigator.clipboard.writeText(c.suggestions[i]); lastSug[id]=c.suggestions[i];
-  flash('copied — post it, then mark engaged (text prefilled)');
-  const t=$('er-text-'+id); if(t)t.value=c.suggestions[i];
+  const s=c.suggestions[i], txt=s.text||s;   // copies only the reply text, never the ↪ marker
+  navigator.clipboard.writeText(txt); lastSug[id]=txt;
+  flash(s.reply_to?('copied — post as a reply to '+s.reply_to+', then mark engaged'):'copied — post it, then mark engaged (text prefilled)');
+  const t=$('er-text-'+id); if(t)t.value=txt;
 }
 function engRespondForm(id){
   const f=$('eform-'+id); if(f.innerHTML){f.innerHTML='';return}

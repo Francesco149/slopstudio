@@ -14,7 +14,9 @@ the engaging-gemma skill.
                                                            # twitter-web-exporter JSON drop
   python tools/engage.py list [--engaged|--skipped] [--platform x] [--session S]
   python tools/engage.py show ID
-  python tools/engage.py draft ID --text "..."             # attach a suggested reply (dashboard: click-to-copy)
+  python tools/engage.py draft ID --text "..." [--reply-to "@who · thread ID"]  # attach a suggested reply
+                                                           # (dashboard: click-to-copy; --reply-to = target a specific
+                                                           #  comment instead of the post — shown as a ↪ badge)
   python tools/engage.py respond ID --url U [--text T]     # record what Gemma said → engaged/
   python tools/engage.py skip ID [--reason R]              # pass (safety / stale / meh)
   python tools/engage.py check                             # refresh metrics on our YT replies
@@ -478,13 +480,18 @@ def cmd_list(cards, args):
     rows = [c for c in cards[kind]
             if (not args.platform or c["meta"].get("platform") == args.platform)
             and (not args.session or c["meta"].get("session") == args.session)]
-    for c in sorted(rows, key=lambda c: c["meta"].get("captured", "")):
+    # drafted cards float to the top (they're the ones waiting on the owner)
+    for c in sorted(rows, key=lambda c: ("## suggested replies" not in c["body"],
+                                         c["meta"].get("captured", ""))):
         m = c["meta"]
         flag = "⚠ " if m.get("safety", "").startswith("flagged") else "  "
+        nsug = c["body"].count("\n- ", c["body"].find("## suggested replies")) \
+            if "## suggested replies" in c["body"] else 0
+        pen = f"✎{nsug} " if nsug else "   "
         extra = m.get("responded") or m.get("date") or m.get("captured", "")
         likes = f" · our reply +{m['response-likes']}" if m.get("response-likes") else ""
         head = c["body"].splitlines()[0].lstrip("# ")[:56]
-        print(f"  {flag}{c['id']:<16} [{m.get('platform', '?'):<7}] {extra} · "
+        print(f"  {flag}{pen}{c['id']:<16} [{m.get('platform', '?'):<7}] {extra} · "
               f"{m.get('stats', '')[:36]}{likes} · {head}")
     if not rows:
         print(f"  (no {kind} cards match)")
@@ -508,9 +515,12 @@ def cmd_draft(base, cards, args):
     kind, c = find_card(cards, args.id, kinds=("cards",))
     if "## suggested replies" not in c["body"]:
         c["body"] += "\n\n## suggested replies"
-    c["body"] += "\n- " + " ".join(args.text.split())  # one line per option
+    # optional target comment: stored as a machine-parseable "[reply to …]" prefix on the
+    # bullet (the dashboard strips it into a badge; click-to-copy copies only the text)
+    target = f"[reply to {' '.join(args.reply_to.split())}] " if getattr(args, "reply_to", None) else ""
+    c["body"] += "\n- " + target + " ".join(args.text.split())  # one line per option
     open(c["path"], "w", encoding="utf-8").write(dump_card(c))
-    print(f"draft attached to {args.id}")
+    print(f"draft attached to {args.id}" + (f" (↪ {args.reply_to})" if getattr(args, "reply_to", None) else ""))
 
 
 def cmd_respond(base, cards, args):
@@ -600,6 +610,8 @@ def main():
     lp.add_argument("--engaged", action="store_true"); lp.add_argument("--skipped", action="store_true")
     sp = sub.add_parser("show"); sp.add_argument("id")
     dp = sub.add_parser("draft"); dp.add_argument("id"); dp.add_argument("--text", required=True)
+    dp.add_argument("--reply-to", dest="reply_to", default=None,
+                    help="which comment this responds to (author + thread id / permalink), if not the post itself")
     rp = sub.add_parser("respond"); rp.add_argument("id"); rp.add_argument("--url")
     rp.add_argument("--text"); rp.add_argument("--date")
     kp = sub.add_parser("skip"); kp.add_argument("id"); kp.add_argument("--reason")
