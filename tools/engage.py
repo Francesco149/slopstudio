@@ -85,7 +85,7 @@ def parse_card(path):
 
 
 def dump_card(c):
-    keys = ["id", "platform", "url", "author", "captured", "session", "stats", "safety",
+    keys = ["id", "platform", "url", "author", "date", "captured", "session", "stats", "safety",
             "raw", "responded", "response-url", "response-likes", "response-replies", "checked"]
     meta = dict(c["meta"]); meta["id"] = c["id"]
     lines = [f"{k}: {meta[k]}" for k in keys if meta.get(k)]
@@ -216,7 +216,8 @@ def ingest_youtube(base, cfg, url, session):
             lines.append(f"- {c.get('authorDisplayName', '?')} (+{c.get('likeCount', 0)}, "
                          f"{t['snippet'].get('totalReplyCount', 0)} replies · thread {t.get('id', '')}): {txt}")
     meta = {"platform": "youtube", "url": f"https://youtu.be/{vid}",
-            "author": sn.get("channelTitle", "?"), "captured": today(), "session": session,
+            "author": sn.get("channelTitle", "?"), "date": str(sn.get("publishedAt", ""))[:10],
+            "captured": today(), "session": session,
             "stats": f"{n(st.get('viewCount'))} views · {n(st.get('likeCount'))} likes · "
                      f"{n(st.get('commentCount'))} comments",
             "safety": safety_scan(cfg, sn.get("title"), desc[:1500], *com_text), "raw": raw}
@@ -233,6 +234,19 @@ def g(d, path, default=None):
     return d if d is not None else default
 
 
+def tweet_date(created_at, tid):
+    """'Mon Jul 06 12:00:00 +0000 2026' or the snowflake id → YYYY-MM-DD (freshness triage)."""
+    try:
+        return str(datetime.datetime.strptime(created_at, "%a %b %d %H:%M:%S %z %Y").date())
+    except (TypeError, ValueError):
+        pass
+    try:  # snowflake epoch fallback
+        ms = (int(tid) >> 22) + 1288834974657
+        return str(datetime.datetime.fromtimestamp(ms / 1000, datetime.timezone.utc).date())
+    except (TypeError, ValueError):
+        return ""
+
+
 def tweet_fields(t):
     leg = t.get("legacy") or t
     user = (g(t, "core.user_results.result.legacy") or g(t, "core.user_results.result.core")
@@ -246,7 +260,8 @@ def tweet_fields(t):
             "rts": leg.get("retweet_count", t.get("retweet_count", 0)) or 0,
             "replies": leg.get("reply_count", t.get("reply_count", 0)) or 0,
             "views": g(t, "views.count") or t.get("views_count") or "",
-            "created": leg.get("created_at", t.get("created_at", "")),
+            "created": tweet_date(leg.get("created_at", t.get("created_at", "")),
+                                  t.get("rest_id") or t.get("id") or leg.get("id_str")),
             "media": len(g(leg, "extended_entities.media", t.get("media") or []) or []),
             "quoted": g(t, "quoted_status_result.result") or t.get("quoted_status")}
 
@@ -274,7 +289,7 @@ def ingest_xjson(base, cfg, path, session, min_faves):
             lines.append(f"\n## quoted tweet — @{q['screen_name']}\n{q['text']}")
         meta = {"platform": "x", "url": f"https://x.com/{f['screen_name']}/status/{f['id']}",
                 "author": f"@{f['screen_name']}" + (f" ({f['name']})" if f["name"] else ""),
-                "captured": today(), "session": session,
+                "date": f["created"], "captured": today(), "session": session,
                 "stats": f"{n(f['faves'])} faves · {n(f['rts'])} RTs · {n(f['replies'])} replies"
                          + (f" · {n(f['views'])} views" if f["views"] else ""),
                 "safety": safety_scan(cfg, f["text"]), "raw": raw}
@@ -302,7 +317,10 @@ def ingest_reddit(base, cfg, url, session):
         lines += [f"- u/{c.get('author', '?')} (+{c.get('score', 0)}): "
                   f"{(c.get('body') or '')[:280]}" for c in coms]
     meta = {"platform": "reddit", "url": "https://www.reddit.com" + post["permalink"],
-            "author": "u/" + post["author"], "captured": today(), "session": session,
+            "author": "u/" + post["author"],
+            "date": str(datetime.datetime.fromtimestamp(post.get("created_utc", 0),
+                                                        datetime.timezone.utc).date()) if post.get("created_utc") else "",
+            "captured": today(), "session": session,
             "stats": f"{n(post.get('score'))} points · {n(post.get('num_comments'))} comments",
             "safety": safety_scan(cfg, post["title"], body[:1500],
                                   *[c.get("body", "")[:300] for c in coms]), "raw": raw}
@@ -324,7 +342,8 @@ def ingest_hn(base, cfg, url, session):
         lines += [f"- {c.get('author', '?')} ({len(c.get('children') or [])} replies): "
                   f"{strip_html(c.get('text') or '')[:280]}" for c in kids]
     meta = {"platform": "hn", "url": f"https://news.ycombinator.com/item?id={hid}",
-            "author": it.get("author", "?"), "captured": today(), "session": session,
+            "author": it.get("author", "?"), "date": str(it.get("created_at", ""))[:10],
+            "captured": today(), "session": session,
             "stats": f"{n(it.get('points'))} points · {len(it.get('children') or [])} top-level comments",
             "safety": safety_scan(cfg, it.get("title"), strip_html(it.get("text") or "")[:1500],
                                   *[strip_html(c.get("text") or "")[:300] for c in kids]), "raw": raw}
@@ -384,7 +403,7 @@ def cmd_list(cards, args):
     for c in sorted(rows, key=lambda c: c["meta"].get("captured", "")):
         m = c["meta"]
         flag = "⚠ " if m.get("safety", "").startswith("flagged") else "  "
-        extra = m.get("responded", m.get("captured", ""))
+        extra = m.get("responded") or m.get("date") or m.get("captured", "")
         likes = f" · our reply +{m['response-likes']}" if m.get("response-likes") else ""
         head = c["body"].splitlines()[0].lstrip("# ")[:56]
         print(f"  {flag}{c['id']:<16} [{m.get('platform', '?'):<7}] {extra} · "
