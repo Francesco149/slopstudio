@@ -23,6 +23,8 @@ via `slop.py skeleton` with `"format":"portrait"`. Shorts recipe + the landscape
 ## Structure
 Cut a short as its OWN project BESIDE the source cut (so `assets/…` resolve): **adopt** the tuned lm3 takes +
 visemes verbatim, rewrite terse; hook in ≤2s; ONE reveal + CTA; author first-3s/last-3s first and loop.
-boom-on-punchline. Each carries its own music bed + a gag cue. The Short's first frame IS its thumbnail
+Each carries its own music bed; a sting (boom/awkward) ONLY if a real punchline lands — boom-on-punchline
+means on THE punchline, not one per short by quota (owner 2026-07-08: don't be trigger-happy; when in
+doubt, no sting). The Short's first frame IS its thumbnail
 (design it to stand alone; native A/B isn't available on Shorts). Deliberately funnel to the long-form
 (end screen / pinned comment). See `[[shorts-mode-arc]]`.

@@ -184,7 +184,12 @@ insert point must be **moved** to the new scene boundary (it doesn't ripple with
 
 **Gag cues:** `{"sound":"boom","sound_at":s}` — `sound_at` must land on the PUNCHLINE
 phrase, not the sentence before it (read the take's viseme silences: speech resumes at
-the last `X` segment's end / 1.3 for the timeline offset). TTS word gotchas: never
+the last `X` segment's end / 1.3 for the timeline offset). **Use stings SPARINGLY
+(owner feedback 2026-07-08):** an awkward sting or vine boom only where a real
+punchline/comedic pause actually LANDS — a written joke with a beat after it — never
+as ambient seasoning on lines that merely sound wry. Same bar for `gag:"clueless"`
+(it auto-cues the awkward sting). Default for a whole video: a handful, not one per
+scene; when in doubt, no sting. TTS word gotchas: never
 "fufu" (write "Heh~") and never "cursed" (it stumbles; say "weird") — ../gemma-branding/CHARACTER.md.
 
 ## What the defaults already do (don't fight them)
