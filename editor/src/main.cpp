@@ -3163,9 +3163,42 @@ static bool move_clip_to_row(Project& p, const std::string& clipId, const std::s
     return true;
 }
 
+// ── source-anchored trims ───────────────────────────────────────────────────
+// play-seconds → source-seconds factor for a clip whose asset is a TIMED medium: tts/music
+// play at `rate` (tts defaults to the project speech rate — shorts run ~1.3x), video at
+// `speed`. 0 for untimed clips (image/caption/code/…) — they have no in-point to anchor.
+static double src_time_factor(const Project& p, const std::string& row, const std::string& type, const json& params) {
+    auto rit = p.rows.find(row);
+    const std::string& rt = (rit != p.rows.end()) ? rit->second.type : type;
+    if (rt == "tts" || rt == "music") {
+        double def = (rt == "tts") ? p.speechRate : 1.0;
+        double r = params.is_object() ? params.value("rate", def) : def;
+        return std::min(2.0, std::max(0.5, r));   // the mixer's stretch clamp
+    }
+    if (rt == "video") return params.is_object() ? params.value("speed", 1.0) : 1.0;
+    return 0.0;
+}
+
+// Advance an asset in-point by `adv` SOURCE-seconds. A looping video (loop defaults true)
+// folds a forward advance across its loop seam — the repeating segment is [in, EOF) — so the
+// frame shown at the fold point is exactly what the unsplit clip showed there. Non-video
+// assets aren't in asset_video and just add. Floored at 0: no media before the source start.
+static double advance_in_folded(const Project& p, const std::string& asset, const json& params, double in, double adv) {
+    bool loops = true;   // video default; "pingpong" (string) folds like loop — fine for b-roll
+    if (params.is_object() && params.contains("loop") && params["loop"].is_boolean()) loops = params["loop"].get<bool>();
+    double nin = in + adv;
+    auto vmi = p.asset_video.find(asset);
+    if (loops && adv > 0 && vmi != p.asset_video.end() && vmi->second.fps > 0 && vmi->second.frames > 0) {
+        double span = vmi->second.frames / vmi->second.fps - in;
+        if (span > 1e-6) nin = in + std::fmod(adv, span);
+    }
+    return std::max(0.0, nin);
+}
+
 // Split the clip at timeline time t into two: the original keeps [start, t); a NEW clip covers
-// [t, end). For audio (tts/music) the right half gets an asset `in`-point so it CONTINUES the
-// sound instead of restarting (honored by the mixer + export). Keyframes are absolute-time, so
+// [t, end). Timed media (tts/music/video) gives the right half an advanced asset `in`-point so
+// it CONTINUES from the split point instead of restarting (rate/speed-aware; honored by the
+// mixer, the compositor and export). Keyframes are absolute-time, so
 // both halves keep them and sample correctly. Patches the doc, persists, and reloads p.
 // (Reloads p → the caller must not hold a Clip& into p afterwards; callers defer this.)
 static void split_clip(Project& p, const std::string& clipId, double t) {
@@ -3188,9 +3221,13 @@ static void split_clip(Project& p, const std::string& clipId, double t) {
     p.doc["clips"][clipId]["dur"] = splitLocal;            // left half  = [start, t)
     right["start"] = t;
     right["dur"] = cend - t;                               // right half = [t, end) — adjacent, no overlap, no ripple
-    if (type == "tts" || type == "music") {                // continue the audio, don't restart
-        if (!right.contains("params") || !right["params"].is_object()) right["params"] = json::object();
-        right["params"]["in"] = right["params"].value("in", 0.0) + splitLocal;
+    {   // timed media continues from the split point (play→source: × rate for audio, × speed for video)
+        json rp = (right.contains("params") && right["params"].is_object()) ? right["params"] : json::object();
+        double k = src_time_factor(p, row, type, rp);
+        if (k > 1e-6) {
+            rp["in"] = advance_in_folded(p, right.value("asset", std::string()), rp, rp.value("in", 0.0), splitLocal * k);
+            right["params"] = rp;
+        }
     }
     p.doc["clips"][nid] = right;
     if (p.doc.contains("rows") && p.doc["rows"].contains(row) && p.doc["rows"][row].contains("clips")
@@ -6592,7 +6629,7 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
             ImGui::SetCursorScreenPos(a);
             ImGui::InvisibleButton((c.id + "##L").c_str(), ImVec2(HANDLE, b.y - a.y));
             if (ImGui::IsItemHovered() || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-            if (ImGui::IsItemActive()) {                  // LEFT edge: plain in-point trim (right edge fixed; no ripple)
+            if (ImGui::IsItemActive()) {                  // LEFT edge: TRIM (right edge fixed; no ripple)
                 st.selected = c.id;
                 double d = ImGui::GetIO().MouseDelta.x * dtPerPx;
                 if (c.start + d < 0) d = -c.start;        // clamp start at 0
@@ -6600,8 +6637,20 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
                     double ns = snap_edge_time(p, c.id, c.start + d, SNAP_PX * dtPerPx, st.playhead, snapRowsFor(c.row));
                     if (ns != c.start + d) { d = ns - c.start; snapGuideT = ns; }
                 }
+                // Timed media trims its SOURCE in-point too, so the content at any surviving
+                // timeline moment doesn't move (rate/speed-aware). The drag stops where the
+                // source starts. Ctrl = SLIP instead (move the window, keep the in-point).
+                double k = ImGui::GetIO().KeyCtrl ? 0.0 : src_time_factor(p, c.row, c.type, c.params);
+                double in0 = c.params.is_object() ? c.params.value("in", 0.0) : 0.0;
+                if (k > 1e-6 && in0 + d * k < 0) d = -in0 / k;   // no media before the source start
                 double nd = c.dur - d;
-                if (nd >= MINDUR) { c.start += d; c.dur = nd; reanchor_leading_fade(c, d); }  // fade-in follows the moved start
+                if (nd >= MINDUR) {
+                    if (k > 1e-6) {
+                        if (!c.params.is_object()) c.params = json::object();
+                        c.params["in"] = advance_in_folded(p, c.asset, c.params, in0, d * k);
+                    }
+                    c.start += d; c.dur = nd; reanchor_leading_fade(c, d);   // fade-in follows the moved start
+                }
             }
             ImGui::SetCursorScreenPos(ImVec2(b.x - HANDLE, a.y));
             ImGui::InvisibleButton((c.id + "##R").c_str(), ImVec2(HANDLE, b.y - a.y));
@@ -6922,6 +6971,25 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
 // Editable-param buffers for the selected clip (refreshed when the selection or the
 // underlying asset changes; g_bufFor is also cleared by apply_generations after reload).
 static std::string g_bufFor;
+
+// Transform clipboard (Clip menu / Ctrl+Shift+C/V): carries one clip's static transform to
+// another. In-memory only — placement, not content; keyframes stay with their clip.
+struct TxClipboard { bool has = false; double pos[2], scale[2], rot, opacity, anchor[2]; };
+static TxClipboard g_txClip;
+static void copy_transform(const Clip& c) {
+    g_txClip.has = true;
+    g_txClip.pos[0] = c.tx_pos[0];       g_txClip.pos[1] = c.tx_pos[1];
+    g_txClip.scale[0] = c.tx_scale[0];   g_txClip.scale[1] = c.tx_scale[1];
+    g_txClip.rot = c.tx_rot;             g_txClip.opacity = c.tx_opacity;
+    g_txClip.anchor[0] = c.tx_anchor[0]; g_txClip.anchor[1] = c.tx_anchor[1];
+}
+static void paste_transform(Clip& c) {
+    if (!g_txClip.has) return;
+    c.tx_pos[0] = g_txClip.pos[0];       c.tx_pos[1] = g_txClip.pos[1];
+    c.tx_scale[0] = g_txClip.scale[0];   c.tx_scale[1] = g_txClip.scale[1];
+    c.tx_rot = g_txClip.rot;             c.tx_opacity = g_txClip.opacity;
+    c.tx_anchor[0] = g_txClip.anchor[0]; c.tx_anchor[1] = g_txClip.anchor[1];
+}
 
 // ───────────────────────────── undo / redo ────────────────────────────────
 // Whole-project undo: the doc fully captures project state, so a snapshot is just a compact JSON
@@ -8828,6 +8896,11 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
             if (ImGui::MenuItem("Split at playhead", "S", false, hasSel)) splitReq = st.selected;
             if (ImGui::MenuItem("Delete", "Del", false, hasSel)) delReq = st.selected;
             ImGui::Separator();
+            if (ImGui::MenuItem("Copy transform", "Ctrl+Shift+C", false, hasSel)) copy_transform(p.clips[st.selected]);
+            if (ImGui::MenuItem("Paste transform", "Ctrl+Shift+V", false, hasSel && g_txClip.has)) {
+                paste_transform(p.clips[st.selected]); g_undoDirty = true;
+            }
+            ImGui::Separator();
             if (ImGui::BeginMenu("Add special clip (at playhead)")) {   // native compositing clips from scratch — no gen, no JSON
                 struct NT { const char* label; const char* type; };
                 static const NT NTS[] = {
@@ -8857,6 +8930,10 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
             if (!kio.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z)) doUndo = true;
             if ((kio.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z)) || ImGui::IsKeyPressed(ImGuiKey_Y)) doRedo = true;
             if (ImGui::IsKeyPressed(ImGuiKey_D) && !st.selected.empty()) dupReq = st.selected;   // Ctrl+D = duplicate
+            if (kio.KeyShift && !st.selected.empty() && p.clips.count(st.selected)) {            // Ctrl+Shift+C/V = transform
+                if (ImGui::IsKeyPressed(ImGuiKey_C)) copy_transform(p.clips[st.selected]);
+                if (ImGui::IsKeyPressed(ImGuiKey_V) && g_txClip.has) { paste_transform(p.clips[st.selected]); g_undoDirty = true; }
+            }
         }
         if (doSave) {
             g_saveStatus = save_project(p) ? ("saved " + p.path) : "SAVE FAILED";

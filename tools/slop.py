@@ -344,6 +344,17 @@ def _clip_rate(p, c):
 def _proj_gap(p):
     return 0.2 if p.get("meta", {}).get("format") == "portrait" else GAP
 
+def _src_factor(p, c):
+    """play→source seconds factor for timed media (mirrors the editor's src_time_factor):
+    tts/music play at `rate`, video at `speed`; 0 for untimed clips (no in-point)."""
+    rt = p.get("rows", {}).get(c.get("row", ""), {}).get("type")
+    try:
+        if rt == "tts": return min(2.0, max(0.5, _clip_rate(p, c)))
+        if rt == "music": return min(2.0, max(0.5, float(c.get("params", {}).get("rate", 1.0)) or 1.0))
+        if rt == "video": return float(c.get("params", {}).get("speed", 1.0)) or 1.0
+    except Exception: return 1.0
+    return 0.0
+
 def cmd_skeleton(a):
     sk=load(a.skeleton)
     # SHORTS profile: `"format": "portrait"` (or a portrait resolution) compiles a fast-paced
@@ -1659,6 +1670,9 @@ def main():
             if rip: ripple(p, endBefore, d, except_id=a.clip, after=True)
         if a.start is not None:
             d=a.start-c["start"]; startBefore=c["start"]; c["start"]=round(a.start,3); c["dur"]=round(c["dur"]-d,3)
+            k=_src_factor(p, c)     # trim, don't slip: timed media keeps its content anchored to the
+            if k > 1e-6:            # timeline by advancing the asset in-point (rate/speed-aware)
+                pr=c.setdefault("params", {}); pr["in"]=max(0.0, round(pr.get("in", 0.0)+d*k, 3))
             if rip: ripple(p, startBefore, d, except_id=a.clip, after=False)
         rebase(p); save(p,out); print(f"trimmed {a.clip} -> start {c['start']:.2f} dur {c['dur']:.2f}, total {total(p):.1f}s"); return
 

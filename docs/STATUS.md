@@ -179,6 +179,16 @@ composing a video as an agent, **`docs/LLM_WORKFLOW.md`**.
 > edges + playhead; hold Alt to bypass) so host clips drop flush and their pose-swap slide fires.**
 
 ## Built + working (verified)
+- **★ SOURCE-ANCHORED SPLIT/TRIM + TRANSFORM CLIPBOARD — NEW 2026-07-08 (owner ask).**
+  Split (`S`) and LEFT-edge trim now behave like a real NLE for timed media: the right half /
+  trimmed clip advances its asset `in`-point (play→source mapped: × `rate` for tts/music —
+  previously split added raw play-seconds, wrong on 1.3× shorts speech — × `speed` for video,
+  which previously wasn't in-pointed AT ALL: both halves restarted from the same frame). Looping
+  video folds the advance across its loop seam (`advance_in_folded`); the left-edge drag stops at
+  the source start; **Ctrl-drag the left edge = legacy SLIP** (move the window, keep the in-point).
+  Same fix in the CLI: `slop.py trim --start` advances `params.in` via `_src_factor` (editor-
+  mirrored). Plus **Copy/Paste transform** (Clip menu · Ctrl+Shift+C/V): carries pos/scale/rot/
+  opacity/anchor between clips (static transform only; keyframes stay put).
 - **★ THUMBNAIL TOOL (slopthumb) + BRANDING SYSTEM — NEW 2026-07-05 (owner ask: branding session).**
   A **separate app** from the editor: `thumbtool/` → `build/slopthumb.exe` (mingw PE, ImGui/D3D11 shell,
   **CPU stb compositor** ⇒ headless export needs no GPU, GUI/CLI renders byte-identical). Full spec:
