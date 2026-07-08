@@ -23,6 +23,11 @@ via `slop.py skeleton` with `"format":"portrait"`. Shorts recipe + the landscape
 ## Structure
 Cut a short as its OWN project BESIDE the source cut (so `assets/…` resolve): **adopt** the tuned lm3 takes +
 visemes verbatim, rewrite terse; hook in ≤2s; ONE reveal + CTA; author first-3s/last-3s first and loop.
+**Name + show the actual subject** (owner 2026-07-08): ≥1 beat must speak the subject's real name (Lucky
+Star, Recettear — respell for TTS, display-correct via `params.transcript`) AND put the subject itself on
+screen (the mascots / box art / title screen, not just surrounding footage). "This game"/"this disc" is
+fine per-line only if the name lands elsewhere — a short that never identifies its subject breaks the
+funnel to the long-form (the mascot short missing the actual Lucky Star mascots = the canonical miss).
 Each carries its own music bed; a sting (boom/awkward) ONLY if a real punchline lands — boom-on-punchline
 means on THE punchline, not one per short by quota (owner 2026-07-08: don't be trigger-happy; when in
 doubt, no sting). The Short's first frame IS its thumbnail
