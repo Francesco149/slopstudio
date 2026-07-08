@@ -5,7 +5,23 @@ in the same change that lands work, so a fresh session reorients in ~60s. Last u
 **2026-07-08**. For the next editor UX/product pass, also read `docs/UX_NEXT.md`; for
 composing a video as an agent, **`docs/LLM_WORKFLOW.md`**.
 
-> **★ NEWEST (2026-07-08): CAPTION-ANCHOR CLIPS — move a time range of captions with ONE clip, regen-proof.**
+> **★ NEWEST (2026-07-08 later): CAPTION-REGEN BUTTON everywhere + shorts caption regen pass.**
+> Owner asked for a self-serve "regen the auto captions" button. It already existed in the editor
+> (Project panel ▸ transcript, portrait cuts) but **silently failed on UNC-opened projects** — the
+> launch used the raw Windows `p.path` instead of `win_path_to_wsl()` (the copy-cmd variant was
+> already correct); fixed to reuse the converted command. **Dashboard:** new `regen_captions` action
+> (video group, cut picker) + a per-project **"regen captions · <newest cut>"** quick button on the
+> Projects tab — runs `slop.py transcript`, gated to portrait cuts at build-time (`_need_portrait_cut`;
+> regenerating a landscape cut would inject an r_transcript it never had). Editor file-watch
+> live-reloads the result after a dashboard regen too (save in the editor first). **Content pass:**
+> recettear shorts 3-4 + luckymas shorts 4-5-6 captions regen'd onto the owner's tweaks, with
+> `params.transcript` display overrides added where TTS text leaked (Recettear/SYGNAS/digits per the
+> shorts-1-2 convention); short4-steam tail black fixed; owner's `F:\Pictures` ext images copied into
+> project `assets/`. **SFX restraint (owner):** stings (awkward/boom) only where a real punchline
+> lands — a handful per video, when in doubt none; baked into `docs/LLM_WORKFLOW.md` § Gag cues +
+> the `shorts-format` skill.
+>
+> **★ (2026-07-08): CAPTION-ANCHOR CLIPS — move a time range of captions with ONE clip, regen-proof.**
 > Owner (while finetuning the capitalism-ho short): per-chunk transcript pos nudges are wiped by every
 > `slop.py transcript` regen. New clip type **`anchor`** (row `r_capanchor`): every caption/text clip whose
 > START falls in the anchor clip's span renders shifted by the anchor's `transform.pos` — one handle moves

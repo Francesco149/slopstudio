@@ -295,6 +295,10 @@ def eng(*a):
     return [sys.executable, os.path.join(TOOLS, "engage.py"), *a]
 
 
+def slop_tool(*a):
+    return [sys.executable, os.path.join(TOOLS, "slop.py"), *a]
+
+
 ACTIONS = {
     "doctor":  {"label": "Machine check", "group": "machine", "params": [],
                 "build": lambda p: vid("doctor")},
@@ -319,6 +323,9 @@ ACTIONS = {
                 "build": lambda p: vid("export", p["project"]) + (["--final"] if p.get("final") else [])},
     "transcript": {"label": "Transcript → clipboard", "group": "video", "params": ["project", "srt:bool"],
                    "build": lambda p: vid("transcript", p["project"]) + (["--srt"] if p.get("srt") else [])},
+    "regen_captions": {"label": "Regen captions (on-screen transcript)", "group": "video", "params": ["cut"],
+                       "note": "portrait cuts — save in the editor first; it live-reloads the result",
+                       "build": lambda p: slop_tool("transcript", _need_portrait_cut(p["cut"]))},
 
     "open_editor": {"label": "Open editor", "group": "launch", "params": ["cut"], "detach": True,
                     "build": lambda p: [EDITOR_EXE, _need_file(p["cut"]), "--cache", "cache"]},
@@ -332,6 +339,21 @@ def _need_file(path):
     ap = os.path.realpath(path)
     if not (os.path.isfile(ap) and under_safe_root(ap)):
         raise ValueError(f"file not allowed / missing: {path}")
+    return ap
+
+
+def _need_portrait_cut(path):
+    """the animated on-screen transcript is a Shorts convention — regenerating it on a
+    landscape cut would INJECT an r_transcript track it never had (same gate as the editor's
+    Project-panel button, which only shows for portrait)."""
+    ap = _need_file(path)
+    try:
+        fmt = json.load(open(ap)).get("meta", {}).get("format")
+    except Exception as e:
+        raise ValueError(f"unreadable cut: {e}")
+    if fmt != "portrait":
+        raise ValueError(f"{os.path.basename(ap)} is not a portrait cut — the animated "
+                         "on-screen transcript is a Shorts-only convention")
     return ap
 
 
@@ -1063,6 +1085,7 @@ function renderProjects(){
         <button class="sm" onclick="quick('show','project','${p.name}')">timeline</button>
         <button class="sm" onclick="quick('lint','project','${p.name}')">lint</button>
         ${p.cuts.length?`<button class="sm" title="${esc(p.cuts[0].path)}" onclick="quickCut('${esc(p.cuts[0].path)}')">open editor · ${esc(p.cuts[0].name)}</button>`:''}
+        ${p.cuts.length?`<button class="sm" title="regen the animated on-screen transcript from the VO lines (portrait cuts)\n${esc(p.cuts[0].path)}" onclick="quick('regen_captions','cut','${esc(p.cuts[0].path)}')">regen captions · ${esc(p.cuts[0].name)}</button>`:''}
       </div></div>`;
   }
   $('w-projects').innerHTML=h||'<div class="card">no projects</div>';

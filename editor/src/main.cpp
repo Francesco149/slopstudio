@@ -8759,7 +8759,7 @@ static void draw_project_settings(Project& p) {
         ImGui::SeparatorText("transcript");
         std::string trInner = "nix develop --command python tools/slop.py transcript '" + win_path_to_wsl(p.path) + "'";
         if (ImGui::Button("Regenerate transcript")) {   // saves, runs slop.py, the file-watch live-reloads the result
-            if (save_project(p) && !spawn_wsl_bash("nix develop --command python tools/slop.py transcript '" + p.path + "'"))
+            if (save_project(p) && !spawn_wsl_bash(trInner))   // trInner already win_path_to_wsl's p.path (a raw UNC path never resolves inside WSL)
                 fprintf(stderr, "transcript: could not launch wsl.exe\n");
         }
         ImGui::SameLine();
