@@ -20,7 +20,8 @@ session**). The reference cut + all conventions are in `docs/LLM_WORKFLOW.md`; f
    rest on lame; then `retime` time-warps the timeline onto the real audio durations (rate-aware for shorts).
    Split every sentence into its own TTS clip; tune intonation per clip (see `gemma-voice-tts`).
 5. **GATE — lint MUST pass before render.** `slop.py lint <proj>` flags black spans, no-visual narration,
-   asset repeats, missing files, stale VO, overlaps, negative starts, unknown emotions. Also run the
+   asset repeats, missing files, stale VO, stale caption overrides (a reworded line whose `params.transcript`
+   kept the OLD wording), overlaps, negative starts, unknown emotions. Also run the
    `retention-editing` review. (When built: `slop.py critique`/`designcheck`/`scriptlint` — the deterministic
    quality gates from `docs/AGENT_TOOLING.md`.)
 6. **Render** — `bash tools/export.sh <proj> --cache cache`. Use `--remux-from` for audio-only re-mux.

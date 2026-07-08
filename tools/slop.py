@@ -761,6 +761,30 @@ def cmd_lint(p, a):
             elif abs(c["dur"]-ad["meta"]["duration"]/crate)>0.25:
                 info.append(f"desync {cid}: dur {c['dur']:.2f}s vs audio {ad['meta']['duration']:.2f}s@{crate:.2f}x (run retime)")
         if not ad and ct: warn.append(f"NO-VO {cid}: line not generated yet ('{ct[:40]}')")
+    # 4c. stale caption override: params.transcript no longer says the same THING as the (edited)
+    # TTS text. The override exists for display normalization (digits, true spellings) — so aligned
+    # word replacements that are digit-related or phonetically close (respells like
+    # Resittear→Recettear) are fine; a low-similarity substitution ("anime"→"Lucky Star") means
+    # someone reworded the spoken line and the invisible override kept the OLD wording (the
+    # luckymas-short4 b01 bug, owner 2026-07-08).
+    import difflib
+    def _tr_stale(text, tr):
+        strip=lambda w: re.sub(r"[^0-9a-zA-Z☆]+","",w).lower()
+        tw=[w for w in text.split() if strip(w)]; rw=[w for w in tr.split() if strip(w)]
+        sm=difflib.SequenceMatcher(None,[strip(w) for w in tw],[strip(w) for w in rw],autojunk=False)
+        for op,i1,i2,j1,j2 in sm.get_opcodes():
+            if op!="replace": continue
+            aa="".join(strip(w) for w in tw[i1:i2]); bb="".join(strip(w) for w in rw[j1:j2])
+            if any(ch.isdigit() for ch in aa+bb): continue   # digit normalization = the override's purpose
+            if aa and bb and difflib.SequenceMatcher(None,aa,bb,autojunk=False).ratio()<0.4:
+                return (" ".join(tw[i1:i2])," ".join(rw[j1:j2]))
+        return None
+    for cid,c in p["clips"].items():
+        if p["rows"].get(c.get("row",""),{}).get("type")!="tts": continue
+        pr=c.get("params",{}) or {}
+        if pr.get("transcript") and pr.get("text"):
+            st=_tr_stale(pr["text"],pr["transcript"])
+            if st: warn.append(f"STALE-CAPTION {cid}: spoken '{st[0]}' but the caption override still says '{st[1]}' (params.transcript kept old wording?)")
     # 4b. clips starting before t=0 (export starts at 0 — they play truncated)
     for cid,c in p["clips"].items():
         if c.get("start",0) < -0.01: warn.append(f"NEGATIVE {cid} starts at {c['start']:.2f}s (before 0)")

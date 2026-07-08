@@ -5,7 +5,18 @@ in the same change that lands work, so a fresh session reorients in ~60s. Last u
 **2026-07-08**. For the next editor UX/product pass, also read `docs/UX_NEXT.md`; for
 composing a video as an agent, **`docs/LLM_WORKFLOW.md`**.
 
-> **★ NEWEST (2026-07-08 later): CAPTION-REGEN BUTTON everywhere + shorts caption regen pass.**
+> **★ NEWEST (2026-07-08 latest): STALE CAPTION-OVERRIDE trap diagnosed + closed.**
+> Owner reworded a TTS line in the editor (short4 b01 "anime"→"Lucky Star") and the caption kept the
+> old wording: the skeleton had authored a `params.transcript` display override (for digit display),
+> and the override is INVISIBLE in the editor — text edits silently never reach the captions. Fixes:
+> (1) **editor TTS inspector now shows the override** — a yellow "captions display the override below,
+> NOT the text above" note + an editable caption box + clear/add buttons; (2) **`lint` grows
+> STALE-CAPTION** — aligns text vs transcript word-wise (difflib) and flags low-similarity
+> substitutions while tolerating the override's purpose (digits, phonetic respells like
+> Resittear→Recettear, Cygnus→SYGNAS, raki-masu→Lucky☆Mas); verified it flags the pre-fix short4 and
+> stays quiet on every current cut. Short4 b01 caption fixed + regen'd ("Lucky Star disc" on screen).
+>
+> **★ (2026-07-08 later): CAPTION-REGEN BUTTON everywhere + shorts caption regen pass.**
 > Owner asked for a self-serve "regen the auto captions" button. It already existed in the editor
 > (Project panel ▸ transcript, portrait cuts) but **silently failed on UNC-opened projects** — the
 > launch used the raw Windows `p.path` instead of `win_path_to_wsl()` (the copy-cmd variant was

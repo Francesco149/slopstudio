@@ -6978,6 +6978,7 @@ static void do_redo(Project& p) { undo_apply(p, g_redo, g_undo); }
 
 static std::map<std::string, std::vector<std::string>> g_genHist;  // clip id → past gen asset hashes (this session)
 static char g_textBuf[4096];  // text (tts) / prompt (image) / mood (music)
+static char g_trBuf[4096];    // tts caption-display override (params.transcript)
 
 // ImGui's InputTextMultiline doesn't word-wrap, so the TTS text box soft-wraps the edit buffer
 // to the box width on (re)load, then strips those soft newlines back out before the text reaches
@@ -9386,6 +9387,8 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
                                                         : jstr(c.params, "text");
                     if (c.type == "tts") t = wrap_text(t, ImGui::GetContentRegionAvail().x - 14.0f);  // soft-wrap to the box width
                     strncpy(g_textBuf, t.c_str(), sizeof g_textBuf - 1); g_textBuf[sizeof g_textBuf - 1] = 0;
+                    std::string tr = wrap_text(jstr(c.params, "transcript"), ImGui::GetContentRegionAvail().x - 14.0f);
+                    strncpy(g_trBuf, tr.c_str(), sizeof g_trBuf - 1); g_trBuf[sizeof g_trBuf - 1] = 0;
                     std::string e = jstr(c.params, "emotion");
                     strncpy(g_emoBuf, e.c_str(), sizeof g_emoBuf - 1); g_emoBuf[sizeof g_emoBuf - 1] = 0;
                     if (c.type == "tts") g_voicePresets = list_voice_presets();
@@ -9399,6 +9402,35 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
                         std::string w = wrap_text(jstr(c.params, "text"), ImGui::GetContentRegionAvail().x - 14.0f);
                         strncpy(g_textBuf, w.c_str(), sizeof g_textBuf - 1); g_textBuf[sizeof g_textBuf - 1] = 0;
                     }
+                    // caption-display override (params.transcript): on-screen captions show THIS, not the
+                    // spoken text — surfaced here because an invisible override silently kept old wording
+                    // when the owner reworded a line (luckymas-short4 b01, 2026-07-08). `slop.py lint`
+                    // flags a diverged pair as STALE-CAPTION.
+                    if (!jstr(c.params, "transcript").empty()) {
+                        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(240, 200, 90, 255));
+                        ImGui::TextWrapped("captions display the override below, NOT the text above — reword both:");
+                        ImGui::PopStyleColor();
+                        if (ImGui::InputTextMultiline("caption##tr", g_trBuf, sizeof g_trBuf, ImVec2(-1, 56)))
+                            c.params["transcript"] = unwrap_text(g_trBuf);
+                        if (ImGui::IsItemDeactivatedAfterEdit()) {
+                            std::string w = wrap_text(jstr(c.params, "transcript"), ImGui::GetContentRegionAvail().x - 14.0f);
+                            strncpy(g_trBuf, w.c_str(), sizeof g_trBuf - 1); g_trBuf[sizeof g_trBuf - 1] = 0;
+                        }
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("what the viewer READS (true spellings, digits) while the text above is what\n"
+                                              "the TTS SPEAKS (phonetic respells, spelled-out numbers). After editing, hit\n"
+                                              "Regenerate transcript (Project panel) to re-chunk the on-screen captions.");
+                        if (ImGui::SmallButton("clear override##tr")) c.params.erase("transcript");
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("captions fall back to showing the spoken text verbatim.");
+                    } else if (ImGui::SmallButton("+ caption override")) {
+                        c.params["transcript"] = jstr(c.params, "text");
+                        std::string w = wrap_text(jstr(c.params, "transcript"), ImGui::GetContentRegionAvail().x - 14.0f);
+                        strncpy(g_trBuf, w.c_str(), sizeof g_trBuf - 1); g_trBuf[sizeof g_trBuf - 1] = 0;
+                    }
+                    if (jstr(c.params, "transcript").empty() && ImGui::IsItemHovered())
+                        ImGui::SetTooltip("give the on-screen captions different text than the TTS speaks\n"
+                                          "(true spellings, digits) — starts as a copy of the spoken text.");
                     if (ImGui::InputText("emotion / host pose", g_emoBuf, sizeof g_emoBuf))
                         c.params["emotion"] = std::string(g_emoBuf);
                     // voice preset selector — pick a designed voice, then Regenerate + Play to
