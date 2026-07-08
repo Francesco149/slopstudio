@@ -5,7 +5,16 @@ in the same change that lands work, so a fresh session reorients in ~60s. Last u
 **2026-07-08**. For the next editor UX/product pass, also read `docs/UX_NEXT.md`; for
 composing a video as an agent, **`docs/LLM_WORKFLOW.md`**.
 
-> **★ NEWEST (2026-07-08 latest): STALE CAPTION-OVERRIDE trap diagnosed + closed.**
+> **★ NEWEST (2026-07-08 night): slopthumb custom-hex colors fixed (Enter-only commit trap).**
+> Owner: "I can't set colors outside the palette — #FF0000 doesn't work." The inspector's color (and
+> id/image/src) InputTexts used `EnterReturnsTrue` only, so a typed hex + click-away was silently
+> reverted — while the palette swatches commit on click, which read as "palette-only". All four now
+> also commit on defocus (`IsItemDeactivatedAfterEdit`; ImGui keeps the buffer live, so the typed
+> text survives to the deactivation frame), and a bare hex ("ff0000") gets its '#' auto-prefixed.
+> Escape still reverts. Relaunch slopthumb to pick it up. Also: recettear thumbs v2 committed
+> (real-footage a2/b2 + rotated-card c2/d2/e2, owner-tweaked since).
+>
+> **★ (2026-07-08 latest): STALE CAPTION-OVERRIDE trap diagnosed + closed.**
 > Owner reworded a TTS line in the editor (short4 b01 "anime"→"Lucky Star") and the caption kept the
 > old wording: the skeleton had authored a `params.transcript` display override (for digit display),
 > and the override is INVISIBLE in the editor — text edits silently never reach the captions. Fixes:

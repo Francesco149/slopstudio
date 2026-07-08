@@ -578,6 +578,18 @@ static int canvas_w() { auto& d = g_app.doc; return d.contains("canvas") && d["c
 static int canvas_h() { auto& d = g_app.doc; return d.contains("canvas") && d["canvas"].is_array() ? d["canvas"][1].get<int>() : 720; }
 
 // ─────────────────────── inspector color/number widgets ─────────────────────
+// A typed color commits on Enter OR on defocus (IsItemDeactivatedAfterEdit — ImGui keeps the
+// buffer live-updated, so the typed text survives to the deactivation frame). Enter-only silently
+// DISCARDED a hex typed then clicked away, which read as "only palette swatches work" (owner
+// 2026-07-08). Bare hex ("ff0000") gets its missing '#' prefixed.
+static std::string normalize_color_input(std::string s) {
+    while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.erase(s.begin());
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) s.pop_back();
+    if (s.empty() || s[0] == '#' || s[0] == '$') return s;
+    bool allhex = (s.size() == 3 || s.size() == 6 || s.size() == 8);
+    for (char ch : s) if (!isxdigit((unsigned char)ch)) allhex = false;
+    return allhex ? "#" + s : s;
+}
 static bool color_field(const char* label, json& obj, const char* key, const std::string& def) {
     std::string cur = js(obj, key, def);
     bool changed = false;
@@ -587,7 +599,11 @@ static bool color_field(const char* label, json& obj, const char* key, const std
     ImGui::SameLine();
     ImGui::SetNextItemWidth(120);
     std::string edit = cur;
-    if (ImGui::InputText(label, &edit, ImGuiInputTextFlags_EnterReturnsTrue)) { obj[key] = edit; changed = true; }
+    bool entered = ImGui::InputText(label, &edit, ImGuiInputTextFlags_EnterReturnsTrue);
+    if (entered || ImGui::IsItemDeactivatedAfterEdit()) {
+        std::string norm = normalize_color_input(edit);
+        if (norm != cur) { obj[key] = norm; changed = true; }
+    }
     // palette swatch row
     int n = 0;
     for (auto& [name, hex] : g_app.brand.palette) {
@@ -792,7 +808,9 @@ static void panel_inspector() {
 
     std::string id = js(L, "id", "");
     ImGui::SetNextItemWidth(140);
-    if (ImGui::InputText("id", &id, ImGuiInputTextFlags_EnterReturnsTrue)) { L["id"] = id; ch = true; }
+    if (ImGui::InputText("id", &id, ImGuiInputTextFlags_EnterReturnsTrue) || ImGui::IsItemDeactivatedAfterEdit()) {
+        if (id != js(L, "id", "")) { L["id"] = id; ch = true; }   // Enter OR defocus commits (same trap as color_field)
+    }
     ImGui::SameLine(); ImGui::TextDisabled("[%s]", type.c_str());
 
     if (type == "bg") {
@@ -801,7 +819,9 @@ static void panel_inspector() {
         ch |= num_field("grad_angle", L, "grad_angle", 90, 1, 0, 360);
         std::string img = js(L, "image", "");
         ImGui::SetNextItemWidth(200);
-        if (ImGui::InputText("image", &img, ImGuiInputTextFlags_EnterReturnsTrue)) { L["image"] = img; ch = true; }
+        if (ImGui::InputText("image", &img, ImGuiInputTextFlags_EnterReturnsTrue) || ImGui::IsItemDeactivatedAfterEdit()) {
+            if (img != js(L, "image", "")) { L["image"] = img; ch = true; }
+        }
         ch |= num_field("blur", L, "blur", 0, 0.5f, 0, 100);
         ch |= num_field("darken", L, "darken", 0, 0.01f, 0, 1);
         ch |= num_field("opacity", L, "opacity", 1, 0.01f, 0, 1);
@@ -809,7 +829,9 @@ static void panel_inspector() {
     } else if (type == "image") {
         std::string src = js(L, "src", "");
         ImGui::SetNextItemWidth(230);
-        if (ImGui::InputText("src", &src, ImGuiInputTextFlags_EnterReturnsTrue)) { L["src"] = src; ch = true; }
+        if (ImGui::InputText("src", &src, ImGuiInputTextFlags_EnterReturnsTrue) || ImGui::IsItemDeactivatedAfterEdit()) {
+            if (src != js(L, "src", "")) { L["src"] = src; ch = true; }
+        }
         ch |= num_field("x", L, "x", canvas_w() / 2.0); ImGui::SameLine(); ch |= num_field("y", L, "y", canvas_h() / 2.0);
         ch |= num_field("scale", L, "scale", 1.0, 0.005f, 0.02, 6);
         ch |= num_field("rot", L, "rot", 0, 0.2f, -180, 180);
