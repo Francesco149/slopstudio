@@ -718,6 +718,21 @@ class Handler(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError):
                 pass
             return
+        if u.path == "/api/file":  # the ORIGINAL bytes, full-res (lightbox / copy), not a thumbnail
+            ap = os.path.realpath(q.get("path", [""])[0])
+            if not (os.path.isfile(ap) and under_safe_root(ap)):
+                return self._send(404, {"error": "not found"})
+            data = open(ap, "rb").read()
+            self.send_response(200)
+            self.send_header("Content-Type", mimetypes.guess_type(ap)[0] or "application/octet-stream")
+            self.send_header("Cache-Control", "max-age=3600")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            try:
+                self.wfile.write(data)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
         return self._send(404, {"error": "not found"})
 
     def do_POST(self):
@@ -1354,7 +1369,28 @@ function flash(m){$('logstat').textContent=m}
 
 /* ---------- modal / lightbox ---------- */
 function modal(html){$('modalbox').innerHTML=html;$('modal').classList.add('on')}
-function lightbox(encPath){const p=decodeURIComponent(encPath);modal(`<img src="${thumb(p,640)}"><div class="muted" style="margin-top:8px;word-break:break-all">${esc(p)}</div>`)}
+const fileUrl=p=>'/api/file?path='+encodeURIComponent(p);   // ORIGINAL bytes (full-res), not a thumb
+function lightbox(encPath){const p=decodeURIComponent(encPath);
+  modal(`<img src="${fileUrl(p)}">
+    <div class="row" style="margin-top:8px;gap:8px;align-items:center">
+      <button class="sm pri" onclick="copyImageFull('${encPath}')">copy full-res</button>
+      <a href="${fileUrl(p)}" target="_blank"><button class="sm">open original ↗</button></a>
+      <span class="muted" style="word-break:break-all;flex:1">${esc(p)}</span></div>`);}
+async function copyImageFull(encPath){
+  const p=decodeURIComponent(encPath);
+  try{
+    const blob=await (await fetch(fileUrl(p))).blob();          // the real file, at full resolution
+    let out=blob;
+    if(blob.type!=='image/png'){                                // clipboard only reliably accepts png → re-encode at NATURAL size
+      out=await new Promise((res,rej)=>{const im=new Image();
+        im.onload=()=>{const c=document.createElement('canvas');c.width=im.naturalWidth;c.height=im.naturalHeight;
+          c.getContext('2d').drawImage(im,0,0);c.toBlob(b=>b?res(b):rej('encode failed'),'image/png');};
+        im.onerror=()=>rej('decode failed');im.src=URL.createObjectURL(blob);});
+    }
+    await navigator.clipboard.write([new ClipboardItem({'image/png':out})]);
+    flash('copied full-res image · '+Math.round(out.size/1024)+' KB');
+  }catch(e){flash('✗ copy failed ('+e+') — use "open original ↗" then copy from there');}
+}
 function closeModal(){$('modal').classList.remove('on')}
 document.addEventListener('keydown',e=>{if(e.key=='Escape')closeModal()});
 $('modal').addEventListener('click',e=>{if(e.target.id=='modal')closeModal()});
