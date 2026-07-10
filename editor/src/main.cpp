@@ -9298,6 +9298,87 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
                     if (ImGui::IsItemHovered())
                         ImGui::SetTooltip("adaptive placement, computed at render time:\ninset = fit ~half-frame beside the host (portrait: the top band) · fullscreen = cover\n(degrades to contain on an extreme-aspect source) · cover = ALWAYS cover (backdrops)\nfit = contain (letterbox on the filler) · (manual) = authored transform only");
                 }
+                if (c.type == "image" || c.type == "video") {
+                    // NON-DESTRUCTIVE crop: sample a sub-rect of the SOURCE (compositor clip_crop →
+                    // UVs); the raw asset is never touched. Stored params.crop = [x,y,w,h] fractions
+                    // 0..1 (x,y = top-left corner). layout/transform apply ON TOP of the cropped
+                    // region. Below is a VISUAL handle: a source thumbnail with a draggable crop
+                    // rectangle (drag a corner to resize, drag inside to move). The main composite
+                    // updates live as you drag; undo is automatic at gesture settle.
+                    auto cl = [](float v, float lo, float hi){ return v < lo ? lo : v > hi ? hi : v; };
+                    float cr[4] = {0.f, 0.f, 1.f, 1.f};
+                    bool hasCrop = LP.contains("crop") && LP["crop"].is_array() && LP["crop"].size() == 4;
+                    if (hasCrop) for (int k = 0; k < 4; k++) cr[k] = (float)LP["crop"][k].get<double>();
+
+                    // resolve a source texture + native aspect for the preview
+                    ImTextureID srcTex = 0; float srcW = 0, srcH = 0;
+                    if (c.type == "image") {
+                        auto au = p.asset_uri.find(c.asset);
+                        if (au != p.asset_uri.end()) { Tex* t = get_texture(resolve_asset(au->second));
+                            if (t && t->srv) { srcTex = (ImTextureID)(intptr_t)t->srv; srcW = (float)t->w; srcH = (float)t->h; } }
+                    }
+#ifdef SLOP_LIBAV
+                    else if (c.type == "video") {
+                        auto vmIt = p.asset_video.find(c.asset);
+                        if (vmIt != p.asset_video.end() && g_videoDirect && !vmIt->second.src.empty()) {
+                            VideoDecoder* d = get_decoder(resolve_asset(vmIt->second.src));
+                            if (d) { double T = cl((float)st.playhead, (float)c.start, (float)(c.start + c.dur) - 0.05f);
+                                FrameTex* ft = get_decoded_frame_tex(vmIt->second.src, video_frame_index(vmIt->second, c, T), d);
+                                if (ft && ft->srv) { srcTex = (ImTextureID)(intptr_t)ft->srv; srcW = (float)ft->w; srcH = (float)ft->h; } }
+                        }
+                    }
+#endif
+                    ImGui::SeparatorText("crop — drag the handles (non-destructive)");
+                    float aspect = (srcW > 0 && srcH > 0) ? srcW / srcH : 16.f / 9.f;
+                    float BW = 280.f, BH = BW / aspect; if (BH > 210.f) { BH = 210.f; BW = BH * aspect; }
+                    ImVec2 org = ImGui::GetCursorScreenPos();
+                    ImGui::InvisibleButton("##cropbox", ImVec2(BW, BH));
+                    ImDrawList* idl = ImGui::GetWindowDrawList();
+                    if (srcTex) idl->AddImage(srcTex, org, ImVec2(org.x + BW, org.y + BH));
+                    else idl->AddRectFilled(org, ImVec2(org.x + BW, org.y + BH), IM_COL32(38, 38, 46, 255));
+                    ImVec2 r0(org.x + cr[0] * BW, org.y + cr[1] * BH), r1(org.x + (cr[0] + cr[2]) * BW, org.y + (cr[1] + cr[3]) * BH);
+                    ImU32 dimc = IM_COL32(0, 0, 0, 150);
+                    idl->AddRectFilled(org, ImVec2(org.x + BW, r0.y), dimc);                                   // above
+                    idl->AddRectFilled(ImVec2(org.x, r1.y), ImVec2(org.x + BW, org.y + BH), dimc);             // below
+                    idl->AddRectFilled(ImVec2(org.x, r0.y), ImVec2(r0.x, r1.y), dimc);                         // left
+                    idl->AddRectFilled(ImVec2(r1.x, r0.y), ImVec2(org.x + BW, r1.y), dimc);                    // right
+                    idl->AddRect(r0, r1, IM_COL32(120, 200, 255, 255), 0, 0, 2.f);
+                    ImVec2 corners[4] = { r0, ImVec2(r1.x, r0.y), ImVec2(r0.x, r1.y), r1 };
+                    for (auto& cp : corners) idl->AddRectFilled(ImVec2(cp.x - 5, cp.y - 5), ImVec2(cp.x + 5, cp.y + 5), IM_COL32(255, 255, 255, 255));
+
+                    static int grab = -1; static float fixX = 0, fixY = 0;   // corner 0..3, 4 = move body
+                    if (ImGui::IsItemActivated()) {
+                        ImVec2 m = ImGui::GetIO().MousePos; grab = -1; float best = 11.f;
+                        for (int k = 0; k < 4; k++) { float dd = fabsf(m.x - corners[k].x) + fabsf(m.y - corners[k].y); if (dd < best) { best = dd; grab = k; } }
+                        if (grab < 0 && m.x > r0.x && m.x < r1.x && m.y > r0.y && m.y < r1.y) grab = 4;
+                        if (grab >= 0 && grab < 4) { fixX = (grab == 0 || grab == 2) ? cr[0] + cr[2] : cr[0]; fixY = (grab == 0 || grab == 1) ? cr[1] + cr[3] : cr[1]; }
+                    }
+                    if (ImGui::IsItemActive() && grab >= 0) {
+                        if (grab == 4) { ImVec2 dpx = ImGui::GetIO().MouseDelta; cr[0] += dpx.x / BW; cr[1] += dpx.y / BH; }
+                        else {
+                            ImVec2 m = ImGui::GetIO().MousePos;
+                            float mfx = cl((m.x - org.x) / BW, 0.f, 1.f), mfy = cl((m.y - org.y) / BH, 0.f, 1.f);
+                            cr[0] = mfx < fixX ? mfx : fixX; cr[2] = fabsf(mfx - fixX);
+                            cr[1] = mfy < fixY ? mfy : fixY; cr[3] = fabsf(mfy - fixY);
+                        }
+                        cr[0] = cl(cr[0], 0.f, 0.98f); cr[1] = cl(cr[1], 0.f, 0.98f);
+                        cr[2] = cl(cr[2], 0.02f, 1.f - cr[0]); cr[3] = cl(cr[3], 0.02f, 1.f - cr[1]);
+                        LP["crop"] = json::array({(double)cr[0], (double)cr[1], (double)cr[2], (double)cr[3]});
+                    }
+                    if (ImGui::IsItemDeactivated()) grab = -1;
+
+                    // numeric fine-tune + reset
+                    bool cChg = false;
+                    ImGui::SetNextItemWidth(130);
+                    if (ImGui::DragFloat2("pos x,y", cr, 0.002f, 0.f, 0.98f, "%.3f")) cChg = true;
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(130);
+                    if (ImGui::DragFloat2("size w,h", cr + 2, 0.002f, 0.02f, 1.f, "%.3f")) cChg = true;
+                    if (cChg) {
+                        cr[2] = cl(cr[2], 0.02f, 1.f - cr[0]); cr[3] = cl(cr[3], 0.02f, 1.f - cr[1]);
+                        LP["crop"] = json::array({(double)cr[0], (double)cr[1], (double)cr[2], (double)cr[3]});
+                    }
+                    if (hasCrop) { ImGui::SameLine(); if (ImGui::SmallButton("reset")) LP.erase("crop"); }
+                }
             }
             if (!c.asset.empty()) ImGui::Text("asset: %s", c.asset.c_str());
             // image clips: file picker + a live preview of the current image (high up so it's visible)
