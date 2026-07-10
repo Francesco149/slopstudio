@@ -55,7 +55,8 @@ the canonical follow-up — durs must be ÷speech_rate for 1.3× shorts, or you 
 NEVER per-chunk pos nudges — `transcript` regen wipes chunk transforms but anchors survive (their own row).
 
 ## House rules
-- **Show visuals on the llm-feed** as you go (`curl -F file=@shot.png localhost:8777/push`) — fire-and-forget.
+- **Show visuals on the llm-feed** as you go (`python /opt/src/llm-feed/feed.py image shot.png --title "…"`,
+  inside the dev shell) — fire-and-forget. (There is NO `curl …/push` endpoint — use feed.py.)
 - Everything is undoable by default (doc-snapshot on gesture settle) — just mutate the project.
 - **Commit** logical units as you land them (project edits in the projects repo; code in slopstudio). Build +
   lint before committing. **Push only when asked.**
