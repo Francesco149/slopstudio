@@ -7,6 +7,9 @@ browser to run the whole video/social operation at a glance:
   • SOCIAL   — the queue + per-platform cadence (DUE/ok, last posted, depth), the
                "post today" suggestions, a gallery of GPT gens with which post each is
                paired to; mark-posted / pair-image / copy-body without touching a file.
+  • IMAGE QUEUE — GPT-image briefs (social/image-requests/) to stock up on gens; drag the finished
+               image onto a brief to fulfil it — it saves into the gens folder, marks the request
+               done, and auto-pairs to its for-post when one is linked.
   • LAUNCHER — one-click the VIDEO_RUNBOOK actions (build · voice · lint · look · export ·
                transcript · status) with their options, open the editor / thumbnail editor
                (Gemma brand) on a project, and the machine checks (doctor · wake).
@@ -544,6 +547,116 @@ def make_thumb(path, w):
     return (data, "image/jpeg") if data else None
 
 
+# ── image-requests (the "art queue": GPT-image briefs the owner fulfils by drop) ──
+IMGREQ_DIR = os.path.join(SOCIAL_DIR, "image-requests")
+IMGREQ_KEYS = ["id", "category", "status", "priority", "for-post", "image", "requested"]
+
+
+def imgreq_write(rid, meta, brief):
+    """Write/overwrite an image-request .md (same frontmatter shape as a post)."""
+    os.makedirs(IMGREQ_DIR, exist_ok=True)
+    meta = {**meta, "id": rid}
+    lines = [f"{k}: {meta[k]}" for k in IMGREQ_KEYS if str(meta.get(k, "")).strip()]
+    open(os.path.join(IMGREQ_DIR, rid + ".md"), "w", encoding="utf-8").write(
+        "---\n" + "\n".join(lines) + "\n---\n\n" + (brief or "").strip() + "\n")
+
+
+def imgreq_get(rid):
+    path = os.path.join(IMGREQ_DIR, rid + ".md")
+    return social.parse_post(path) if rid and os.path.isfile(path) else None
+
+
+def imgreq_state():
+    """The art queue: briefs to gen (status wanted) + the fulfilled ones (done),
+    plus queue posts still asking for art that no request covers yet."""
+    try:
+        files = [f for f in sorted(os.listdir(IMGREQ_DIR)) if f.endswith(".md")] \
+            if os.path.isdir(IMGREQ_DIR) else []
+        reqs = [social.parse_post(os.path.join(IMGREQ_DIR, f)) for f in files]
+    except Exception as e:
+        return {"error": str(e), "wanted": [], "done": [], "orphan_posts": []}
+    linked = set()
+
+    def row(r):
+        m = r["meta"]
+        fp = m.get("for-post", "")
+        if fp:
+            linked.add(fp)
+        ref = m.get("image", "")
+        resolved = resolve_ref(ref) if ref and ref not in ("none", "wanted") else None
+        return {"id": r["id"], "category": m.get("category", ""), "status": m.get("status", "wanted"),
+                "priority": m.get("priority", "normal"), "for_post": fp, "requested": m.get("requested", ""),
+                "brief": r["body"], "image_abs": resolved or "",
+                "image_ok": bool(resolved and os.path.exists(resolved))}
+
+    rows = [row(r) for r in reqs]
+    orphans = []
+    try:
+        for p in social.load_all(SOCIAL_DIR)["queue"]:
+            if p["meta"].get("image", "none") == "wanted" and p["id"] not in linked:
+                orphans.append({"id": p["id"], "prompt": p["meta"].get("image-prompt", ""),
+                                "platforms": p["platforms"]})
+    except Exception:
+        pass
+    return {"wanted": [r for r in rows if r["status"] != "done"],
+            "done": [r for r in rows if r["status"] == "done"], "orphan_posts": orphans}
+
+
+def imgreq_fulfil(rid, name, data):
+    """Save a dropped image into the gen library, mark the request done, auto-pair its post."""
+    r = imgreq_get(rid)
+    if not r:
+        raise ValueError(f"no image-request '{rid}'")
+    if not data:
+        raise ValueError("empty file")
+    ext = os.path.splitext(name)[1].lower()
+    if ext not in IMG_EXT:
+        raise ValueError(f"not an image ({ext or 'no extension'})")
+    os.makedirs(SOCIAL_IMG, exist_ok=True)
+    fname, n = rid + ext, 2
+    while os.path.exists(os.path.join(SOCIAL_IMG, fname)):
+        fname = f"{rid}-{n}{ext}"; n += 1
+    dest = os.path.join(SOCIAL_IMG, fname)
+    open(dest, "wb").write(data)
+    imgreq_write(rid, {**r["meta"], "status": "done", "image": dest}, r["body"])
+    paired = None
+    fp = r["meta"].get("for-post", "")
+    if fp and os.path.isfile(os.path.join(SOCIAL_DIR, "queue", fp + ".md")):
+        try:
+            pair_image(fp, dest); paired = fp
+        except Exception:
+            pass
+    return {"ok": True, "image": dest, "paired": paired}
+
+
+def imgreq_mut(body):
+    op = body.get("op")
+    if op == "add":
+        base = re.sub(r"[^a-z0-9-]+", "-", (body.get("id") or body.get("brief", "")[:40]).lower()).strip("-")[:48]
+        rid = base or f"req-{int(time.time())}"
+        if imgreq_get(rid):
+            rid = f"{rid}-{int(time.time())}"
+        imgreq_write(rid, {"category": (body.get("category") or "stockpile").strip(), "status": "wanted",
+                           "priority": body.get("priority", "normal"), "for-post": (body.get("for_post") or "").strip(),
+                           "requested": str(datetime.date.today())}, body.get("brief", ""))
+        return {"ok": True, "id": rid}
+    r = imgreq_get(body.get("id", ""))
+    if not r:
+        raise ValueError("no such request")
+    if op == "reopen":
+        imgreq_write(r["id"], {**r["meta"], "status": "wanted", "image": ""}, r["body"])
+    elif op == "delete":
+        os.remove(r["path"])
+    elif op == "done":  # point at an existing gen without a fresh upload
+        img = body.get("image", "")
+        if not (img and under_safe_root(img) and os.path.isfile(img)):
+            raise ValueError("image not allowed / missing")
+        imgreq_write(r["id"], {**r["meta"], "status": "done", "image": img}, r["body"])
+    else:
+        raise ValueError(f"unknown op '{op}'")
+    return {"ok": True}
+
+
 # ── HTTP ──────────────────────────────────────────────────────────────────────
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):  # quiet
@@ -575,7 +688,7 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/api/state":
             today = social.pdate(q["date"][0]) if "date" in q else datetime.date.today()
             state = {"today": str(today), "social": social_state(today), "engage": engage_state(),
-                     "projects": projects_state(),
+                     "projects": projects_state(), "imgreq": imgreq_state(),
                      "actions": {k: {"label": v["label"], "group": v["group"], "params": v["params"],
                                      "note": v.get("note", ""), "confirm": v.get("confirm", False)}
                                  for k, v in ACTIONS.items()},
@@ -617,6 +730,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"job": jid})
             except Exception as e:
                 return self._send(400, {"error": str(e)})
+        if u.path == "/api/imgreq-upload":  # raw image body (drag-drop), not JSON-wrapped
+            q = urllib.parse.parse_qs(u.query)
+            try:
+                return self._send(200, imgreq_fulfil(q.get("id", [""])[0],
+                                                     q.get("name", ["image.png"])[0], self.rfile.read(n)))
+            except Exception as e:
+                return self._send(400, {"error": str(e)})
         try:
             body = json.loads(self.rfile.read(n) or b"{}")
         except Exception:
@@ -637,6 +757,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True})
             if u.path == "/api/engage":
                 return self._send(200, {"job": engage_mut(body)})
+            if u.path == "/api/imgreq":
+                return self._send(200, imgreq_mut(body))
         except Exception as e:
             return self._send(400, {"error": str(e)})
         return self._send(404, {"error": "not found"})
@@ -737,6 +859,12 @@ border:1px solid var(--line);display:flex;align-items:center;justify-content:cen
 font-size:12.5px;cursor:pointer;white-space:pre-wrap}
 .sug:hover{border-color:var(--acc)}
 .tag.used{background:#233a2a;color:var(--good)}.tag.free{background:#3a3320;color:var(--warn)}
+/* image queue: per-card drop targets */
+.post .drop{width:92px;height:92px;flex:none;border-radius:8px;border:1.5px dashed #3a3a48;
+background:#0e0e14;display:flex;align-items:center;justify-content:center;text-align:center;
+color:#6a6a80;font-size:11px;line-height:1.25;cursor:pointer}
+.post .drop:hover{border-color:#4a4a5e}
+.post .drop.over{border-color:var(--acc);color:var(--acc);background:#1a1422}
 /* launcher */
 .acts{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}
 .act{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px}
@@ -779,6 +907,7 @@ display:inline-block;animation:sp .7s linear infinite}@keyframes sp{to{transform
 <div class="tabs" id="tabs"></div>
 <main>
   <div class="wrap" id="w-social"></div>
+  <div class="wrap" id="w-imgreq"></div>
   <div class="wrap" id="w-engage"></div>
   <div class="wrap" id="w-launcher"></div>
   <div class="wrap" id="w-projects"></div>
@@ -798,14 +927,14 @@ const thumb=(p,w=200)=>'/api/thumb?w='+w+'&path='+encodeURIComponent(p);
 
 async function load(){
   const r=await fetch('/api/state'); S=await r.json();
-  renderEnv(); renderTabs(); renderSocial(); renderEngage(); renderLauncher(); renderProjects(); renderJobs();
+  renderEnv(); renderTabs(); renderSocial(); renderImages(); renderEngage(); renderLauncher(); renderProjects(); renderJobs();
 }
 function renderEnv(){
   const e=S.env, d=(on,l)=>`<span><span class="dot" style="background:${on?'var(--good)':'var(--bad)'}"></span>${l}</span>`;
   $('env').innerHTML = `today ${S.today} · `+d(e.feed,'feed')+d(e.lame,'lame')+d(e.editor,'editor')+d(e.thumbtool,'thumbtool');
 }
 function renderTabs(){
-  const tabs=[['social','Social'],['engage','Engage'],['launcher','Launcher'],['projects','Projects'],['channel','Channel']];
+  const tabs=[['social','Social'],['imgreq','Image Queue'],['engage','Engage'],['launcher','Launcher'],['projects','Projects'],['channel','Channel']];
   $('tabs').innerHTML=tabs.map(([k,l])=>`<div class="tab ${k==TAB?'on':''}" onclick="setTab('${k}')">${l}</div>`).join('');
   for(const [k] of tabs) $('w-'+k).classList.toggle('on',k==TAB);
 }
@@ -926,6 +1055,82 @@ async function doPair(id){
   closeModal(); flash('paired '+id); load();
 }
 function galClick(name,path){ lightbox(path); }
+
+/* ---------- IMAGE QUEUE (art briefs → drop the finished gen to fulfil) ---------- */
+function renderImages(){
+  const q=S.imgreq||{};
+  if(q.error){$('w-imgreq').innerHTML='<div class="card">image-queue error: '+esc(q.error)+'</div>';return}
+  const wanted=q.wanted||[], done=q.done||[], orphans=q.orphan_posts||[];
+  let h=`<div class="card"><div class="row" style="align-items:center">
+    <span class="chip">wanted ${wanted.length}</span><span class="chip">done ${done.length}</span>
+    <input type="text" id="ir-brief" placeholder="new image brief — the GPT prompt / art direction" style="flex:1;min-width:280px">
+    <input type="text" id="ir-cat" placeholder="category" size="9">
+    <input type="text" id="ir-for" placeholder="for-post id (optional)" size="15">
+    <button class="sm pri" onclick="imgreqAdd()">+ queue</button></div>
+    <div class="muted" style="font-size:12px;margin-top:6px">Queue what you want GPT to draw, then gen it and
+    <b>drag the finished image onto its card</b> (or click the tile to browse). It saves into the gen library,
+    flips to ✓ done, and auto-pairs to its post when one is linked.</div></div>`;
+  if(orphans.length){
+    h+='<h2>posts waiting on art — no request yet</h2><div class="row">'
+      +orphans.map(o=>`<button class="sm" onclick="imgreqFromPost('${esc(o.id)}')">+ ${esc(o.id)}</button>`).join('')+'</div>';
+  }
+  h+='<h2>to generate ('+wanted.length+')</h2>';
+  h+=wanted.length?('<div class="posts">'+wanted.map(reqCard).join('')+'</div>')
+    :'<div class="card muted">nothing queued — add a brief above</div>';
+  if(done.length){
+    h+='<h2>done ('+done.length+')</h2><div class="gal">'+done.map(doneItem).join('')+'</div>';
+  }
+  $('w-imgreq').innerHTML=h;
+}
+function reqCard(r){
+  return `<div class="post card">
+    <div class="drop" ondragover="event.preventDefault();this.classList.add('over')"
+      ondragleave="this.classList.remove('over')" ondrop="imgreqDrop(event,'${esc(r.id)}')"
+      onclick="$('irf-${esc(r.id)}').click()" title="drop the finished image, or click to browse">⬇ drop<br>image</div>
+    <input type="file" id="irf-${esc(r.id)}" accept="image/*" class="hidden"
+      onchange="imgreqUpload('${esc(r.id)}',this.files[0]);this.value=''">
+    <div class="body">
+      <div class="id">${r.priority=='high'?'<span class=star>★</span> ':''}${esc(r.id)}</div>
+      <div class="row" style="gap:5px;margin:3px 0"><span class="chip">${esc(r.category||'—')}</span>
+        ${r.for_post?`<span class="badge" title="auto-pairs to this post when fulfilled">↪ ${esc(r.for_post)}</span>`:''}</div>
+      <div class="txt full" id="irb-${esc(r.id)}">${esc(r.brief)}</div>
+      <div class="acts">
+        <button class="sm" onclick="copyEl('irb-${esc(r.id)}')">copy prompt</button>
+        <button class="sm" onclick="imgreqOp({op:'delete',id:'${esc(r.id)}'})">delete</button>
+      </div>
+    </div></div>`;
+}
+function doneItem(r){
+  return `<div class="gi">
+    <span class="tag ${r.for_post?'used':'free'}">${r.for_post?esc(r.for_post):'✓ done'}</span>
+    ${r.image_ok?`<img loading="lazy" src="${thumb(r.image_abs,240)}" onclick="lightbox('${encodeURIComponent(r.image_abs)}')">`
+      :'<div class="miss" style="height:112px;display:flex;align-items:center;justify-content:center">missing</div>'}
+    <div class="cap">${esc(r.id)}</div>
+    <div style="padding:0 6px 6px"><button class="sm" onclick="imgreqOp({op:'reopen',id:'${esc(r.id)}'})">reopen</button></div></div>`;
+}
+async function imgreqUpload(id,f){
+  if(!f)return;
+  const r=await fetch('/api/imgreq-upload?id='+encodeURIComponent(id)+'&name='+encodeURIComponent(f.name),{method:'POST',body:f});
+  const j=await r.json(); if(j.error){flash('✗ '+j.error);return}
+  flash('✓ '+id+(j.paired?(' → paired to '+j.paired):' → saved to gens')); load();
+}
+function imgreqDrop(ev,id){ev.preventDefault();ev.currentTarget.classList.remove('over');
+  const f=ev.dataTransfer.files[0]; if(f)imgreqUpload(id,f);}
+async function imgreqOp(body){
+  if(body.op=='delete'&&!confirm('delete request '+body.id+'?'))return;
+  const r=await fetch('/api/imgreq',{method:'POST',body:JSON.stringify(body)});
+  const j=await r.json(); if(j.error){flash('✗ '+j.error);return} load();
+}
+function imgreqAdd(){
+  const brief=$('ir-brief').value.trim(); if(!brief){flash('write a brief first');return}
+  imgreqOp({op:'add',brief,category:$('ir-cat').value.trim(),for_post:$('ir-for').value.trim()});
+}
+function imgreqFromPost(id){
+  const o=(S.imgreq.orphan_posts||[]).find(x=>x.id==id);
+  $('ir-brief').value=(o&&o.prompt)||('art for '+id); $('ir-for').value=id; $('ir-cat').value='post';
+  $('ir-brief').scrollIntoView({behavior:'smooth',block:'center'}); $('ir-brief').focus();
+}
+function copyEl(id){const el=$(id); if(!el)return; navigator.clipboard.writeText(el.innerText); flash('copied prompt')}
 
 /* ---------- ENGAGE (tools/engage.py — comment-section presence) ---------- */
 function renderEngage(){
