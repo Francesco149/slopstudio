@@ -378,7 +378,9 @@ def cmd_skeleton(a):
           ("assets",OD()),("tracks",[]),("rows",OD()),("clips",OD())])
     if portrait:
         p["meta"]["format"]="portrait"        # editor defaults: built-in SFX on, portrait canvas
+    if portrait or rate != 1.0:
         p["meta"]["speech_rate"]=rate         # explicit, so retime/lint/editor agree verbatim
+                                              # (landscape honors skeleton speech_rate too)
     voice=sk.get("voice","gemma-san-deep-clone"); rig=sk.get("rig","gemma-big")
     # rows in draw order (top-first): captions/callouts > HOST > code/diagram > content > blur > bg > filler
     # (the host draws OVER side-showcase images AND code/diagram cards — she overlaps content,
@@ -1552,7 +1554,7 @@ def main():
         akey=a.asset
         if a.asset_uri:
             akey = a.asset or (a.id or cid).replace("c_","")+"_asset"
-            atype = "video" if a.type=="video" else "image"
+            atype = "video" if a.type=="video" else ("audio" if a.type in ("tts","music") else "image")
             p.setdefault("assets",OD())[akey]=OD([("provider","external"),("type",atype),
                 ("status","ready"),("uri",a.asset_uri),("meta",OD())])
         if akey: c["asset"]=akey
