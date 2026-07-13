@@ -3333,6 +3333,10 @@ static void split_clip(Project& p, const std::string& clipId, double t) {
 static std::string g_ctrlDupDragId;      // clip a Ctrl+drag copy was already spawned for (fires once/drag)
 static std::string g_dragDupReq;         // DrawTimeline → DrawUI: request a duplicate (deferred; p rebuild)
 static double g_dupAtStart = -1e18;      // where to place the pending copy (-1e18 = default: right after)
+// Placement tool: click empty timeline space to add a clip of the armed type (drag = draw its length).
+static std::string g_placeType;          // armed clip type ("" = off); set by the palette, cleared by Esc
+static std::string g_placeReq;           // DrawTimeline → DrawUI: a placement to commit (deferred)
+static double g_placeReqT = 0, g_placeReqDur = -1;
 
 static std::string duplicate_clip(Project& p, const std::string& clipId, double atStart = -1e18) {
     auto it = p.clips.find(clipId);
@@ -7082,6 +7086,31 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
         g_undoDirty = true;  // OS drop is outside ImGui → flag it for the undo checkpoint
     }
 
+    // ── placement tool: with a type armed (palette), click empty lane space to add that clip at the
+    //    click time; DRAG to draw its length. Submitted after the clips so a clip still wins its own
+    //    press (first-submitted wins overlaps); catches only the empty gaps. Commit is deferred. ──
+    if (!g_placeType.empty()) {
+        ImGuiIO& pio = ImGui::GetIO();
+        ImGui::SetCursorScreenPos(ImVec2(trackX, laneTop));
+        ImGui::InvisibleButton("##place", ImVec2(std::max(1.f, origin.x + canvasW - trackX), std::max(1.f, yBot - laneTop)));
+        auto tAt = [&](float x) { double t = st.tlScroll + (x - trackX) / pps; return t < 0 ? 0.0 : t; };
+        static double placeT0 = -1e30;
+        if (ImGui::IsItemActivated()) placeT0 = tAt(pio.MousePos.x);
+        if (ImGui::IsItemActive() && placeT0 > -1e29) {   // drag band from press to cursor
+            double a = std::min(placeT0, tAt(pio.MousePos.x)), b = std::max(placeT0, tAt(pio.MousePos.x));
+            dl->AddRectFilled(ImVec2(T2X(a), laneTop), ImVec2(T2X(std::max(b, a + 0.02)), yBot), IM_COL32(0x7f, 0xd8, 0xa8, 40));
+            dl->AddLine(ImVec2(T2X(a), laneTop), ImVec2(T2X(a), yBot), IM_COL32(0x7f, 0xd8, 0xa8, 220), 1.5f);
+        } else if (ImGui::IsItemHovered()) {              // idle guide at the placement time
+            float px = T2X(tAt(pio.MousePos.x));
+            dl->AddLine(ImVec2(px, laneTop), ImVec2(px, yBot), IM_COL32(0x7f, 0xd8, 0xa8, 200), 1.5f);
+        }
+        if (ImGui::IsItemDeactivated() && placeT0 > -1e29) {   // release → commit (deferred: p may add a track)
+            double a = std::min(placeT0, tAt(pio.MousePos.x)), b = std::max(placeT0, tAt(pio.MousePos.x));
+            g_placeReq = g_placeType; g_placeReqT = a; g_placeReqDur = (b - a > 0.15) ? (b - a) : -1.0;
+            placeT0 = -1e30;
+        }
+    }
+
     ImGui::SetCursorScreenPos(origin);
     ImGui::Dummy(ImVec2(canvasW, vextH));   // reserve the FULL lane height so the child scrolls to every lane
 
@@ -7913,6 +7942,62 @@ static std::string add_native_clip_at(Project& p, const std::string& type, doubl
     if (p.doc.contains("rows") && p.doc["rows"].contains(row) && p.doc["rows"][row].contains("clips"))
         p.doc["rows"][row]["clips"].push_back(id);
     return id;
+}
+
+// Quick-add a common clip with house defaults (the owner's "shortcuts to add common clips"): host =
+// the big GPT sprite set, voice = the golden clone, sound = the Heh~, music = the theme, backdrop =
+// the room. Anything else falls through to the native compositing types. Returns the new clip id.
+static std::string add_quick_clip(Project& p, const std::string& kind, double t, double dur = -1.0) {
+    auto find_or_make = [&](const char* type, const char* name) -> std::string {
+        for (auto& kv : p.rows) if (kv.second.type == type) return kv.first;
+        return add_track(p, type, name);
+    };
+    auto set_dur = [&](const std::string& id) {   // override the default dur when the caller drag-drew one
+        if (dur > 0.02 && !id.empty() && p.clips.count(id)) {
+            p.clips[id].dur = dur;
+            if (p.doc.contains("clips") && p.doc["clips"].contains(id)) p.doc["clips"][id]["dur"] = dur;
+        }
+        return id;
+    };
+    if (kind == "host") return set_dur(add_avatar_clip_at(p, "gemma-gpt-static", t, dur > 0.02 ? dur : 3.0));
+    if (kind == "music" || kind == "sound") {
+        std::string row = find_or_make("music", "Music");
+        if (row.empty()) return "";
+        return set_dur(add_audio_clip_at(p, row, t, kind == "music" ? "library/music/deadly-roulette.mp3"
+                                                                    : "presets/voice-snips/gemma-heh.wav"));
+    }
+    if (kind == "backdrop") {
+        std::string row = find_or_make("image", "Backdrop");
+        if (row.empty()) return "";
+        std::string id = add_image_clip_at(p, row, t, "presets/backgrounds/room-day.png");
+        if (!id.empty() && p.clips.count(id)) {   // full-frame room, not an inset
+            p.clips[id].params["layout"] = "cover"; p.clips[id].label = "backdrop";
+            if (p.doc.contains("clips") && p.doc["clips"].contains(id)) p.doc["clips"][id]["params"]["layout"] = "cover";
+        }
+        return set_dur(id);
+    }
+    if (kind == "voice") {   // an empty line on a golden-clone tts row — type it + Generate VO
+        std::string row;
+        for (auto& kv : p.rows) if (kv.second.type == "tts") { row = kv.first; break; }
+        if (row.empty()) {
+            row = add_track(p, "tts", "VO");
+            if (!row.empty()) { p.rows[row].params["voice_preset"] = "gemma-san-deep-clone";
+                if (p.doc.contains("rows") && p.doc["rows"].contains(row)) p.doc["rows"][row]["params"] = p.rows[row].params; }
+        }
+        if (row.empty()) return "";
+        std::string id; int m = 1; while (p.clips.count(id = "c_vo" + std::to_string(m))) m++;
+        json params = json{{"text", "New line — type here, then Generate VO"}};
+        double d = dur > 0.02 ? dur : 3.0;
+        Clip c; c.id = id; c.row = row; c.type = "tts"; c.start = t; c.dur = d; c.label = "vo"; c.params = params;
+        p.clips[id] = c; p.rows[row].clips.push_back(id);
+        if (p.doc.contains("clips"))
+            p.doc["clips"][id] = json{{"row", row}, {"start", t}, {"dur", d}, {"params", params},
+                {"transform", json{{"pos", {0, 0}}, {"scale", {1.0, 1.0}}, {"rot", 0}, {"opacity", 1}, {"anchor", {0.5, 0.5}}}}};
+        if (p.doc.contains("rows") && p.doc["rows"].contains(row) && p.doc["rows"][row].contains("clips"))
+            p.doc["rows"][row]["clips"].push_back(id);
+        return id;
+    }
+    return set_dur(add_native_clip_at(p, kind, t));
 }
 
 // ── Library panel: browse/search/preview the global media library; double-click drops at the
@@ -9101,6 +9186,22 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
                 paste_transform(p.clips[st.selected]); g_undoDirty = true;
             }
             ImGui::Separator();
+            if (ImGui::BeginMenu("Quick add (at playhead)")) {   // common clips, house defaults (also: click empty timeline space)
+                struct QT { const char* label; const char* kind; };
+                static const QT QTS[] = {
+                    {"Host — Gemma sprite",  "host"},
+                    {"Voice — VO line",      "voice"},
+                    {"Sound — Heh~",         "sound"},
+                    {"Music — theme",        "music"},
+                    {"Backdrop — the room",  "backdrop"},
+                };
+                for (auto& qt : QTS)
+                    if (ImGui::MenuItem(qt.label)) {
+                        std::string nid = add_quick_clip(p, qt.kind, st.playhead);
+                        if (!nid.empty()) { st.selected = nid; g_bufFor.clear(); g_undoDirty = true; }
+                    }
+                ImGui::EndMenu();
+            }
             if (ImGui::BeginMenu("Add special clip (at playhead)")) {   // native compositing clips from scratch — no gen, no JSON
                 struct NT { const char* label; const char* type; };
                 static const NT NTS[] = {
@@ -9980,10 +10081,25 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
         if ((ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace)) &&
             !ImGui::GetIO().WantTextInput && !st.selected.empty())
             delReq = st.selected;     // Del / Backspace = delete the selected clip (never while typing in a field)
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape) && !g_placeType.empty()) g_placeType.clear();   // disarm the placement tool
         ImGui::SameLine();
         ImGui::Text("%6.2f / %.2f s", st.playhead, dur);
         ImGui::SameLine();
         ImGui::TextDisabled("(space = play/pause)");
+        // ── placement palette: arm a clip type, then click empty timeline space to add it (drag = length) ──
+        ImGui::SameLine(); ImGui::TextDisabled("  +");
+        struct PT { const char* label; const char* kind; };
+        static const PT PTS[] = { {"Host","host"}, {"Voice","voice"}, {"Sound","sound"}, {"Music","music"},
+                                  {"BG","backdrop"}, {"Caption","caption"}, {"Code","code"}, {"Shape","shape"} };
+        for (auto& pt : PTS) {
+            ImGui::SameLine();
+            bool on = (g_placeType == pt.kind);
+            if (on) { ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(0x7f, 0xd8, 0xa8, 255));
+                      ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(0x14, 0x12, 0x20, 255)); }
+            if (ImGui::SmallButton(pt.label)) g_placeType = on ? std::string() : pt.kind;
+            if (on) ImGui::PopStyleColor(2);
+        }
+        if (!g_placeType.empty()) { ImGui::SameLine(); ImGui::TextColored(ImVec4(0.5f, 0.85f, 0.66f, 1), "→ click/drag empty timeline (Esc cancels)"); }
     }
 
     ImGui::BeginChild("timeline", ImVec2(0, 0), true, ImGuiWindowFlags_NoScrollWithMouse);  // wheel = zoom only; lanes scroll via scrollbar / Ctrl+wheel
@@ -9998,6 +10114,11 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
     // ends outside the ImGui active-item model, so flag it → Ctrl+Z right after still has the step.
     // A Ctrl+drag on the timeline requests a duplicate via a global (DrawTimeline can't see dupReq).
     if (dupReq.empty() && !g_dragDupReq.empty()) { dupReq = g_dragDupReq; g_dragDupReq.clear(); }
+    if (!g_placeReq.empty()) {   // placement tool released on empty timeline → add the clip (may create a track)
+        std::string nid = add_quick_clip(p, g_placeReq, g_placeReqT, g_placeReqDur);
+        if (!nid.empty()) { st.selected = nid; g_bufFor.clear(); g_undoDirty = true; }
+        g_placeReq.clear();
+    }
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) g_ctrlDupDragId.clear();   // re-arm for the next Ctrl+drag
     if (doUndo)      do_undo(p);
     else if (doRedo) do_redo(p);
