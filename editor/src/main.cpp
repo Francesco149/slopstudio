@@ -6560,6 +6560,8 @@ static double snap_edge_time(Project& p, const std::string& movingId, double t, 
 static std::string choose_place_row(Project& p, const std::string& kind, const std::string& clickedRow, double t, double dur);
 static std::string choose_row_of_type(Project& p, const std::string& want, const std::string& clickedRow, double t, double dur);
 static double place_default_dur(const std::string& kind);   // placement-tool helpers (defined with add_quick_clip)
+static double place_fill_to_next(Project& p, const std::string& row, double t, double def);  // gap-fill a plain click
+static std::string generic_ref_clip(Project& p, const std::string& row, double t);           // generic-add reference clip
 
 static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, GenLite>& gen) {
     const float GUT = 156.0f, RULER = 22.0f, ROWH = 30.0f;
@@ -7120,12 +7122,21 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
             std::string clk = active ? placeRow : rowAt(pio.MousePos.y);
             std::string want = generic ? (p.rows.count(clk) ? p.rows[clk].type : std::string()) : std::string();
             if (!generic || !want.empty()) {   // generic needs a real lane under the cursor
-                double durP = (bb - a > 0.15) ? (bb - a) : place_default_dur(generic ? want : g_placeType);
-                std::string tgt = generic ? choose_row_of_type(p, want, clk, a, durP) : choose_place_row(p, g_placeType, clk, a, durP);
+                bool drag = (bb - a > 0.15);
+                double probe = drag ? (bb - a) : 0.02;   // click/hover probes ~zero-width (mirrors the commit)
+                std::string tgt = generic ? choose_row_of_type(p, want, clk, a, probe) : choose_place_row(p, g_placeType, clk, a, probe);
                 bool newLane = tgt.empty();
+                double durP;                             // gap-fill on a plain click; exact span on a drag
+                if (drag) durP = bb - a;
+                else {
+                    double def;                          // fallback when nothing follows: kind default (or the ref clip's length)
+                    if (generic) { std::string r = generic_ref_clip(p, clk, a); def = r.empty() ? place_default_dur(want) : p.clips[r].dur; }
+                    else def = place_default_dur(g_placeType);
+                    durP = newLane ? def : place_fill_to_next(p, tgt, a, def);   // new lane is empty → its default anyway
+                }
                 float py = rowY(tgt);
                 if (py < 0) { py = rowY(clk); if (py < 0 && !laneY.empty()) py = laneY.back().second; }   // new lane rides the cursor lane
-                float x0 = T2X(a), x1 = T2X(std::max(bb, a + 0.02));
+                float x0 = T2X(a), x1 = T2X(std::max(a + durP, a + 0.02));
                 ImU32 fill = newLane ? IM_COL32(0x8a, 0x84, 0xb0, 70) : IM_COL32(0x7f, 0xd8, 0xa8, 70);
                 ImU32 line = newLane ? IM_COL32(0x8a, 0x84, 0xb0, 235) : IM_COL32(0x7f, 0xd8, 0xa8, 235);
                 if (py >= 0) {
@@ -8005,6 +8016,37 @@ static bool row_span_free(Project& p, const std::string& rowId, double t, double
     }
     return true;
 }
+// Gap-fill length for a plain CLICK (no drag) at t on `row`: the distance to the next clip's START on
+// that row, else `def` when the lane is clear past t (or unknown). Lets a click fill exactly the gap it
+// lands in instead of dropping a fixed-length clip; the preview + the commit share this so they agree.
+static double place_fill_to_next(Project& p, const std::string& row, double t, double def) {
+    double next = 1e30;
+    auto rit = p.rows.find(row);
+    if (rit != p.rows.end())
+        for (auto& cid : rit->second.clips) {
+            auto c = p.clips.find(cid); if (c == p.clips.end()) continue;
+            double s = c->second.start;
+            if (s > t + 1e-3 && s < next) next = s;
+        }
+    if (next > 1e29) return def;               // nothing after t → the kind's default length
+    return next - t;                           // fill exactly up to the next clip (the row was chosen free at t)
+}
+// The nearest reference clip on a lane for generic-add: occupying t > nearest BEFORE > nearest AFTER; "" if
+// the lane is empty. A new generic clip inherits this clip's transform/params + falls back to its duration.
+static std::string generic_ref_clip(Project& p, const std::string& row, double t) {
+    auto rit = p.rows.find(row);
+    if (rit == p.rows.end()) return "";
+    std::string ref; double refScore = 1e30;
+    for (auto& cid : rit->second.clips) {
+        auto c = p.clips.find(cid); if (c == p.clips.end()) continue;
+        double s = c->second.start, e = s + c->second.dur, score;
+        if (s <= t + 1e-3 && e >= t - 1e-3) score = -1.0;      // occupies the click → best reference
+        else if (e <= t) score = (t - e);                       // before
+        else score = (s - t) + 1e6;                             // after (always worse than any before)
+        if (score < refScore) { refScore = score; ref = cid; }
+    }
+    return ref;
+}
 // Pick the placement row: the CLICKED lane (if it's the right type and the span fits) > any existing
 // row of the type where it fits (track/lane order) > "" (caller makes a new lane). This is what lets a
 // click land in the clicked lane's free space, spill to another lane, or make a new track on demand.
@@ -8092,10 +8134,12 @@ static std::string place_clip_on_row(Project& p, const std::string& kind, const 
 // cursor ("" for the menu at-playhead path). Returns the new clip id.
 static std::string add_quick_clip(Project& p, const std::string& kind, double t, double dur = -1.0, const std::string& clickedRow = "") {
     if (t < 0) t = 0;
-    double dCheck = dur > 0.02 ? dur : place_default_dur(kind);
+    bool click = !(dur > 0.02);                            // no drag span → gap-fill on click
+    double dCheck = click ? 0.02 : dur;                    // a click probes ~zero-width so it lands in the gap it hit
     std::string row = choose_place_row(p, kind, clickedRow, t, dCheck);
     if (row.empty()) row = create_place_row(p, kind);
-    return place_clip_on_row(p, kind, row, t, dur);
+    double d = click ? place_fill_to_next(p, row, t, place_default_dur(kind)) : dur;   // fill up to the next clip
+    return place_clip_on_row(p, kind, row, t, d);
 }
 
 // Generic add (hotkey A): a clip in the CLICKED lane's type, inheriting the nearest reference clip's
@@ -8108,16 +8152,10 @@ static std::string add_generic_clip(Project& p, const std::string& clickedRow, d
     if (crit == p.rows.end()) return "";
     if (t < 0) t = 0;
     std::string rtype = crit->second.type;
-    std::string ref; double refScore = 1e30;   // occupying t > nearest BEFORE > nearest AFTER (on the clicked lane)
-    for (auto& cid : crit->second.clips) {
-        auto c = p.clips.find(cid); if (c == p.clips.end()) continue;
-        double s = c->second.start, e = s + c->second.dur, score;
-        if (s <= t + 1e-3 && e >= t - 1e-3) score = -1.0;      // occupies the click → best reference
-        else if (e <= t) score = (t - e);                       // before
-        else score = (s - t) + 1e6;                             // after (always worse than any before)
-        if (score < refScore) { refScore = score; ref = cid; }
-    }
-    double dCheck = dur > 0.02 ? dur : (ref.empty() ? place_default_dur(rtype) : p.clips[ref].dur);
+    std::string ref = generic_ref_clip(p, clickedRow, t);   // occupying t > nearest BEFORE > nearest AFTER (clicked lane)
+    bool click = !(dur > 0.02);                             // no drag span → gap-fill on click
+    double refDur = ref.empty() ? place_default_dur(rtype) : p.clips[ref].dur;
+    double dCheck = click ? 0.02 : dur;                    // a click probes ~zero-width so it lands in the gap it hit
     std::string row = choose_row_of_type(p, rtype, clickedRow, t, dCheck);
     if (row.empty()) {   // no room → a new lane of the same type, matching the clicked lane's row params
         row = add_track(p, rtype, crit->second.name.empty() ? rtype : crit->second.name);
@@ -8128,7 +8166,7 @@ static std::string add_generic_clip(Project& p, const std::string& clickedRow, d
     }
     if (row.empty()) return "";
     std::string id; int m = 1; while (p.clips.count(id = "c_" + rtype + std::to_string(m))) m++;
-    double d = dur > 0.02 ? dur : (ref.empty() ? place_default_dur(rtype) : p.clips[ref].dur);
+    double d = click ? place_fill_to_next(p, row, t, refDur) : dur;   // fill up to the next clip (else the ref's length)
     Clip c; c.id = id; c.row = row; c.type = rtype; c.start = t; c.dur = d; c.label = rtype;
     if (!ref.empty()) {   // inherit the reference's transform + non-content params
         Clip& s = p.clips[ref];
