@@ -10355,6 +10355,42 @@ static LRESULT WINAPI WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     return DefWindowProc(hwnd, msg, wp, lp);
 }
 
+// Editor chrome theme — the cosmic2d palette (deep-purple base, mint accent, periwinkle focus) +
+// tightened rounded metrics, applied over StyleColorsDark(). CHROME ONLY: the video-content fonts and
+// compositor colors are untouched (they render into the export, not the editor UI).
+static void apply_editor_theme() {
+    ImGui::StyleColorsDark();
+    ImGuiStyle& s = ImGui::GetStyle();
+    auto C = [](unsigned rgba){ return ImVec4(((rgba>>24)&255)/255.f, ((rgba>>16)&255)/255.f, ((rgba>>8)&255)/255.f, (rgba&255)/255.f); };
+    const ImVec4 bg=C(0x141220ffu), panel=C(0x1e1b2effu), panel2=C(0x262238ffu), panel3=C(0x322d48ffu),
+                 edge=C(0x3a3560ffu), edgeHot=C(0x6a60a0ffu), active=C(0x4a4370ffu), accent=C(0x7fd8a8ffu),
+                 accentHot=C(0x9fe8c0ffu), focus=C(0x8878d0ffu), text=C(0xe8e4ffffu), dim=C(0x8a84b0ffu);
+    ImVec4* c = s.Colors;
+    c[ImGuiCol_Text]=text;                    c[ImGuiCol_TextDisabled]=dim;
+    c[ImGuiCol_WindowBg]=panel;               c[ImGuiCol_ChildBg]=C(0x191527ffu);       c[ImGuiCol_PopupBg]=C(0x1e1b2ef7u);
+    c[ImGuiCol_Border]=edge;                  c[ImGuiCol_BorderShadow]=ImVec4(0,0,0,0);
+    c[ImGuiCol_FrameBg]=panel2;               c[ImGuiCol_FrameBgHovered]=panel3;        c[ImGuiCol_FrameBgActive]=active;
+    c[ImGuiCol_TitleBg]=bg;                   c[ImGuiCol_TitleBgActive]=panel2;         c[ImGuiCol_TitleBgCollapsed]=bg;
+    c[ImGuiCol_MenuBarBg]=C(0x181528ffu);
+    c[ImGuiCol_ScrollbarBg]=ImVec4(0,0,0,0);  c[ImGuiCol_ScrollbarGrab]=panel3;         c[ImGuiCol_ScrollbarGrabHovered]=edgeHot; c[ImGuiCol_ScrollbarGrabActive]=focus;
+    c[ImGuiCol_CheckMark]=accent;             c[ImGuiCol_SliderGrab]=accent;            c[ImGuiCol_SliderGrabActive]=accentHot;
+    c[ImGuiCol_Button]=panel2;                c[ImGuiCol_ButtonHovered]=panel3;         c[ImGuiCol_ButtonActive]=active;
+    c[ImGuiCol_Header]=panel3;                c[ImGuiCol_HeaderHovered]=edgeHot;        c[ImGuiCol_HeaderActive]=focus;
+    c[ImGuiCol_Separator]=edge;               c[ImGuiCol_SeparatorHovered]=edgeHot;     c[ImGuiCol_SeparatorActive]=focus;
+    c[ImGuiCol_ResizeGrip]=panel3;            c[ImGuiCol_ResizeGripHovered]=edgeHot;    c[ImGuiCol_ResizeGripActive]=focus;
+    c[ImGuiCol_Tab]=panel;                    c[ImGuiCol_TabHovered]=panel3;            c[ImGuiCol_TabSelected]=panel3;
+    c[ImGuiCol_TabDimmed]=bg;                 c[ImGuiCol_TabDimmedSelected]=panel2;
+    c[ImGuiCol_TabSelectedOverline]=accent;   c[ImGuiCol_TabDimmedSelectedOverline]=edge;
+    c[ImGuiCol_PlotLines]=accent;             c[ImGuiCol_PlotLinesHovered]=accentHot;   c[ImGuiCol_PlotHistogram]=accent;
+    c[ImGuiCol_TextSelectedBg]=C(0x7fd8a855u); c[ImGuiCol_DragDropTarget]=accent;       c[ImGuiCol_NavCursor]=focus;
+    // metrics — rounded, breathable, thin borders (the cosmic2d feel)
+    s.WindowRounding=8; s.ChildRounding=6; s.FrameRounding=6; s.PopupRounding=6; s.GrabRounding=5; s.TabRounding=6; s.ScrollbarRounding=8;
+    s.WindowBorderSize=1; s.ChildBorderSize=1; s.PopupBorderSize=1; s.FrameBorderSize=0; s.SeparatorTextBorderSize=2;
+    s.WindowPadding=ImVec2(10,10); s.FramePadding=ImVec2(8,4); s.CellPadding=ImVec2(6,4);
+    s.ItemSpacing=ImVec2(8,6); s.ItemInnerSpacing=ImVec2(6,5); s.IndentSpacing=18;
+    s.ScrollbarSize=13; s.GrabMinSize=11;
+}
+
 int main(int argc, char** argv) {
     std::string projectPath = "examples/signature-opener.slop.json";
     std::string shotPath, shotFramePath, configPath, genClip, exportPlan, splitClip, delClip, dupClip, selectClip, libSelect;
@@ -10694,7 +10730,7 @@ int main(int argc, char** argv) {
     ImGui::CreateContext();
     ImGuiIO& fio = ImGui::GetIO();
     fio.IniFilename = nullptr;
-    ImGui::StyleColorsDark();
+    apply_editor_theme();
     // Load a CJK-capable system font so Japanese (ふふ~, mini-lessons) + non-ASCII render
     // instead of '???'. The first available Windows JP font wins; ranges cover ASCII + kana +
     // common kanji. Falls back to the built-in ASCII font if none is found.
@@ -10713,10 +10749,21 @@ int main(int argc, char** argv) {
             gb.AddText(reinterpret_cast<const char*>(u8"…“”‘’—–•·★☆♥♡♪→←⇒×÷「」『』〜～！？"));
             gb.BuildRanges(&jpRanges);
         }
-        if (chosen) {
-            fio.Fonts->AddFontFromFileTTF(chosen, 17.0f, nullptr, jpRanges.Data);                 // UI default (small)
-            g_captionFont = fio.Fonts->AddFontFromFileTTF(chosen, 48.0f, nullptr, jpRanges.Data); // large captions / JP lessons
+        // UI CHROME font: Inter (cosmic2d) with the CJK face merged so Japanese UI text (asset names,
+        // JP-lesson editing) still renders; falls back to the system CJK font if Inter isn't bundled.
+        // The VIDEO fonts (g_captionFont / g_monoFont) are UNCHANGED — they render into exports, not chrome.
+        std::string interPath = g_repoRoot + "/assets-src/fonts/InterVariable.ttf";
+        bool interOk = false; { FILE* itf = fopen(interPath.c_str(), "rb"); if (itf) { fclose(itf); interOk = true; } }
+        if (interOk) {
+            ImFontConfig ic; ic.RasterizerMultiply = 1.12f;                                        // a touch heavier = crisper UI
+            fio.Fonts->AddFontFromFileTTF(interPath.c_str(), 17.0f, &ic);                          // UI default (Latin)
+            if (chosen) { ImFontConfig mc; mc.MergeMode = true;
+                          fio.Fonts->AddFontFromFileTTF(chosen, 17.0f, &mc, jpRanges.Data); }      // + CJK / symbols
+        } else if (chosen) {
+            fio.Fonts->AddFontFromFileTTF(chosen, 17.0f, nullptr, jpRanges.Data);                  // fallback: system CJK
         }
+        if (chosen)
+            g_captionFont = fio.Fonts->AddFontFromFileTTF(chosen, 48.0f, nullptr, jpRanges.Data);  // large captions / JP lessons (video, unchanged)
         // Monospace font for `code` clips (decompilation/source cards). Loaded at a large size so
         // AddText can scale it to any on-screen font_px crisply. Consolas → Lucida Console fallback.
         const char* mono[] = {"C:\\Windows\\Fonts\\consola.ttf", "C:\\Windows\\Fonts\\lucon.ttf", "C:\\Windows\\Fonts\\cour.ttf"};
