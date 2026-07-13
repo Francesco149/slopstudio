@@ -13,25 +13,30 @@ come out well-formed by default** — and **no patchwork** (design coherently). 
 
 **DONE + committed:** Phase 0 (data safety) · Phase 1 (timeline quick wins) · video-duck ·
 Phase 2 (cosmic2d theme + all owner review fixes) · Phase 3 add-tools (quick-add palette +
-click-to-place + generic add mode, overlap-aware). Owner has been testing each chunk live and
-signed off through the add tools ("that works").
+click-to-place + generic add mode, overlap-aware) · **gap-fill on click** (`b18bd6d`, ⏳ awaiting
+owner live-test). Owner has been testing each chunk live and signed off through the add tools ("that works").
 
 **NEXT (Phase 3 remainder), in rough priority:**
-1. **Gap-fill on a plain click** — a click currently uses a default length; make it fill up to
-   the next clip in the target lane (drag already sizes exactly). (owner-requested refinement)
-2. **A/B video loop** points — tweak a video's loop in/out instead of hand-cutting.
-3. **Marquee multi-select** + act-on-selection.
-4. **Drag-drop of an external file copies it into the project** (task, see below) — the owner
+1. **A/B video loop** points — tweak a video's loop in/out instead of hand-cutting.
+2. **Marquee multi-select** + act-on-selection.
+3. **Drag-drop of an external file copies it into the project** (task, see below) — the owner
    dragged `F:\Pictures` images expecting a copy; they stayed as absolute paths.
+
+**Just landed (⏳ owner to test): gap-fill on a plain placement click** (`b18bd6d`). A click with a
+type armed now fills the gap up to the next clip on the target lane instead of dropping a fixed
+default length (a drag still sizes exactly). `place_fill_to_next(row,t,def)` = the shared preview+commit
+truth; the click path probes row-selection with ~zero width so it lands in the clicked gap rather than
+spilling. `generic_ref_clip` factored out of `add_generic_clip` for the no-next-clip fallback length.
 
 **Then:** Phase 4 (the layout engine — the big architectural piece; **checkpoint with owner first**),
 Phase 5 (tldraw-like visual composer), Phase 6 (kirby smoke test). Details below.
 
 ### Commits this session
-**slopstudio** (12): `867ae03` resolution+backups+media-scope+dashboard-cut · `d80ae01` Del/Ctrl-drag-dup/video-loop ·
+**slopstudio** (13): `867ae03` resolution+backups+media-scope+dashboard-cut · `d80ae01` Del/Ctrl-drag-dup/video-loop ·
 `e915be8`+`bfab33d` video-duck (+silent-RMS fix) · `c95f2a2` STATUS · `36ed3e5` cosmic2d theme+Inter ·
 `8d10d3c` track-buttons+resizable-panels+draggable-tracks · `e0d3ddb` mid-mouse-vpan+timeline/preview-divider ·
-`6c90431` quick-add+click-to-place · `352c129` overlap-aware placement · `1382ef0` generic-add(A) · `8220ac4` add-mode-polish.
+`6c90431` quick-add+click-to-place · `352c129` overlap-aware placement · `1382ef0` generic-add(A) · `8220ac4` add-mode-polish ·
+`b18bd6d` gap-fill-on-click.
 **slopstudio-projects** (2): `3eb0dd6` kirby music reconstruction · `f5d804f` kirby Pictures copy+repoint.
 
 ---
@@ -113,7 +118,10 @@ didn't; only `get_pcm` did). Per-clip `params.duck_music` + inspector toggle. In
   (`placeActivated/placeActive/placeDeact/placeHover`). Globals: `g_placeType` ("" | a kind | `"__generic__"`),
   `g_placeReq`/`g_placeReqRow`/`g_placeReqT`/`g_placeReqDur` (DrawTimeline→DrawUI deferred), applied in DrawUI.
 
-**Phase 3 REMAINING** (see NEXT above): gap-fill-on-click, A/B video loop, marquee multi-select, drag-drop-copy.
+**gap-fill-on-click DONE** (`b18bd6d`, ⏳ owner test): a plain placement click fills to the next clip on the
+target lane (`place_fill_to_next`); the click path probes row-selection with ~0 width so it lands in the
+clicked gap; `generic_ref_clip` factored out for the fallback length. Drag path unchanged.
+**Phase 3 REMAINING** (see NEXT above): A/B video loop, marquee multi-select, drag-drop-copy.
 
 ### Phase 4 — The layout engine (BIG; checkpoint with owner before starting)
 - **4a** Generalize `draw_diagram_clip` (the ONE real content-measuring, two-pass auto-fit layout engine in the
