@@ -3318,10 +3318,17 @@ static void split_clip(Project& p, const std::string& clipId, double t) {
 // Duplicate a clip — a full copy (params/transform/keyframes/asset) placed right AFTER the original
 // on the same row. Returns the new id (the caller selects it). No ripple: the user drags it where
 // they want. In-memory like split/move (Ctrl+S persists). A quick alternative to split-and-edit.
-static std::string duplicate_clip(Project& p, const std::string& clipId) {
+// Ctrl+drag-to-duplicate state: the clip a copy was already spawned for THIS drag (so it fires once),
+// and where to place that copy — the original's start, so the copy stays put while the original drags
+// off (its InvisibleButton id is stable, so ImGui keeps the drag alive across the p rebuild).
+static std::string g_ctrlDupDragId;      // clip a Ctrl+drag copy was already spawned for (fires once/drag)
+static std::string g_dragDupReq;         // DrawTimeline → DrawUI: request a duplicate (deferred; p rebuild)
+static double g_dupAtStart = -1e18;      // where to place the pending copy (-1e18 = default: right after)
+
+static std::string duplicate_clip(Project& p, const std::string& clipId, double atStart = -1e18) {
     auto it = p.clips.find(clipId);
     if (it == p.clips.end()) return "";
-    double newStart = it->second.start + it->second.dur;
+    double newStart = (atStart > -1e17) ? atStart : it->second.start + it->second.dur;
     std::string row = it->second.row;
     sync_to_doc(p);                                         // fold unsaved edits in first (like split)
     if (!p.doc.contains("clips") || !p.doc["clips"].contains(clipId)) return "";
@@ -6241,7 +6248,7 @@ static std::string add_video_clip_at(Project& p, const std::string& row, double 
         p.doc["assets"][akey] = json{{"provider", "external"}, {"type", "video"}, {"status", "ready"}, {"uri", path}, {"meta", json::object()}};
     std::string id; int m = 1; while (p.clips.count(id = "c_vid" + std::to_string(m))) m++;
     std::string fn = path; size_t sl = fn.find_last_of("/\\"); if (sl != std::string::npos) fn = fn.substr(sl + 1);
-    json params = json{{"in", 0.0}, {"speed", 1.0}, {"loop", false}, {"video_volume", 0.12},
+    json params = json{{"in", 0.0}, {"speed", 1.0}, {"loop", true}, {"video_volume", 0.12},
                        {"motion", "zoom_in"}, {"auto_grade", false}, {"layout", "inset"},
                        {"glow", json{{"enabled", true}, {"size", 24.0}, {"strength", 0.55}}},
                        {"frame", json{{"enabled", true}, {"thickness", 2.0}, {"radius", 8.0}, {"color", json::array({244, 248, 255, 220})}}}};
@@ -6777,6 +6784,11 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
         if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
             st.selected = c.id;
             ImGuiIO& io = ImGui::GetIO();
+            // Ctrl+drag = duplicate: spawn a copy at the clip's current spot ONCE, then drag the
+            // original away (deferred so p isn't rebuilt mid-loop; the drag survives via the stable id).
+            if (io.KeyCtrl && !io.KeyShift && g_ctrlDupDragId != c.id && g_dragDupReq.empty()) {
+                g_dragDupReq = c.id; g_dupAtStart = c.start; g_ctrlDupDragId = c.id;
+            }
             double d = io.MouseDelta.x * dtPerPx;
             if (io.KeyShift) {                            // Shift = ripple a BLOCK with the clip: clips AFTER (default), Alt = clips BEFORE
                 bool before = io.KeyAlt;
@@ -9848,6 +9860,9 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
         if (ImGui::IsKeyPressed(ImGuiKey_Space) && !ImGui::GetIO().WantTextInput) toggle();
         if (ImGui::IsKeyPressed(ImGuiKey_S) && !ImGui::GetIO().WantTextInput && !ImGui::GetIO().KeyCtrl && !st.selected.empty())
             splitReq = st.selected;   // S = split selected clip at playhead (Ctrl+S stays Save)
+        if ((ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace)) &&
+            !ImGui::GetIO().WantTextInput && !st.selected.empty())
+            delReq = st.selected;     // Del / Backspace = delete the selected clip (never while typing in a field)
         ImGui::SameLine();
         ImGui::Text("%6.2f / %.2f s", st.playhead, dur);
         ImGui::SameLine();
@@ -9864,10 +9879,15 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
     // deferred edit ops — safe now that no Clip& into p is held (split/delete/undo/redo reassign p).
     // undo/redo win over split/delete if somehow both fire in a frame. g_undoDirty: the S-key split
     // ends outside the ImGui active-item model, so flag it → Ctrl+Z right after still has the step.
+    // A Ctrl+drag on the timeline requests a duplicate via a global (DrawTimeline can't see dupReq).
+    if (dupReq.empty() && !g_dragDupReq.empty()) { dupReq = g_dragDupReq; g_dragDupReq.clear(); }
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) g_ctrlDupDragId.clear();   // re-arm for the next Ctrl+drag
     if (doUndo)      do_undo(p);
     else if (doRedo) do_redo(p);
     else if (!splitReq.empty()) { split_clip(p, splitReq, st.playhead); g_bufFor.clear(); g_undoDirty = true; }
-    else if (!dupReq.empty())   { std::string nid = duplicate_clip(p, dupReq); if (!nid.empty()) st.selected = nid; g_bufFor.clear(); g_undoDirty = true; }
+    else if (!dupReq.empty())   { bool dragDup = g_dupAtStart > -1e17;      // Ctrl+drag keeps dragging the original; Ctrl+D selects the copy
+                                  std::string nid = duplicate_clip(p, dupReq, g_dupAtStart); g_dupAtStart = -1e18;
+                                  if (!nid.empty() && !dragDup) st.selected = nid; g_bufFor.clear(); g_undoDirty = true; }
     else if (!delReq.empty())   { delete_clip(p, delReq); st.selected.clear(); g_bufFor.clear(); g_undoDirty = true; }
 
     lib_poll_gen_done();         // land finished library gens → invalidate caches + rescan
