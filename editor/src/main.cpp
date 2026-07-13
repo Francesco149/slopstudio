@@ -6724,6 +6724,17 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
         if (i >= 0 && j >= 0 && j < (int)p.tracks.size()) std::swap(p.tracks[i], p.tracks[j]);
     }
 
+    // Placement catcher — submitted BEFORE the clips so ADD MODE always adds (first-submitted wins, so a
+    // click on an existing clip adds a new one instead of selecting/moving it). Preview + commit happen
+    // after the clip loop (below) using this captured state, so the guide draws on top.
+    bool placeActivated = false, placeActive = false, placeDeact = false, placeHover = false;
+    if (!g_placeType.empty()) {
+        ImGui::SetCursorScreenPos(ImVec2(trackX, laneTop));
+        ImGui::InvisibleButton("##place", ImVec2(std::max(1.f, origin.x + canvasW - trackX), std::max(1.f, yBot - laneTop)));
+        placeActivated = ImGui::IsItemActivated(); placeActive = ImGui::IsItemActive();
+        placeDeact = ImGui::IsItemDeactivated(); placeHover = ImGui::IsItemHovered();
+    }
+
     dl->PushClipRect(ImVec2(trackX, laneTop), ImVec2(origin.x + canvasW, yBot), true);  // clips never overdraw the label gutter; yBot (full content) so scrolled-to lanes aren't clipped away
     std::string rowMoveClip, rowMoveTo; float rowMoveY = 0;   // a clip dragged onto another same-type lane (committed after the loop)
     // edge-snap targets = the moving clip's OWN lane + the two ADJACENT lanes (owner: not the whole timeline)
@@ -7096,16 +7107,14 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
     //    press (first-submitted wins overlaps); catches only the empty gaps. Commit is deferred. ──
     if (!g_placeType.empty()) {
         ImGuiIO& pio = ImGui::GetIO();
-        ImGui::SetCursorScreenPos(ImVec2(trackX, laneTop));
-        ImGui::InvisibleButton("##place", ImVec2(std::max(1.f, origin.x + canvasW - trackX), std::max(1.f, yBot - laneTop)));
         auto tAt   = [&](float x) { double t = st.tlScroll + (x - trackX) / pps; return t < 0 ? 0.0 : t; };
         auto rowAt = [&](float y) -> std::string { for (auto& pr : laneY) if (y >= pr.second && y < pr.second + ROWH) return pr.first; return ""; };
         auto rowY  = [&](const std::string& r) -> float { for (auto& pr : laneY) if (pr.first == r) return pr.second; return -1.f; };
         static double placeT0 = -1e30; static std::string placeRow;
-        bool active = ImGui::IsItemActive();
-        if (ImGui::IsItemActivated()) { placeT0 = tAt(pio.MousePos.x); placeRow = rowAt(pio.MousePos.y); }
+        bool active = placeActive;               // captured from the pre-clip catcher above
+        if (placeActivated) { placeT0 = tAt(pio.MousePos.x); placeRow = rowAt(pio.MousePos.y); }
         bool generic = (g_placeType == "__generic__");
-        if (active || ImGui::IsItemHovered()) {   // live preview: WHICH lane will it land on (re-evaluated as it grows)?
+        if (active || placeHover) {   // live preview: WHICH lane will it land on (re-evaluated as it grows)?
             double a  = active ? std::min(placeT0, tAt(pio.MousePos.x)) : tAt(pio.MousePos.x);
             double bb = active ? std::max(placeT0, tAt(pio.MousePos.x)) : a;
             std::string clk = active ? placeRow : rowAt(pio.MousePos.y);
@@ -7126,7 +7135,7 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
                 }
             }
         }
-        if (ImGui::IsItemDeactivated() && placeT0 > -1e29) {   // release → commit (deferred: p may add a track)
+        if (placeDeact && placeT0 > -1e29) {   // release → commit (deferred: p may add a track)
             double a = std::min(placeT0, tAt(pio.MousePos.x)), b = std::max(placeT0, tAt(pio.MousePos.x));
             if (!generic || p.rows.count(placeRow)) {   // generic needs a real clicked lane
                 g_placeReq = g_placeType; g_placeReqT = a; g_placeReqDur = (b - a > 0.15) ? (b - a) : -1.0; g_placeReqRow = placeRow;
@@ -10274,7 +10283,7 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
     if (!g_placeReq.empty()) {   // placement tool released → add the clip (overlap-aware; may add a track)
         std::string nid = (g_placeReq == "__generic__") ? add_generic_clip(p, g_placeReqRow, g_placeReqT, g_placeReqDur)
                                                         : add_quick_clip(p, g_placeReq, g_placeReqT, g_placeReqDur, g_placeReqRow);
-        if (!nid.empty()) { st.selected = nid; g_bufFor.clear(); g_undoDirty = true; }
+        if (!nid.empty()) { st.selected = nid; g_bufFor.clear(); g_undoDirty = true; g_placeType.clear(); }  // auto-select the new clip + auto-exit add mode
         g_placeReq.clear(); g_placeReqRow.clear();
     }
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) g_ctrlDupDragId.clear();   // re-arm for the next Ctrl+drag
