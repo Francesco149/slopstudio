@@ -157,6 +157,8 @@ static void parse_xform(const json& tr, Clip& c) {
 // Dirs the open project's asset files live in — scanned into the Media pane as project items
 // (filled at parse; the periodic library rescan picks changes up).
 static std::vector<std::string> g_projAssetDirs;
+static std::string g_projDir;        // dir of the loaded .slop.json (set at startup; project-relative uri root)
+static std::string g_repoRoot;       // code-repo root (holds library/, cache/, presets/); CWD-independent
 
 static Project parse_project_json(json j, const std::string& path) {
     Project p;
@@ -210,7 +212,16 @@ static Project parse_project_json(json j, const std::string& path) {
                 if (u.rfind("file://", 0) == 0) u = u.substr(7);
                 for (auto& ch : u) if (ch == '\\') ch = '/';
                 size_t sl = u.find_last_of('/');
-                if (sl != std::string::npos && sl > 0) dirs.push_back(u.substr(0, sl));
+                if (sl != std::string::npos && sl > 0) {
+                    std::string d = u.substr(0, sl);
+                    // absolute-ise project-relative dirs against the project root, so the Media-pane
+                    // scan finds them from ANY launch CWD (the dashboard launches at repo-root, where
+                    // a bare `assets/foo` would resolve to nothing → the "empty library" bug).
+                    if (!d.empty() && d[0] != '/' && d.find(':') == std::string::npos &&
+                        !g_projDir.empty() && g_projDir != ".")
+                        d = g_projDir + "/" + d;
+                    dirs.push_back(d);
+                }
             }
             std::sort(dirs.begin(), dirs.end());
             dirs.erase(std::unique(dirs.begin(), dirs.end()), dirs.end());
@@ -387,18 +398,42 @@ struct Tex { ID3D11ShaderResourceView* srv = nullptr; int w = 0, h = 0; };
 static std::map<std::string, Tex> g_texCache;
 static std::string g_cacheDir = "cache";
 
-static std::string g_projDir;        // dir of the loaded .slop.json (set at startup)
+// Derive the repo root from the running exe (<root>/build/slopstudio.exe) so `library/…` beds,
+// `cache://` gens, and presets/ resolve regardless of the launch CWD — the dashboard launches at
+// repo-root, the standalone launcher at the project dir, and those two want OPPOSITE roots for the
+// two asset families. Marker-verified; falls back to "." (CWD, the legacy behaviour) if unsure.
+static std::string derive_repo_root() {
+    char buf[1024];
+    DWORD n = GetModuleFileNameA(NULL, buf, (DWORD)sizeof(buf));
+    if (n == 0 || n >= sizeof(buf)) return ".";
+    std::string exe(buf, n);
+    for (auto& ch : exe) if (ch == '\\') ch = '/';
+    size_t s1 = exe.find_last_of('/');                       // .../build/slopstudio.exe → .../build
+    if (s1 == std::string::npos || s1 == 0) return ".";
+    size_t s2 = exe.find_last_of('/', s1 - 1);               // .../build → .../<root>
+    if (s2 == std::string::npos) return ".";
+    std::string root = exe.substr(0, s2);
+    if (GetFileAttributesA((root + "/library").c_str()) != INVALID_FILE_ATTRIBUTES ||
+        GetFileAttributesA((root + "/flake.nix").c_str()) != INVALID_FILE_ATTRIBUTES)
+        return root;
+    return ".";
+}
 
 static std::string resolve_asset(const std::string& uri) {
     if (uri.rfind("file://", 0) == 0) return uri.substr(7);
     if (uri.rfind("cache://", 0) == 0) return g_cacheDir + "/" + uri.substr(8);
-    // plain path: CWD first (the repo-root convention), else PROJECT-relative — a project
-    // dir (project.json + assets/) is portable: it can live outside the code repo.
-    if (!g_projDir.empty() && !uri.empty() && uri[0] != '/' && uri.find(':') == std::string::npos) {
-        DWORD at = GetFileAttributesA(uri.c_str());
-        if (at == INVALID_FILE_ATTRIBUTES) {
+    // plain path: CWD first (the repo-root convention), else PROJECT-relative (a project dir is
+    // portable — it can live outside the code repo), else REPO-relative (library/ beds, presets/).
+    // The three roots cover both families from any launch CWD.
+    if (!uri.empty() && uri[0] != '/' && uri.find(':') == std::string::npos) {
+        if (GetFileAttributesA(uri.c_str()) != INVALID_FILE_ATTRIBUTES) return uri;  // CWD
+        if (!g_projDir.empty()) {
             std::string pj = g_projDir + "/" + uri;
             if (GetFileAttributesA(pj.c_str()) != INVALID_FILE_ATTRIBUTES) return pj;
+        }
+        if (!g_repoRoot.empty() && g_repoRoot != ".") {
+            std::string rr = g_repoRoot + "/" + uri;
+            if (GetFileAttributesA(rr.c_str()) != INVALID_FILE_ATTRIBUTES) return rr;
         }
     }
     return uri;  // plain path
@@ -3134,8 +3169,49 @@ static bool sync_to_doc(Project& p) {
     return true;
 }
 
+// Keep only the newest `keep` timestamped backups for a project stem in `.backups/`.
+static void prune_backups(const std::string& bdir, const std::string& stem, int keep) {
+    std::vector<std::string> names;
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW(to_w(bdir + "/" + stem + ".*.bak").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do { if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) names.push_back(from_w(fd.cFileName)); }
+    while (FindNextFileW(h, &fd));
+    FindClose(h);
+    if ((int)names.size() <= keep) return;
+    std::sort(names.begin(), names.end());                        // timestamp names sort chronologically
+    for (size_t i = 0; i + (size_t)keep < names.size(); i++)      // delete the oldest overflow
+        DeleteFileW(to_w(bdir + "/" + names[i]).c_str());
+}
+
+// Rotate a backup BEFORE overwriting a project file. Undo is in-memory only, so this is the on-disk
+// safety net: a bad save (or an accidentally-dropped track — the kirby music-loss incident) is
+// recoverable from `<path>.bak` (the immediately-prior save) or a timestamped ring in `<dir>/.backups/`
+// (survives several bad saves in a row). Never lets an empty/failed read clobber a good backup.
+static void backup_before_save(const std::string& path) {
+    if (GetFileAttributesA(path.c_str()) == INVALID_FILE_ATTRIBUTES) return;   // first save — nothing to keep
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return;
+    std::string cur((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    in.close();
+    if (cur.empty()) return;
+    { std::ofstream b(path + ".bak", std::ios::binary); if (b) b << cur; }
+    size_t sl = path.find_last_of("/\\");
+    std::string dir  = sl == std::string::npos ? std::string(".") : path.substr(0, sl);
+    std::string stem = sl == std::string::npos ? path : path.substr(sl + 1);
+    std::string bdir = dir + "/.backups";
+    ensure_dir(bdir);
+    SYSTEMTIME st; GetLocalTime(&st);
+    char ts[32];
+    snprintf(ts, sizeof(ts), "%04d%02d%02d-%02d%02d%02d",
+             st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+    { std::ofstream b(bdir + "/" + stem + "." + ts + ".bak", std::ios::binary); if (b) b << cur; }
+    prune_backups(bdir, stem, 12);                                // keep the last dozen
+}
+
 static bool save_project(Project& p) {
     if (!sync_to_doc(p)) return false;
+    backup_before_save(p.path);
     std::ofstream out(p.path);
     if (!out) return false;
     out << p.doc.dump(2) << "\n";
@@ -7951,8 +8027,20 @@ static void draw_library_contents(Project& p, UIState& st) {
             if (g_libTypeFilter == 2 && it.type != LIB_AUDIO) continue;
             if (g_libTypeFilter == 3 && it.type != LIB_VIDEO) continue;
             if (g_libTypeFilter == 4 && it.type != LIB_AVATAR) continue;
-            if (g_libScope == 1 && !it.proj && it.type != LIB_AVATAR) continue;   // project scope keeps rigs visible (the host is shared)
-            if (g_libScope == 2 && it.proj) continue;
+            if (g_libScope == 2 && it.proj) continue;                             // "common" = shared library only
+            if (g_libScope != 2) {   // "both"/"project": hide cross-project JUNK but keep the wanted shared resources
+                // superseded pre-GPT rigs (the "old sprites" the owner sees) — only reachable via "common".
+                static const char* LEGACY_RIGS[] = {"gemma-chibi", "gemma-pngtuber", "gemma-host", "gemma-host-teacher-test"};
+                if (it.type == LIB_AVATAR) { bool leg = false; for (auto* n : LEGACY_RIGS) if (it.name == n) { leg = true; break; }
+                                             if (leg) continue; }
+                if (!it.proj) {
+                    // shared library/ items: keep music/audio beds + current rigs (+ shared video); hide the loose
+                    // library/images legacy sprites and any stray Pictures imports. "project" scope shows rigs only.
+                    bool keep = (it.type == LIB_AUDIO) || (it.type == LIB_AVATAR) || (it.type == LIB_VIDEO);
+                    if (g_libScope == 1) keep = (it.type == LIB_AVATAR);
+                    if (!keep) continue;
+                }
+            }
             if (!needle.empty() && lower_str(it.name).find(needle) == std::string::npos) continue;
             ImGui::PushID(it.path.c_str());
             ImGui::BeginGroup();
@@ -10269,6 +10357,16 @@ int main(int argc, char** argv) {
         size_t d = stem.find('.'); if (d != std::string::npos) stem = stem.substr(0, d);   // strip .slop.json
         if (!stem.empty()) g_projLibDir = pdir + "/assets/" + stem;
         g_projDir = pdir;                                    // project-relative uri fallback
+    }
+    // Anchor the repo-relative roots (library/ beds, cache/ gens) to the code repo independent of the
+    // launch CWD — the dashboard launches at repo-root, the standalone launcher at the project dir,
+    // and the two asset families (library/ vs assets/) want opposite roots. Falls back to CWD-relative.
+    g_repoRoot = derive_repo_root();
+    if (g_repoRoot != ".") {
+        if (g_libraryDir == "library") g_libraryDir = g_repoRoot + "/library";
+        bool cacheRel = !g_cacheDir.empty() && g_cacheDir[0] != '/' && g_cacheDir[0] != '\\' &&
+                        g_cacheDir.find(':') == std::string::npos;
+        if (cacheRel) g_cacheDir = g_repoRoot + "/" + g_cacheDir;
     }
     // Headless sprite-sheet cut (verification + agent use; no window/D3D — pure CPU + stb write).
     // --sprite-cut <sheet.png> <RRGGBB-key> <fuzz> <prefix> <x,y,w,h> [<x,y,w,h>...]  → library/images/<prefix>-NN.png

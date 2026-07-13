@@ -219,6 +219,11 @@ def projects_state():
         # "no music lane" bug). Canonical-name-first is wrong too (luckymas' live cut is
         # luckymas3, not luckymas.slop.json); the cut being worked on is the newest one.
         cuts.sort(key=lambda x: -os.path.getmtime(x))
+        # The one-click "open editor" uses cuts[0]; it must be the MAIN long-form cut, not whichever
+        # Short was touched most recently (a Short has "short" in its name). Stable-sort non-shorts
+        # ahead of shorts (mtime order kept within each group) so cuts[0] = newest non-short cut.
+        # Every cut stays reachable via the Projects-tab cut picker.
+        cuts.sort(key=lambda x: "short" in os.path.basename(x).lower())
         sk = sorted(glob.glob(os.path.join(d, "*.skeleton.json")))
         thumbs = sorted(glob.glob(os.path.join(d, "thumbs", "*.thumb.json")))
         pkg = sorted(glob.glob(os.path.join(d, "docs", "*packaging*.md")))
@@ -1305,6 +1310,7 @@ function renderProjects(){
         <button class="sm" onclick="quick('show','project','${p.name}')">timeline</button>
         <button class="sm" onclick="quick('lint','project','${p.name}')">lint</button>
         ${p.cuts.length?`<button class="sm" title="${esc(p.cuts[0].path)}" onclick="quickCut('${esc(p.cuts[0].path)}')">open editor · ${esc(p.cuts[0].name)}</button>`:''}
+        ${p.cuts.length>1?`<select class="sm" title="open a different cut in the editor" onchange="if(this.value)quickCut(this.value);this.selectedIndex=0;"><option value="">other cuts…</option>${p.cuts.map(c=>`<option value="${esc(c.path)}">${esc(c.name)}</option>`).join('')}</select>`:''}
         ${p.cuts.length?`<button class="sm" title="regen the animated on-screen transcript from the VO lines (portrait cuts)\n${esc(p.cuts[0].path)}" onclick="quick('regen_captions','cut','${esc(p.cuts[0].path)}')">regen captions · ${esc(p.cuts[0].name)}</button>`:''}
       </div></div>`;
   }
