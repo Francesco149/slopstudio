@@ -1712,6 +1712,10 @@ static Pcm* get_video_pcm(const std::string& srcPath) {
     if (it != g_videoPcmCache.end()) return it->second.ok ? &it->second : nullptr;
     Pcm pc;
     decode_audio_libav(srcPath, pc);
+    if (pc.ok && !pc.mono.empty()) {   // decode_audio_libav doesn't set rms (get_pcm does) — compute a level for silence detection
+        double s2 = 0; for (float v : pc.mono) s2 += (double)v * v;
+        pc.rms = (float)std::sqrt(s2 / (double)pc.mono.size());
+    }
     g_videoPcmCache[srcPath] = std::move(pc);
     Pcm& r = g_videoPcmCache[srcPath];
     return r.ok ? &r : nullptr;
@@ -1827,6 +1831,7 @@ static std::vector<SfxEvent> collect_sfx_events(Project& p);
 // music-duck windows around authored gag cues ("fade the music out for the punchline")
 static const double DUCK_OUT = 0.3, DUCK_IN = 0.6, DUCK_FLOOR = 0.07;   // fade-out s / fade-back s / SFX-punchline floor
 static const double DUCK_VIDEO_FLOOR = 0.42;   // gentler whole-span dip for a video clip's own audio (~-7.5 dB)
+static const float  VIDEO_AUDIO_SILENCE_RMS = 0.004f;   // RMS below this = a silent/near-silent track (treat as audio-less: no play, no duck)
 struct DuckWin { double a, b, floor; };        // [a,b] window + the bed's floor inside it (0=near-silent … 1=untouched)
 static std::vector<DuckWin> collect_duck_windows(Project& p);
 static float duck_factor(double t, const std::vector<DuckWin>& wins) {
@@ -1918,7 +1923,7 @@ static std::vector<MixSrc> collect_audio(Project& p) {
         if (src.empty()) { auto au2 = p.asset_uri.find(c.asset); if (au2 != p.asset_uri.end()) src = au2->second; }
         if (src.empty()) continue;
         Pcm* pc = get_video_pcm(resolve_asset(src));
-        if (!pc) continue;
+        if (!pc) continue;   // (a silent track mixes to nothing anyway; don't RMS-gate the mixer — a clip with only sparse audio must still play)
         double gdb = c.params.value("gain_db", 0.0) + 20.0 * std::log10(std::max(1e-4, vol))
                    + rit->second.params.value("gain_db", 0.0);   // per-lane volume too
         v.push_back({pc, c.start, c.dur, (float)std::pow(10.0, gdb / 20.0), c.params.value("in", 0.0)});
@@ -4962,13 +4967,13 @@ static std::vector<DuckWin> collect_duck_windows(Project& p) {
         auto rit = p.rows.find(c.row);
         if (rit == p.rows.end() || rit->second.type != "video") continue;
         if (c.params.value("video_volume", 0.12) <= 0.0) continue;
-        // only duck if the source ACTUALLY has audio (cached decode; the mixer probes the same) —
-        // a silent gameplay b-roll clip has nothing to make room for, so it shouldn't dip the bed.
         auto vmi = p.asset_video.find(c.asset);
         std::string vsrc = (vmi != p.asset_video.end() && !vmi->second.src.empty()) ? vmi->second.src
                            : (p.asset_uri.count(c.asset) ? p.asset_uri[c.asset] : std::string());
         Pcm* vpc = vsrc.empty() ? nullptr : get_video_pcm(resolve_asset(vsrc));
-        if (!vpc || vpc->dur <= 0.0) continue;
+        // Duck when the source has REAL audio (not a silent gameplay track) — a low playback volume is
+        // fine (the cat meme rides at 2% because the source is loud, and it's meant to be heard + duck).
+        if (!vpc || vpc->dur <= 0.0 || vpc->rms < VIDEO_AUDIO_SILENCE_RMS) continue;
         wins.push_back({c.start, c.start + c.dur, DUCK_VIDEO_FLOOR});
     }
     return wins;
@@ -9844,7 +9849,9 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
                     auto vmi = p.asset_video.find(c.asset);
                     std::string vsrc = (vmi != p.asset_video.end() && !vmi->second.src.empty()) ? vmi->second.src : std::string();
                     Pcm* vpc = vsrc.empty() ? nullptr : get_video_pcm(resolve_asset(vsrc));
-                    if (vpc) ImGui::TextDisabled("has audio (%.1fs). plays at 12%% by default, not as a track.", vpc->dur);
+                    if (vpc && vpc->rms >= VIDEO_AUDIO_SILENCE_RMS)
+                             ImGui::TextDisabled("has audio (%.1fs). plays at 12%% by default, not as a track.", vpc->dur);
+                    else if (vpc) ImGui::TextDisabled("silent audio track — treated as audio-less (won't duck the music).");
                     else     ImGui::TextDisabled("no decodable audio in this clip's source.");
                 }
                 ImGui::TextDisabled("advanced -> split to an audio track:\n  tools/slop.py splitaudio P.slop.json %s", c.id.c_str());
