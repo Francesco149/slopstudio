@@ -3336,6 +3336,7 @@ static double g_dupAtStart = -1e18;      // where to place the pending copy (-1e
 // Placement tool: click empty timeline space to add a clip of the armed type (drag = draw its length).
 static std::string g_placeType;          // armed clip type ("" = off); set by the palette, cleared by Esc
 static std::string g_placeReq;           // DrawTimeline → DrawUI: a placement to commit (deferred)
+static std::string g_placeReqRow;        // the lane the cursor was over (row-selection prefers it)
 static double g_placeReqT = 0, g_placeReqDur = -1;
 
 static std::string duplicate_clip(Project& p, const std::string& clipId, double atStart = -1e18) {
@@ -6556,6 +6557,9 @@ static double snap_edge_time(Project& p, const std::string& movingId, double t, 
     return best;
 }
 
+static std::string choose_place_row(Project& p, const std::string& kind, const std::string& clickedRow, double t, double dur);
+static double place_default_dur(const std::string& kind);   // placement-tool helpers (defined with add_quick_clip)
+
 static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, GenLite>& gen) {
     const float GUT = 156.0f, RULER = 22.0f, ROWH = 30.0f;
     if (g_tlVScroll >= 0.f) ImGui::SetScrollY(g_tlVScroll);   // headless: pin the lane scroll for shots
@@ -7093,20 +7097,33 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
         ImGuiIO& pio = ImGui::GetIO();
         ImGui::SetCursorScreenPos(ImVec2(trackX, laneTop));
         ImGui::InvisibleButton("##place", ImVec2(std::max(1.f, origin.x + canvasW - trackX), std::max(1.f, yBot - laneTop)));
-        auto tAt = [&](float x) { double t = st.tlScroll + (x - trackX) / pps; return t < 0 ? 0.0 : t; };
-        static double placeT0 = -1e30;
-        if (ImGui::IsItemActivated()) placeT0 = tAt(pio.MousePos.x);
-        if (ImGui::IsItemActive() && placeT0 > -1e29) {   // drag band from press to cursor
-            double a = std::min(placeT0, tAt(pio.MousePos.x)), b = std::max(placeT0, tAt(pio.MousePos.x));
-            dl->AddRectFilled(ImVec2(T2X(a), laneTop), ImVec2(T2X(std::max(b, a + 0.02)), yBot), IM_COL32(0x7f, 0xd8, 0xa8, 40));
-            dl->AddLine(ImVec2(T2X(a), laneTop), ImVec2(T2X(a), yBot), IM_COL32(0x7f, 0xd8, 0xa8, 220), 1.5f);
-        } else if (ImGui::IsItemHovered()) {              // idle guide at the placement time
-            float px = T2X(tAt(pio.MousePos.x));
-            dl->AddLine(ImVec2(px, laneTop), ImVec2(px, yBot), IM_COL32(0x7f, 0xd8, 0xa8, 200), 1.5f);
+        auto tAt   = [&](float x) { double t = st.tlScroll + (x - trackX) / pps; return t < 0 ? 0.0 : t; };
+        auto rowAt = [&](float y) -> std::string { for (auto& pr : laneY) if (y >= pr.second && y < pr.second + ROWH) return pr.first; return ""; };
+        auto rowY  = [&](const std::string& r) -> float { for (auto& pr : laneY) if (pr.first == r) return pr.second; return -1.f; };
+        static double placeT0 = -1e30; static std::string placeRow;
+        bool active = ImGui::IsItemActive();
+        if (ImGui::IsItemActivated()) { placeT0 = tAt(pio.MousePos.x); placeRow = rowAt(pio.MousePos.y); }
+        if (active || ImGui::IsItemHovered()) {   // live preview: WHICH lane will it land on (re-evaluated as it grows)?
+            double a  = active ? std::min(placeT0, tAt(pio.MousePos.x)) : tAt(pio.MousePos.x);
+            double bb = active ? std::max(placeT0, tAt(pio.MousePos.x)) : a;
+            double durP = (bb - a > 0.15) ? (bb - a) : place_default_dur(g_placeType);
+            std::string clk = active ? placeRow : rowAt(pio.MousePos.y);
+            std::string tgt = choose_place_row(p, g_placeType, clk, a, durP);   // clicked lane > free lane > new
+            bool newLane = tgt.empty();
+            float py = rowY(tgt);
+            if (py < 0) { py = rowY(clk); if (py < 0 && !laneY.empty()) py = laneY.back().second; }   // new lane rides the cursor lane
+            float x0 = T2X(a), x1 = T2X(std::max(bb, a + 0.02));
+            ImU32 fill = newLane ? IM_COL32(0x8a, 0x84, 0xb0, 70) : IM_COL32(0x7f, 0xd8, 0xa8, 70);
+            ImU32 line = newLane ? IM_COL32(0x8a, 0x84, 0xb0, 235) : IM_COL32(0x7f, 0xd8, 0xa8, 235);
+            if (py >= 0) {
+                dl->AddRectFilled(ImVec2(x0, py + 2), ImVec2(x1, py + ROWH - 3), fill, 4.f);
+                dl->AddRect(ImVec2(x0, py + 2), ImVec2(x1, py + ROWH - 3), line, 4.f, 0, 1.5f);
+                if (newLane) dl->AddText(ImVec2(x0 + 5, py + 6), IM_COL32(0xe8, 0xe4, 0xff, 255), "+ new track");
+            }
         }
         if (ImGui::IsItemDeactivated() && placeT0 > -1e29) {   // release → commit (deferred: p may add a track)
             double a = std::min(placeT0, tAt(pio.MousePos.x)), b = std::max(placeT0, tAt(pio.MousePos.x));
-            g_placeReq = g_placeType; g_placeReqT = a; g_placeReqDur = (b - a > 0.15) ? (b - a) : -1.0;
+            g_placeReq = g_placeType; g_placeReqT = a; g_placeReqDur = (b - a > 0.15) ? (b - a) : -1.0; g_placeReqRow = placeRow;
             placeT0 = -1e30;
         }
     }
@@ -7906,7 +7923,7 @@ static std::string add_track(Project& p, const std::string& type, const std::str
 // sensible default you then tweak in the inspector. Finds (or creates) a row of that type. This is the
 // "simple way to add special clips like the vignette from scratch" — they were previously only reachable
 // by hand-editing the project JSON or by splitting an existing clip. Returns the new clip id (or "").
-static std::string add_native_clip_at(Project& p, const std::string& type, double t) {
+static std::string add_native_clip_at(Project& p, const std::string& type, double t, const std::string& forceRow = "") {
     double dur = 3.0; json params = json::object(); std::string label = type;
     if      (type == "caption")  { dur = 3.0; params = json{{"text","New caption"},{"style","lower_third"},{"align","center"}}; label = "caption"; }
     else if (type == "code")     { dur = 4.0; params = json{{"lang","python"},{"code","# your code here\nprint(\"hi\")"},{"typewrite",true},{"line_numbers",true}}; label = "code"; }
@@ -7917,8 +7934,8 @@ static std::string add_native_clip_at(Project& p, const std::string& type, doubl
     else if (type == "filler")   { dur = 5.0; params = json{{"source","auto"},{"blur",30.0},{"dim",0.55}}; label = "bg fill"; }
     else if (type == "anchor")   { dur = 8.0; params = json::object(); label = "cap anchor"; }   // caption move-handle: pos shifts every caption starting in its span
 
-    std::string row;
-    for (auto& kv : p.rows) if (kv.second.type == type) { row = kv.first; break; }
+    std::string row = forceRow;   // placement tool passes a pre-chosen (overlap-free) row; else resolve
+    if (row.empty()) for (auto& kv : p.rows) if (kv.second.type == type) { row = kv.first; break; }
     if (row.empty()) {
         row = add_track(p, type, type);
         // a filler is a BACKDROP → drop its fresh track to the BOTTOM of the stack (add_track inserts on
@@ -7944,60 +7961,123 @@ static std::string add_native_clip_at(Project& p, const std::string& type, doubl
     return id;
 }
 
-// Quick-add a common clip with house defaults (the owner's "shortcuts to add common clips"): host =
-// the big GPT sprite set, voice = the golden clone, sound = the Heh~, music = the theme, backdrop =
-// the room. Anything else falls through to the native compositing types. Returns the new clip id.
-static std::string add_quick_clip(Project& p, const std::string& kind, double t, double dur = -1.0) {
-    auto find_or_make = [&](const char* type, const char* name) -> std::string {
-        for (auto& kv : p.rows) if (kv.second.type == type) return kv.first;
-        return add_track(p, type, name);
-    };
-    auto set_dur = [&](const std::string& id) {   // override the default dur when the caller drag-drew one
-        if (dur > 0.02 && !id.empty() && p.clips.count(id)) {
-            p.clips[id].dur = dur;
-            if (p.doc.contains("clips") && p.doc["clips"].contains(id)) p.doc["clips"][id]["dur"] = dur;
+// ── Placement helpers: which ROW does a quick-add kind live on, and does a span fit without overlap? ──
+static std::string place_row_type(const std::string& kind) {
+    if (kind == "host")  return "avatar";
+    if (kind == "voice") return "tts";
+    if (kind == "music" || kind == "sound") return "music";
+    if (kind == "backdrop") return "image";
+    return kind;   // caption/code/shape/diagram/gradient/blur/filler/anchor
+}
+static double place_default_dur(const std::string& kind) {
+    if (kind == "diagram") return 5.0;
+    if (kind == "code" || kind == "gradient" || kind == "backdrop" || kind == "filler") return 4.0;
+    if (kind == "blur")  return 1.5;
+    if (kind == "sound") return 1.0;
+    if (kind == "music") return 20.0;
+    return 3.0;   // host/voice/caption/shape/anchor
+}
+// true if [t, t+dur] overlaps no clip already on the row
+static bool row_span_free(Project& p, const std::string& rowId, double t, double dur) {
+    auto rit = p.rows.find(rowId);
+    if (rit == p.rows.end()) return true;
+    for (auto& cid : rit->second.clips) {
+        auto c = p.clips.find(cid);
+        if (c == p.clips.end()) continue;
+        double s = c->second.start, e = s + c->second.dur;
+        if (s < t + dur - 1e-3 && e > t + 1e-3) return false;
+    }
+    return true;
+}
+// Pick the placement row: the CLICKED lane (if it's the right type and the span fits) > any existing
+// row of the type where it fits (track/lane order) > "" (caller makes a new lane). This is what lets a
+// click land in the clicked lane's free space, spill to another lane, or make a new track on demand.
+static std::string choose_place_row(Project& p, const std::string& kind, const std::string& clickedRow, double t, double dur) {
+    std::string want = place_row_type(kind);
+    if (!clickedRow.empty()) {
+        auto rit = p.rows.find(clickedRow);
+        if (rit != p.rows.end() && rit->second.type == want && row_span_free(p, clickedRow, t, dur)) return clickedRow;
+    }
+    for (auto& tk : p.tracks) for (auto& rid : tk.rows) {
+        if (rid == clickedRow) continue;
+        auto rit = p.rows.find(rid);
+        if (rit != p.rows.end() && rit->second.type == want && row_span_free(p, rid, t, dur)) return rid;
+    }
+    return "";   // no room anywhere → new lane
+}
+// Create + set up a fresh row for a kind (the "new lane" case): rig + driven_by for a host, the golden
+// clone voice for a VO row, and a cover backdrop sinks to the bottom of the stack.
+static std::string create_place_row(Project& p, const std::string& kind) {
+    std::string want = place_row_type(kind);
+    const char* nm = want == "avatar" ? "Avatar" : want == "tts" ? "VO" : want == "music" ? "Music"
+                   : (kind == "backdrop" ? "Backdrop" : want == "image" ? "Footage" : want.c_str());
+    std::string row = add_track(p, want, nm);
+    if (row.empty()) return "";
+    if (kind == "host") {
+        p.rows[row].params["rig"] = "gemma-gpt-static";
+        for (auto& kv : p.rows) if (kv.second.type == "tts") { p.rows[row].params["driven_by"] = kv.first; break; }
+        if (p.doc.contains("rows") && p.doc["rows"].contains(row)) p.doc["rows"][row]["params"] = p.rows[row].params;
+    } else if (kind == "voice") {
+        p.rows[row].params["voice_preset"] = "gemma-san-deep-clone";
+        if (p.doc.contains("rows") && p.doc["rows"].contains(row)) p.doc["rows"][row]["params"] = p.rows[row].params;
+    } else if (kind == "backdrop" && p.tracks.size() > 1) {   // a cover backdrop belongs at the BOTTOM
+        Track t0 = p.tracks.front(); p.tracks.erase(p.tracks.begin()); p.tracks.push_back(t0);
+        if (p.doc.contains("tracks") && p.doc["tracks"].is_array() && p.doc["tracks"].size() > 1) {
+            json d0 = p.doc["tracks"].front(); p.doc["tracks"].erase(p.doc["tracks"].begin()); p.doc["tracks"].push_back(d0);
         }
+    }
+    return row;
+}
+// Create the kind's clip on a GIVEN row (assumed the right type; a host uses the row's own rig). dur<=0
+// → the kind's default length.
+static std::string place_clip_on_row(Project& p, const std::string& kind, const std::string& row, double t, double dur) {
+    if (row.empty()) return "";
+    auto with_dur = [&](const std::string& id) {
+        if (dur > 0.02 && !id.empty() && p.clips.count(id)) { p.clips[id].dur = dur;
+            if (p.doc.contains("clips") && p.doc["clips"].contains(id)) p.doc["clips"][id]["dur"] = dur; }
         return id;
     };
-    if (kind == "host") return set_dur(add_avatar_clip_at(p, "gemma-gpt-static", t, dur > 0.02 ? dur : 3.0));
-    if (kind == "music" || kind == "sound") {
-        std::string row = find_or_make("music", "Music");
-        if (row.empty()) return "";
-        return set_dur(add_audio_clip_at(p, row, t, kind == "music" ? "library/music/deadly-roulette.mp3"
-                                                                    : "presets/voice-snips/gemma-heh.wav"));
-    }
+    if (kind == "music" || kind == "sound")
+        return with_dur(add_audio_clip_at(p, row, t, kind == "music" ? "library/music/deadly-roulette.mp3"
+                                                                      : "presets/voice-snips/gemma-heh.wav"));
     if (kind == "backdrop") {
-        std::string row = find_or_make("image", "Backdrop");
-        if (row.empty()) return "";
         std::string id = add_image_clip_at(p, row, t, "presets/backgrounds/room-day.png");
-        if (!id.empty() && p.clips.count(id)) {   // full-frame room, not an inset
-            p.clips[id].params["layout"] = "cover"; p.clips[id].label = "backdrop";
-            if (p.doc.contains("clips") && p.doc["clips"].contains(id)) p.doc["clips"][id]["params"]["layout"] = "cover";
-        }
-        return set_dur(id);
+        if (!id.empty() && p.clips.count(id)) { p.clips[id].params["layout"] = "cover"; p.clips[id].label = "backdrop";
+            if (p.doc.contains("clips") && p.doc["clips"].contains(id)) p.doc["clips"][id]["params"]["layout"] = "cover"; }
+        return with_dur(id);
     }
-    if (kind == "voice") {   // an empty line on a golden-clone tts row — type it + Generate VO
-        std::string row;
-        for (auto& kv : p.rows) if (kv.second.type == "tts") { row = kv.first; break; }
-        if (row.empty()) {
-            row = add_track(p, "tts", "VO");
-            if (!row.empty()) { p.rows[row].params["voice_preset"] = "gemma-san-deep-clone";
-                if (p.doc.contains("rows") && p.doc["rows"].contains(row)) p.doc["rows"][row]["params"] = p.rows[row].params; }
-        }
-        if (row.empty()) return "";
-        std::string id; int m = 1; while (p.clips.count(id = "c_vo" + std::to_string(m))) m++;
-        json params = json{{"text", "New line — type here, then Generate VO"}};
-        double d = dur > 0.02 ? dur : 3.0;
-        Clip c; c.id = id; c.row = row; c.type = "tts"; c.start = t; c.dur = d; c.label = "vo"; c.params = params;
-        p.clips[id] = c; p.rows[row].clips.push_back(id);
-        if (p.doc.contains("clips"))
-            p.doc["clips"][id] = json{{"row", row}, {"start", t}, {"dur", d}, {"params", params},
-                {"transform", json{{"pos", {0, 0}}, {"scale", {1.0, 1.0}}, {"rot", 0}, {"opacity", 1}, {"anchor", {0.5, 0.5}}}}};
-        if (p.doc.contains("rows") && p.doc["rows"].contains(row) && p.doc["rows"][row].contains("clips"))
-            p.doc["rows"][row]["clips"].push_back(id);
-        return id;
+    if (kind != "host" && kind != "voice")   // native compositing types → place on the given row
+        return with_dur(add_native_clip_at(p, kind, t, row));
+    // host / voice → build the clip inline on `row`
+    double d = dur > 0.02 ? dur : place_default_dur(kind);
+    std::string ctype, idpfx, label; json params;
+    if (kind == "host") {
+        std::string rig = jstr(p.rows[row].params, "rig"); if (rig.empty()) rig = "gemma-gpt-static";
+        bool driven = false; for (auto& kv : p.rows) if (kv.second.type == "tts") { driven = true; break; }
+        ctype = "avatar"; idpfx = "c_av"; label = "avatar:" + rig;
+        params = json{{"emotion", driven ? "auto" : "neutral"}, {"framing", "bust"}};
+    } else {   // voice — an empty line on the clone-voice row; type it + Generate VO
+        ctype = "tts"; idpfx = "c_vo"; label = "vo"; params = json{{"text", "New line — type here, then Generate VO"}};
     }
-    return set_dur(add_native_clip_at(p, kind, t));
+    std::string id; int m = 1; while (p.clips.count(id = idpfx + std::to_string(m))) m++;
+    Clip c; c.id = id; c.row = row; c.type = ctype; c.start = t; c.dur = d; c.label = label; c.params = params;
+    p.clips[id] = c; if (p.rows.count(row)) p.rows[row].clips.push_back(id);
+    if (p.doc.contains("clips"))
+        p.doc["clips"][id] = json{{"row", row}, {"start", t}, {"dur", d}, {"params", params},
+            {"transform", json{{"pos", {0, 0}}, {"scale", {1.0, 1.0}}, {"rot", 0}, {"opacity", 1}, {"anchor", {0.5, 0.5}}}}};
+    if (p.doc.contains("rows") && p.doc["rows"].contains(row) && p.doc["rows"][row].contains("clips"))
+        p.doc["rows"][row]["clips"].push_back(id);
+    return id;
+}
+// Quick-add a common clip (house defaults), OVERLAP-AWARE: land in the clicked lane's free space, spill
+// to another compatible lane, or make a new track — never overlapping. `clickedRow` = the lane under the
+// cursor ("" for the menu at-playhead path). Returns the new clip id.
+static std::string add_quick_clip(Project& p, const std::string& kind, double t, double dur = -1.0, const std::string& clickedRow = "") {
+    if (t < 0) t = 0;
+    double dCheck = dur > 0.02 ? dur : place_default_dur(kind);
+    std::string row = choose_place_row(p, kind, clickedRow, t, dCheck);
+    if (row.empty()) row = create_place_row(p, kind);
+    return place_clip_on_row(p, kind, row, t, dur);
 }
 
 // ── Library panel: browse/search/preview the global media library; double-click drops at the
@@ -10114,10 +10194,10 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
     // ends outside the ImGui active-item model, so flag it → Ctrl+Z right after still has the step.
     // A Ctrl+drag on the timeline requests a duplicate via a global (DrawTimeline can't see dupReq).
     if (dupReq.empty() && !g_dragDupReq.empty()) { dupReq = g_dragDupReq; g_dragDupReq.clear(); }
-    if (!g_placeReq.empty()) {   // placement tool released on empty timeline → add the clip (may create a track)
-        std::string nid = add_quick_clip(p, g_placeReq, g_placeReqT, g_placeReqDur);
+    if (!g_placeReq.empty()) {   // placement tool released on empty timeline → add the clip (overlap-aware; may add a track)
+        std::string nid = add_quick_clip(p, g_placeReq, g_placeReqT, g_placeReqDur, g_placeReqRow);
         if (!nid.empty()) { st.selected = nid; g_bufFor.clear(); g_undoDirty = true; }
-        g_placeReq.clear();
+        g_placeReq.clear(); g_placeReqRow.clear();
     }
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) g_ctrlDupDragId.clear();   // re-arm for the next Ctrl+drag
     if (doUndo)      do_undo(p);
