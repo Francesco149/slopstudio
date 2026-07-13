@@ -2,10 +2,34 @@
 
 Hand-maintained "what's true right now." **Read this first after `CLAUDE.md`** and update it
 in the same change that lands work, so a fresh session reorients in ~60s. Last updated:
-**2026-07-08**. For the next editor UX/product pass, also read `docs/UX_NEXT.md`; for
-composing a video as an agent, **`docs/LLM_WORKFLOW.md`**.
+**2026-07-13**. For the next editor UX/product pass, also read `docs/UX_NEXT.md`; for
+composing a video as an agent, **`docs/LLM_WORKFLOW.md`**. A large mouse-driven-UX overhaul
+is in progress — plan phases + status in the task list; Phase 0 (data safety) + Phase 1 landed.
 
-> **★ NEWEST (2026-07-08 night): slopthumb custom-hex colors fixed (Enter-only commit trap).**
+> **★ NEWEST (2026-07-13): UX-OVERHAUL Phase 0 (data safety) + Phase 1 (timeline quick wins) + video-duck.**
+> First tranche of a big low-friction-UX pass (owner: "make it low friction, mouse-driven, no patchwork").
+> - **Asset resolution is now CWD-independent** (`g_repoRoot`, derived from the exe path, marker-verified):
+>   `library/` beds + `cache/` gens anchor to the repo, project `assets/` art absolutises against the
+>   project dir. Fixes the dashboard-launch **empty Media library** + the launcher's dropped beds (both
+>   families resolve from EITHER launch CWD; verified 104 audio inputs from repo-root AND project-dir).
+> - **Backup-on-save** (`save_project` → `<proj>.slop.json.bak` + a 12-deep timestamped `.backups/` ring):
+>   a bad save or dropped track is now recoverable (undo is in-memory only). This is how the kirby music
+>   was lost — now impossible to lose that way.
+> - **Media pane unclutter:** hides superseded rigs (gemma-chibi/pngtuber/host) + loose `library/images`
+>   sprites & stray Pictures imports in both/project scope; music beds + current rigs stay; "common" scope
+>   = full library. **Dashboard** "open editor" now targets the MAIN cut (non-shorts first) + a cut picker.
+> - **kirby music RECONSTRUCTED** (`../slopstudio-projects/kirby-tilt-n-tumble/kirby.slop.json`): git had
+>   nothing recoverable (never committed), so a house-style arrangement (recettear template: deadly-roulette
+>   bookends, chill-wave swells, space-jazz body, ramped) onto the owner's edits — all 267 existing clips
+>   byte-identical. Owner to fine-tune levels.
+> - **Timeline quick wins:** `Del`/`Backspace` deletes the selected clip (guarded by `!WantTextInput`),
+>   `Ctrl`+drag duplicates (copy stays put, original drags off), new video clips default to **loop**.
+> - **Video audio ducks the music bed** (default on, `params.duck_music` + inspector toggle): a video clip
+>   whose source has REAL audio dips the bed over its span with a gentle floor (0.42 vs the SFX 0.07);
+>   silent gameplay tracks (RMS≈0) are audio-less and don't duck (a low playback volume like the cat meme's
+>   2% still ducks — it's a loud source). Per-window floor via `struct DuckWin`; preview + export identical.
+>
+> **★ (2026-07-08 night): slopthumb custom-hex colors fixed (Enter-only commit trap).**
 > Owner: "I can't set colors outside the palette — #FF0000 doesn't work." The inspector's color (and
 > id/image/src) InputTexts used `EnterReturnsTrue` only, so a typed hex + click-away was silently
 > reverted — while the palette swatches commit on click, which read as "palette-only". All four now
