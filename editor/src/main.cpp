@@ -7035,8 +7035,10 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
             st.tlScroll = st.playhead - (sx - trackX) / newpps;
         }
     }
-    if (tlHov && st.tlZoom > 0 && ImGui::IsMouseDragging(ImGuiMouseButton_Middle))   // middle-drag = pan (only when zoomed in)
-        st.tlScroll -= io.MouseDelta.x / pps;
+    if (tlHov && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {   // middle-drag = pan: horizontal time (when zoomed) + vertical lanes
+        if (st.tlZoom > 0) st.tlScroll -= io.MouseDelta.x / pps;
+        ImGui::SetScrollY(ImGui::GetScrollY() - io.MouseDelta.y);
+    }
     // clamp: auto-fit always starts at 0; when zoomed, keep t=0 reachable and don't over-scroll past the end.
     if (st.tlZoom <= 0) st.tlScroll = 0.0;
     else { double cpps = st.tlZoom, vis = (canvasW - GUT) / cpps;
@@ -7918,6 +7920,7 @@ static std::string add_native_clip_at(Project& p, const std::string& type, doubl
 static bool g_showLibrary = true;
 static float g_leftW = 318.f;    // media-pane width (drag the splitter to resize)
 static float g_inspW = 380.f;    // right inspector width (drag to resize; the preview flexes)
+static float g_topH = -1.f;      // preview/inspector row height (drag the divider; -1 = init to 50%)
 static char g_libSearch[128] = "";
 static int  g_libTypeFilter = 0;             // 0=all 1=image 2=audio 3=video
 static std::string g_libSelected;            // selected item path (drives the viewer, L5)
@@ -9043,6 +9046,19 @@ static void v_splitter(const char* id, float* w, float h, float mn, float mx, fl
         hot ? IM_COL32(0x8a, 0x84, 0xb0, 255) : IM_COL32(0x3a, 0x35, 0x60, 255), hot ? 2.0f : 1.0f);
 }
 
+// Horizontal splitter (full width w, 6px tall): drags a panel height `*h` by the vertical mouse move.
+static void h_splitter(const char* id, float* h, float w, float mn, float mx) {
+    ImGui::InvisibleButton(id, ImVec2(w, 6.0f));
+    if (ImGui::IsItemActive()) *h += ImGui::GetIO().MouseDelta.y;
+    if (*h < mn) *h = mn;  if (*h > mx) *h = mx;
+    bool hot = ImGui::IsItemHovered() || ImGui::IsItemActive();
+    if (hot) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+    ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+    float cy = (a.y + b.y) * 0.5f;
+    ImGui::GetWindowDrawList()->AddLine(ImVec2(a.x + 4, cy), ImVec2(b.x - 4, cy),
+        hot ? IM_COL32(0x8a, 0x84, 0xb0, 255) : IM_COL32(0x3a, 0x35, 0x60, 255), hot ? 2.0f : 1.0f);
+}
+
 static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::string, GenLite>& gen) {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(vp->WorkPos);
@@ -9259,7 +9275,11 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
     }
     ImGui::BeginGroup();
 
-    float topH = ImGui::GetContentRegionAvail().y * 0.5f;
+    float availY = ImGui::GetContentRegionAvail().y;
+    if (g_topH < 0.f) g_topH = availY * 0.5f;                        // first frame: default 50/50
+    float topMin = 140.f, topMax = std::max(topMin + 1.f, availY - 170.f);   // keep room for transport + timeline
+    if (g_topH < topMin) g_topH = topMin;  if (g_topH > topMax) g_topH = topMax;
+    float topH = g_topH;
     float groupW = ImGui::GetContentRegionAvail().x;
     float inspMx = std::max(320.f, groupW - 360.f);
     if (g_inspW < 260.f) g_inspW = 260.f;  if (g_inspW > inspMx) g_inspW = inspMx;
@@ -9941,6 +9961,7 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
         ImGui::EndTabBar();
     }
     ImGui::EndChild();
+    h_splitter("##splitTop", &g_topH, ImGui::GetContentRegionAvail().x, 140.f, 1e5f);   // drag the preview/inspector ↕ timeline divider
 
     // ── transport: Play/Pause + Stop + time readout. Advances the playhead in real time and
     //    plays the timeline's audio in sync (see the waveOut mixer + the main loop). ──
