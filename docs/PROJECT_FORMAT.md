@@ -290,10 +290,14 @@ source (`uri`/`src`) and the decoder fills `fps`/`frames`/`w`/`h`. **Fallback pr
 `--no-video-decode`): `tools/video-proxy.py <src> [--fps 15] [--max-dim 1280] [--ss S --t D] [--into P
 --key K]` extracts a decimated-JPEG `proxy` dir → `cache://video/<name>`. **A video clip needs a
 `type:"video"` ROW** (a clip's type comes from its row); dropping a video file/library item auto-creates one.
-- retime (live): **`in`** (source in-point seconds), **`speed`** (×, e.g. 0.5 slow-mo / 2 fast), **`loop`**
-  (`true` wrap back to `in` · `false` hold the last frame · `"pingpong"` bounce forward/backward — moving
-  b-roll loops without the hard rewind seam). A retimed clip (`speed`≠1 or pingpong) plays its own audio
-  MUTED (it would desync). Loop wrapping uses the REAL decoded stream end — containers that overpromise
+- retime (live): **`in`** (source in-point seconds; also the loop IN / **A** point), **`speed`** (×, e.g.
+  0.5 slow-mo / 2 fast), **`loop`** (`true` wrap · `false` hold the last frame · `"pingpong"` bounce
+  forward/backward — moving b-roll loops without the hard rewind seam), and **`loop_out`** (source seconds;
+  the loop OUT / **B** point — absent = source EOF). `in`/`loop_out` are the **A-B loop segment**: the clip
+  plays + loops `[in, loop_out]`, so you can pick a clean loop inside a long source without hand-cutting it
+  (editor: Inspector ▸ playback ▸ loop segment; the "set A/B" buttons capture the frame under the playhead).
+  A retimed clip (`speed`≠1 or pingpong) OR an A-B sub-loop (`loop_out` set) plays its own audio MUTED (it
+  would desync). Loop wrapping uses the REAL decoded stream end — containers that overpromise
   `nb_frames`/duration are learned + corrected at the first tail decode (no "can't decode source" gap).
 - presentation (live): **`dim`** + **`temperature`**/**`tint`** (same draw-time tint as image) + the full
   `transform` (pos/scale/anchor/opacity, all keyframeable → Ken Burns over moving footage). *Not* supported

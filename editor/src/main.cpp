@@ -560,16 +560,22 @@ static FrameTex* get_frame_tex(const std::string& proxyDir, int idx) {
     return ft.srv ? &g_frameCache[key] : nullptr;
 }
 
-// Resolve a video clip's frame index at timeline time T (playhead) from its proxy meta +
-// the clip's `in` (source in-point s) / `speed` / `loop` params. Decimated proxy ⇒ multiple
-// 60fps export frames hold one proxy frame (fine for B-roll). Clamped to [0, frames-1].
-static int video_frame_index(const VideoMeta& vm, const Clip& c, double T) {
-    if (vm.frames <= 0 || vm.fps <= 0) return 0;
-    double local = T - c.start;                               // timeline-local seconds
+// The B-point (loop OUT, source seconds) of a video clip's A-B loop: `params.loop_out` when it's a
+// real sub-segment (A < loop_out < source EOF), else the source end. A = `params.in` (the loop IN,
+// which is also where the clip starts). Lets you pick a clean loop inside a long source without cutting.
+static double video_loop_out(const Clip& c, double in, double srcDur) {
+    double lo = (c.params.is_object() ? c.params.value("loop_out", 0.0) : 0.0);
+    return (lo > in + 1e-3 && lo < srcDur - 1e-6) ? lo : srcDur;
+}
+// Continuous SOURCE time (seconds) a video clip shows at timeline time T — the pre-index mapping from
+// `in` (A) / `speed` / `loop` mode / `loop_out` (B). Shared by the frame picker AND the inspector's
+// "set A/B from playhead" so the value the buttons capture is exactly what's on screen.
+static double video_src_time(const VideoMeta& vm, const Clip& c, double T) {
+    double proxyDur = (vm.fps > 0 ? vm.frames / vm.fps : 0.0);  // seconds covered by the proxy
     double in    = c.params.value("in", 0.0);
     double speed = c.params.value("speed", 1.0);
-    // params.loop: true = wrap at source EOF (default — extending a short clip repeats it) ·
-    // false = hold the last frame · "pingpong" = bounce forward/backward over the source, so
+    // params.loop: true = wrap at the loop OUT (default OUT = source EOF; a short clip repeats) ·
+    // false = hold the last frame · "pingpong" = bounce forward/backward over [in, loop_out], so
     // moving b-roll loops without the hard rewind seam.
     bool loop = true, pingpong = false;
     if (c.params.is_object() && c.params.contains("loop")) {
@@ -577,15 +583,20 @@ static int video_frame_index(const VideoMeta& vm, const Clip& c, double T) {
         if (lj.is_boolean())     loop = lj.get<bool>();
         else if (lj.is_string()) pingpong = (lj.get<std::string>() == "pingpong");
     }
-    double proxyDur = vm.frames / vm.fps;                     // seconds covered by the proxy
-    double span = proxyDur - in;
-    double t = (local < 0 ? 0 : local) * speed;
+    double span = video_loop_out(c, in, proxyDur) - in;        // the A-B loop window (default: in→EOF)
+    double t = ((T - c.start) < 0 ? 0 : (T - c.start)) * speed;
     double srcT = in + t;
     if (pingpong && span > 1e-6) {
         double ph = std::fmod(t, span * 2.0);
         srcT = in + (ph < span ? ph : span * 2.0 - ph);
     } else if (loop && span > 1e-6) srcT = in + std::fmod(t, span);
-    int idx = (int)std::lround(srcT * vm.fps);
+    return srcT;
+}
+// Resolve a video clip's frame index at timeline time T (playhead). Decimated proxy ⇒ multiple 60fps
+// export frames hold one proxy frame (fine for B-roll). Clamped to [0, frames-1].
+static int video_frame_index(const VideoMeta& vm, const Clip& c, double T) {
+    if (vm.frames <= 0 || vm.fps <= 0) return 0;
+    int idx = (int)std::lround(video_src_time(vm, c, T) * vm.fps);
     if (idx < 0) idx = 0;
     if (idx >= vm.frames) idx = vm.frames - 1;
     return idx;
@@ -1914,6 +1925,7 @@ static std::vector<MixSrc> collect_audio(Project& p) {
         // its own sound would desync, so it goes silent (it's 12%-volume b-roll ambience anyway)
         if (std::fabs(c.params.value("speed", 1.0) - 1.0) > 1e-3) continue;
         if (c.params.is_object() && c.params.contains("loop") && c.params["loop"].is_string()) continue;
+        if (c.params.is_object() && c.params.contains("loop_out")) continue;   // A-B sub-loop → own audio muted
         auto rit = p.rows.find(c.row);
         if (rit == p.rows.end() || rit->second.type != "video") continue;
         double vol = c.params.value("video_volume", 0.12);
@@ -3274,7 +3286,10 @@ static double advance_in_folded(const Project& p, const std::string& asset, cons
     double nin = in + adv;
     auto vmi = p.asset_video.find(asset);
     if (loops && adv > 0 && vmi != p.asset_video.end() && vmi->second.fps > 0 && vmi->second.frames > 0) {
-        double span = vmi->second.frames / vmi->second.fps - in;
+        double srcDur = vmi->second.frames / vmi->second.fps;
+        double lo = params.is_object() ? params.value("loop_out", 0.0) : 0.0;
+        double bEnd = (lo > in + 1e-3 && lo < srcDur - 1e-6) ? lo : srcDur;   // A-B loop OUT (default = source EOF)
+        double span = bEnd - in;
         if (span > 1e-6) nin = in + std::fmod(adv, span);
     }
     return std::max(0.0, nin);
@@ -4969,6 +4984,7 @@ static std::vector<DuckWin> collect_duck_windows(Project& p) {
         if (!c.params.value("duck_music", true)) continue;
         if (std::fabs(c.params.value("speed", 1.0) - 1.0) > 1e-3) continue;         // retimed → its audio is muted
         if (c.params.contains("loop") && c.params["loop"].is_string()) continue;    // pingpong → muted
+        if (c.params.contains("loop_out")) continue;                                // A-B sub-loop → muted (no duck)
         auto rit = p.rows.find(c.row);
         if (rit == p.rows.end() || rit->second.type != "video") continue;
         if (c.params.value("video_volume", 0.12) <= 0.0) continue;
@@ -10205,8 +10221,44 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
                 ImGui::SetNextItemWidth(180);
                 if (ImGui::Combo("loop mode", &lm, "loop\0hold last frame\0pingpong\0"))
                     c.params["loop"] = (lm == 0) ? json(true) : (lm == 1) ? json(false) : json("pingpong");
-                if (spd < 0.999f || spd > 1.001f || lm == 2)
-                    ImGui::TextDisabled("retimed: this clip's own audio is muted (would desync).");
+                // ── A-B loop segment: pick a clean loop [A,B] inside a long source without hand-cutting.
+                //    A = params.in (also where the clip starts), B = params.loop_out (absent → source EOF).
+                //    "set A/B" capture the frame under the playhead (video_src_time) — scrub, then click. ──
+                auto vmiAB = p.asset_video.find(c.asset);
+                double srcDurAB = (vmiAB != p.asset_video.end() && vmiAB->second.fps > 0)
+                                ? vmiAB->second.frames / vmiAB->second.fps : 0.0;
+                if (lm != 1 && srcDurAB > 0.05) {
+                    double inD = c.params.value("in", 0.0);
+                    bool hasB  = c.params.contains("loop_out");
+                    float A = (float)inD, B = (float)video_loop_out(c, inD, srcDurAB);
+                    ImGui::SetNextItemWidth(120);
+                    if (ImGui::DragFloat("A loop in (s)", &A, 0.02f, 0.0f, B - 0.05f, "%.2f")) {
+                        A = A < 0 ? 0.f : (A > B - 0.05f ? B - 0.05f : A);
+                        c.params["in"] = (double)A;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("set A##ab") && vmiAB != p.asset_video.end()) {
+                        double s = std::min(std::max(0.0, video_src_time(vmiAB->second, c, st.playhead)), (double)B - 0.05);
+                        c.params["in"] = s;
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("A = the frame under the playhead (scrub the preview, then click)");
+                    ImGui::SetNextItemWidth(120);
+                    if (ImGui::DragFloat("B loop out (s)", &B, 0.02f, A + 0.05f, (float)srcDurAB, "%.2f")) {
+                        B = B > (float)srcDurAB ? (float)srcDurAB : (B < A + 0.05f ? A + 0.05f : B);
+                        if (B >= (float)srcDurAB - 1e-3f) c.params.erase("loop_out"); else c.params["loop_out"] = (double)B;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("set B##ab") && vmiAB != p.asset_video.end()) {
+                        double s = std::min(std::max((double)A + 0.05, video_src_time(vmiAB->second, c, st.playhead)), srcDurAB);
+                        if (s >= srcDurAB - 1e-3) c.params.erase("loop_out"); else c.params["loop_out"] = s;
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("B = the frame under the playhead (scrub the preview, then click)");
+                    if (hasB) { ImGui::SameLine(); if (ImGui::SmallButton("reset B##ab")) c.params.erase("loop_out"); }
+                    if (hasB) ImGui::TextDisabled("loops %.2fs of %.2fs  (A %.2f -> B %.2f)", B - A, srcDurAB, A, B);
+                    else      ImGui::TextDisabled("loops the whole source (%.2fs) from A; set B to shorten the loop", srcDurAB);
+                }
+                if (spd < 0.999f || spd > 1.001f || lm == 2 || c.params.contains("loop_out"))
+                    ImGui::TextDisabled("this clip's own audio is muted (retime / A-B loop would desync).");
             }
 
             // ── video audio: a video clip carries its OWN sound (NOT a separate track), low default
@@ -10659,6 +10711,7 @@ static void write_export_plan(Project& p, const std::string& path, int W, int H,
         // retimed footage (speed ≠ 1 / pingpong loop) goes silent — mirror the preview mixer
         if (std::fabs(c.params.value("speed", 1.0) - 1.0) > 1e-3) continue;
         if (c.params.is_object() && c.params.contains("loop") && c.params["loop"].is_string()) continue;
+        if (c.params.is_object() && c.params.contains("loop_out")) continue;   // A-B sub-loop → muted (mirror preview)
         auto rit = p.rows.find(c.row);
         if (rit == p.rows.end() || rit->second.type != "video") continue;
         double vol = c.params.value("video_volume", 0.12);
