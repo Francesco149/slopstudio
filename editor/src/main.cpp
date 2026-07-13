@@ -1825,18 +1825,22 @@ struct MixSrc { const Pcm* pcm; double start; double dur; float gain; double in_
 struct SfxEvent { double t; std::string wav; double gainDb; };
 static std::vector<SfxEvent> collect_sfx_events(Project& p);
 // music-duck windows around authored gag cues ("fade the music out for the punchline")
-static std::vector<std::pair<double,double>> collect_duck_windows(Project& p);
-static const double DUCK_OUT = 0.3, DUCK_IN = 0.6, DUCK_FLOOR = 0.07;   // fade-out s / fade-back s / floor
-static float duck_factor(double t, const std::vector<std::pair<double,double>>& wins) {
-    double d = 0;
+static const double DUCK_OUT = 0.3, DUCK_IN = 0.6, DUCK_FLOOR = 0.07;   // fade-out s / fade-back s / SFX-punchline floor
+static const double DUCK_VIDEO_FLOOR = 0.42;   // gentler whole-span dip for a video clip's own audio (~-7.5 dB)
+struct DuckWin { double a, b, floor; };        // [a,b] window + the bed's floor inside it (0=near-silent … 1=untouched)
+static std::vector<DuckWin> collect_duck_windows(Project& p);
+static float duck_factor(double t, const std::vector<DuckWin>& wins) {
+    double d = 0;   // deepest ducking depth (1-floor)*ramp across all windows overlapping t
     for (auto& w : wins) {
-        double down = (t - w.first) / DUCK_OUT;          // 0→1 entering the window
-        double up   = (w.second + DUCK_IN - t) / DUCK_IN; // 1→0 leaving it
+        double down = (t - w.a) / DUCK_OUT;              // 0→1 entering the window
+        double up   = (w.b + DUCK_IN - t) / DUCK_IN;     // 1→0 leaving it
         double m = std::min(down, up);
-        if (m > d) d = m;
+        if (m < 0) m = 0; if (m > 1) m = 1;
+        double dep = (1.0 - w.floor) * m;                // this window's dip at t
+        if (dep > d) d = dep;
     }
     if (d < 0) d = 0; if (d > 1) d = 1;
-    return (float)(1.0 - (1.0 - DUCK_FLOOR) * d);
+    return (float)(1.0 - d);
 }
 
 // Audio clips = clips on rows under a track of kind "audio" that have a ready, decodable asset
@@ -1933,7 +1937,7 @@ static std::vector<MixSrc> collect_audio(Project& p) {
 // (meta.gain_db — AFTER the per-clip loudness normalization, mirroring export.sh's post-amix
 // volume), clip, write interleaved 16-bit.
 static void audio_fill(const std::vector<MixSrc>& srcs, int16_t* out, int frames, double t0, float master = 1.f,
-                       const std::vector<std::pair<double,double>>* ducks = nullptr) {
+                       const std::vector<DuckWin>* ducks = nullptr) {
     std::vector<float> mix(frames, 0.f);
     for (auto& s : srcs) {
         const std::vector<float>& m = s.pcm->mono;
@@ -1993,7 +1997,7 @@ static void audio_stop()           { g_audioActive = false; audio_reset_buffers(
 static void audio_pump(Project& p) {
     if (!g_audioActive) return;
     std::vector<MixSrc> srcs = collect_audio(p);
-    std::vector<std::pair<double,double>> ducks = collect_duck_windows(p);
+    std::vector<DuckWin> ducks = collect_duck_windows(p);
     float master = (float)std::pow(10.0, p.masterGainDb / 20.0);
     for (int i = 0; i < AUD_NBUF; ++i) {
         if (!g_woFree[i]) {
@@ -4933,8 +4937,8 @@ static std::vector<SfxEvent> collect_sfx_events(Project& p) {
 // Duck windows: the music fades out under each authored gag cue and comes back after it —
 // "fade the music out + play the sound for the punchline" (the user's awkward-moment brief).
 // One window per sfx_cue clip (params.sfx_duck: false opts out): [cue, cue + sound length].
-static std::vector<std::pair<double,double>> collect_duck_windows(Project& p) {
-    std::vector<std::pair<double,double>> wins;
+static std::vector<DuckWin> collect_duck_windows(Project& p) {
+    std::vector<DuckWin> wins;
     for (auto& kv : p.clips) {
         Clip& c = kv.second;
         if (!c.params.is_object()) continue;
@@ -4943,7 +4947,29 @@ static std::vector<std::pair<double,double>> collect_duck_windows(Project& p) {
         double t = c.start + c.params.value("sfx_at", 0.0);
         Pcm* pc = get_pcm("library/sfx/" + cue + ".wav");
         double len = pc ? std::min(pc->dur, 2.5) : 1.8;
-        wins.push_back({t, t + len});
+        wins.push_back({t, t + len, DUCK_FLOOR});           // gag/SFX punchline → deep dip
+    }
+    // A video clip carrying its OWN audio ducks the bed over its whole span (default on;
+    // params.duck_music:false opts out) — mirror the mixer's "video audio is live" gating so we
+    // duck exactly when it actually plays, with a gentler floor than an SFX punchline.
+    for (auto& kv : p.clips) {
+        Clip& c = kv.second;
+        if (!c.params.is_object()) continue;
+        if (c.params.value("mute_audio", false)) continue;
+        if (!c.params.value("duck_music", true)) continue;
+        if (std::fabs(c.params.value("speed", 1.0) - 1.0) > 1e-3) continue;         // retimed → its audio is muted
+        if (c.params.contains("loop") && c.params["loop"].is_string()) continue;    // pingpong → muted
+        auto rit = p.rows.find(c.row);
+        if (rit == p.rows.end() || rit->second.type != "video") continue;
+        if (c.params.value("video_volume", 0.12) <= 0.0) continue;
+        // only duck if the source ACTUALLY has audio (cached decode; the mixer probes the same) —
+        // a silent gameplay b-roll clip has nothing to make room for, so it shouldn't dip the bed.
+        auto vmi = p.asset_video.find(c.asset);
+        std::string vsrc = (vmi != p.asset_video.end() && !vmi->second.src.empty()) ? vmi->second.src
+                           : (p.asset_uri.count(c.asset) ? p.asset_uri[c.asset] : std::string());
+        Pcm* vpc = vsrc.empty() ? nullptr : get_video_pcm(resolve_asset(vsrc));
+        if (!vpc || vpc->dur <= 0.0) continue;
+        wins.push_back({c.start, c.start + c.dur, DUCK_VIDEO_FLOOR});
     }
     return wins;
 }
@@ -9813,6 +9839,8 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
                     float vol = (float)(c.params.value("video_volume", 0.12) * 100.0);
                     ImGui::SetNextItemWidth(180);
                     if (ImGui::SliderFloat("volume", &vol, 0.f, 100.f, "%.0f%%")) c.params["video_volume"] = (double)(vol / 100.0);
+                    bool duckM = c.params.value("duck_music", true);
+                    if (ImGui::Checkbox("duck music under this clip", &duckM)) c.params["duck_music"] = duckM;
                     auto vmi = p.asset_video.find(c.asset);
                     std::string vsrc = (vmi != p.asset_video.end() && !vmi->second.src.empty()) ? vmi->second.src : std::string();
                     Pcm* vpc = vsrc.empty() ? nullptr : get_video_pcm(resolve_asset(vsrc));
@@ -10190,14 +10218,14 @@ static void write_export_plan(Project& p, const std::string& path, int W, int H,
                 if (rit->second.type == "music" && !duckWins.empty()) {
                     std::string dmax;
                     for (auto& w : duckWins) {
-                        double A = w.first - cstart, B = w.second - cstart;
+                        double A = w.a - cstart, B = w.b - cstart;
                         if (B + DUCK_IN < 0 || A > cdur) continue;   // window misses this clip
-                        char term[160];   // commas survive: export.sh single-quotes the whole value
-                        snprintf(term, sizeof term, "clip(min((t-(%.3f))/%.2f,((%.3f)-t)/%.2f),0,1)",
-                                 A, DUCK_OUT, B + DUCK_IN, DUCK_IN);
+                        char term[200];   // commas survive: export.sh single-quotes the whole value
+                        snprintf(term, sizeof term, "%.3f*clip(min((t-(%.3f))/%.2f,((%.3f)-t)/%.2f),0,1)",
+                                 1.0 - w.floor, A, DUCK_OUT, B + DUCK_IN, DUCK_IN);
                         dmax = dmax.empty() ? std::string(term) : ("max(" + dmax + "," + term + ")");
                     }
-                    if (!dmax.empty()) duckExpr = "1-0.93*" + dmax;
+                    if (!dmax.empty()) duckExpr = "1-(" + dmax + ")";
                 }
                 // ramp × duck (both are clip-local multipliers) → one vol_expr
                 if (!envExpr.empty() && !duckExpr.empty()) entry["vol_expr"] = "(" + envExpr + ")*(" + duckExpr + ")";
