@@ -2,12 +2,20 @@
 
 Hand-maintained "what's true right now." **Read this first after `CLAUDE.md`** and update it
 in the same change that lands work, so a fresh session reorients in ~60s. Last updated:
-**2026-07-13**. For the next editor UX/product pass, also read `docs/UX_NEXT.md`; for
-composing a video as an agent, **`docs/LLM_WORKFLOW.md`**. A large mouse-driven-UX overhaul
-is in progress — plan phases + status in the task list; Phase 0 (data safety) + Phase 1 landed.
+**2026-07-14**. For composing a video as an agent, **`docs/LLM_WORKFLOW.md`**.
+**★ A large mouse-driven-UX overhaul is IN PROGRESS — full plan + progress + resume instructions
+in `docs/UX_OVERHAUL.md` (READ IT to continue the arc).** Landed: Phase 0 (data safety) · Phase 1
+(timeline quick wins) · video-duck · Phase 2 (cosmic2d theme + owner review fixes) · Phase 3 add
+tools (quick-add palette + click-to-place + generic add mode, overlap-aware). Next: Phase 3 remainder
+(gap-fill-on-click, A/B video loop, marquee, drag-drop-copy) → Phase 4 layout engine (checkpoint first).
 
-> **★ NEWEST (2026-07-13): UX-OVERHAUL Phase 0 (data safety) + Phase 1 (timeline quick wins) + video-duck.**
-> First tranche of a big low-friction-UX pass (owner: "make it low friction, mouse-driven, no patchwork").
+> **★ NEWEST (2026-07-13/14): UX-OVERHAUL Phases 0–2 + add tools. Full handoff: `docs/UX_OVERHAUL.md`.**
+> Big low-friction-UX pass (owner: "make it low friction, mouse-driven, no patchwork"). **Phase 2** =
+> cosmic2d chrome theme (palette+metrics) + Inter UI font (video fonts untouched) + owner review fixes
+> (compact track buttons, resizable Media/Inspector/timeline panels via v_splitter/h_splitter,
+> vertically-draggable tracks, middle-mouse vertical pan). **Phase 3 add tools** = a transport-bar
+> placement palette (arm a type or `A`=generic, click/drag empty timeline to add; overlap-aware:
+> clicked lane > free lane > new track, live preview, auto-select + auto-exit). Phase 0/1/duck below:
 > - **Asset resolution is now CWD-independent** (`g_repoRoot`, derived from the exe path, marker-verified):
 >   `library/` beds + `cache/` gens anchor to the repo, project `assets/` art absolutises against the
 >   project dir. Fixes the dashboard-launch **empty Media library** + the launcher's dropped beds (both
