@@ -6558,6 +6558,7 @@ static double snap_edge_time(Project& p, const std::string& movingId, double t, 
 }
 
 static std::string choose_place_row(Project& p, const std::string& kind, const std::string& clickedRow, double t, double dur);
+static std::string choose_row_of_type(Project& p, const std::string& want, const std::string& clickedRow, double t, double dur);
 static double place_default_dur(const std::string& kind);   // placement-tool helpers (defined with add_quick_clip)
 
 static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, GenLite>& gen) {
@@ -7103,27 +7104,33 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
         static double placeT0 = -1e30; static std::string placeRow;
         bool active = ImGui::IsItemActive();
         if (ImGui::IsItemActivated()) { placeT0 = tAt(pio.MousePos.x); placeRow = rowAt(pio.MousePos.y); }
+        bool generic = (g_placeType == "__generic__");
         if (active || ImGui::IsItemHovered()) {   // live preview: WHICH lane will it land on (re-evaluated as it grows)?
             double a  = active ? std::min(placeT0, tAt(pio.MousePos.x)) : tAt(pio.MousePos.x);
             double bb = active ? std::max(placeT0, tAt(pio.MousePos.x)) : a;
-            double durP = (bb - a > 0.15) ? (bb - a) : place_default_dur(g_placeType);
             std::string clk = active ? placeRow : rowAt(pio.MousePos.y);
-            std::string tgt = choose_place_row(p, g_placeType, clk, a, durP);   // clicked lane > free lane > new
-            bool newLane = tgt.empty();
-            float py = rowY(tgt);
-            if (py < 0) { py = rowY(clk); if (py < 0 && !laneY.empty()) py = laneY.back().second; }   // new lane rides the cursor lane
-            float x0 = T2X(a), x1 = T2X(std::max(bb, a + 0.02));
-            ImU32 fill = newLane ? IM_COL32(0x8a, 0x84, 0xb0, 70) : IM_COL32(0x7f, 0xd8, 0xa8, 70);
-            ImU32 line = newLane ? IM_COL32(0x8a, 0x84, 0xb0, 235) : IM_COL32(0x7f, 0xd8, 0xa8, 235);
-            if (py >= 0) {
-                dl->AddRectFilled(ImVec2(x0, py + 2), ImVec2(x1, py + ROWH - 3), fill, 4.f);
-                dl->AddRect(ImVec2(x0, py + 2), ImVec2(x1, py + ROWH - 3), line, 4.f, 0, 1.5f);
-                if (newLane) dl->AddText(ImVec2(x0 + 5, py + 6), IM_COL32(0xe8, 0xe4, 0xff, 255), "+ new track");
+            std::string want = generic ? (p.rows.count(clk) ? p.rows[clk].type : std::string()) : std::string();
+            if (!generic || !want.empty()) {   // generic needs a real lane under the cursor
+                double durP = (bb - a > 0.15) ? (bb - a) : place_default_dur(generic ? want : g_placeType);
+                std::string tgt = generic ? choose_row_of_type(p, want, clk, a, durP) : choose_place_row(p, g_placeType, clk, a, durP);
+                bool newLane = tgt.empty();
+                float py = rowY(tgt);
+                if (py < 0) { py = rowY(clk); if (py < 0 && !laneY.empty()) py = laneY.back().second; }   // new lane rides the cursor lane
+                float x0 = T2X(a), x1 = T2X(std::max(bb, a + 0.02));
+                ImU32 fill = newLane ? IM_COL32(0x8a, 0x84, 0xb0, 70) : IM_COL32(0x7f, 0xd8, 0xa8, 70);
+                ImU32 line = newLane ? IM_COL32(0x8a, 0x84, 0xb0, 235) : IM_COL32(0x7f, 0xd8, 0xa8, 235);
+                if (py >= 0) {
+                    dl->AddRectFilled(ImVec2(x0, py + 2), ImVec2(x1, py + ROWH - 3), fill, 4.f);
+                    dl->AddRect(ImVec2(x0, py + 2), ImVec2(x1, py + ROWH - 3), line, 4.f, 0, 1.5f);
+                    if (newLane) dl->AddText(ImVec2(x0 + 5, py + 6), IM_COL32(0xe8, 0xe4, 0xff, 255), "+ new track");
+                }
             }
         }
         if (ImGui::IsItemDeactivated() && placeT0 > -1e29) {   // release → commit (deferred: p may add a track)
             double a = std::min(placeT0, tAt(pio.MousePos.x)), b = std::max(placeT0, tAt(pio.MousePos.x));
-            g_placeReq = g_placeType; g_placeReqT = a; g_placeReqDur = (b - a > 0.15) ? (b - a) : -1.0; g_placeReqRow = placeRow;
+            if (!generic || p.rows.count(placeRow)) {   // generic needs a real clicked lane
+                g_placeReq = g_placeType; g_placeReqT = a; g_placeReqDur = (b - a > 0.15) ? (b - a) : -1.0; g_placeReqRow = placeRow;
+            }
             placeT0 = -1e30;
         }
     }
@@ -7992,8 +7999,7 @@ static bool row_span_free(Project& p, const std::string& rowId, double t, double
 // Pick the placement row: the CLICKED lane (if it's the right type and the span fits) > any existing
 // row of the type where it fits (track/lane order) > "" (caller makes a new lane). This is what lets a
 // click land in the clicked lane's free space, spill to another lane, or make a new track on demand.
-static std::string choose_place_row(Project& p, const std::string& kind, const std::string& clickedRow, double t, double dur) {
-    std::string want = place_row_type(kind);
+static std::string choose_row_of_type(Project& p, const std::string& want, const std::string& clickedRow, double t, double dur) {
     if (!clickedRow.empty()) {
         auto rit = p.rows.find(clickedRow);
         if (rit != p.rows.end() && rit->second.type == want && row_span_free(p, clickedRow, t, dur)) return clickedRow;
@@ -8004,6 +8010,9 @@ static std::string choose_place_row(Project& p, const std::string& kind, const s
         if (rit != p.rows.end() && rit->second.type == want && row_span_free(p, rid, t, dur)) return rid;
     }
     return "";   // no room anywhere → new lane
+}
+static std::string choose_place_row(Project& p, const std::string& kind, const std::string& clickedRow, double t, double dur) {
+    return choose_row_of_type(p, place_row_type(kind), clickedRow, t, dur);
 }
 // Create + set up a fresh row for a kind (the "new lane" case): rig + driven_by for a host, the golden
 // clone voice for a VO row, and a cover backdrop sinks to the bottom of the stack.
@@ -8078,6 +8087,63 @@ static std::string add_quick_clip(Project& p, const std::string& kind, double t,
     std::string row = choose_place_row(p, kind, clickedRow, t, dCheck);
     if (row.empty()) row = create_place_row(p, kind);
     return place_clip_on_row(p, kind, row, t, dur);
+}
+
+// Generic add (hotkey A): a clip in the CLICKED lane's type, inheriting the nearest reference clip's
+// settings — the whole transform + non-content params (playback rate, loop, framing, style, glow, …),
+// preferring an occupying/BEFORE clip over one AFTER. Content (asset/text/code) stays empty to fill.
+// Overlap-aware: lands in the clicked lane's free space, spills to another lane of that type, or makes a
+// new lane of the same type (copying the clicked lane's rig/voice/etc.). No reference → typed defaults.
+static std::string add_generic_clip(Project& p, const std::string& clickedRow, double t, double dur) {
+    auto crit = p.rows.find(clickedRow);
+    if (crit == p.rows.end()) return "";
+    if (t < 0) t = 0;
+    std::string rtype = crit->second.type;
+    std::string ref; double refScore = 1e30;   // occupying t > nearest BEFORE > nearest AFTER (on the clicked lane)
+    for (auto& cid : crit->second.clips) {
+        auto c = p.clips.find(cid); if (c == p.clips.end()) continue;
+        double s = c->second.start, e = s + c->second.dur, score;
+        if (s <= t + 1e-3 && e >= t - 1e-3) score = -1.0;      // occupies the click → best reference
+        else if (e <= t) score = (t - e);                       // before
+        else score = (s - t) + 1e6;                             // after (always worse than any before)
+        if (score < refScore) { refScore = score; ref = cid; }
+    }
+    double dCheck = dur > 0.02 ? dur : (ref.empty() ? place_default_dur(rtype) : p.clips[ref].dur);
+    std::string row = choose_row_of_type(p, rtype, clickedRow, t, dCheck);
+    if (row.empty()) {   // no room → a new lane of the same type, matching the clicked lane's row params
+        row = add_track(p, rtype, crit->second.name.empty() ? rtype : crit->second.name);
+        if (!row.empty() && crit->second.params.is_object() && !crit->second.params.empty()) {
+            p.rows[row].params = crit->second.params;   // rig / voice_preset / driven_by / model / lora
+            if (p.doc.contains("rows") && p.doc["rows"].contains(row)) p.doc["rows"][row]["params"] = p.rows[row].params;
+        }
+    }
+    if (row.empty()) return "";
+    std::string id; int m = 1; while (p.clips.count(id = "c_" + rtype + std::to_string(m))) m++;
+    double d = dur > 0.02 ? dur : (ref.empty() ? place_default_dur(rtype) : p.clips[ref].dur);
+    Clip c; c.id = id; c.row = row; c.type = rtype; c.start = t; c.dur = d; c.label = rtype;
+    if (!ref.empty()) {   // inherit the reference's transform + non-content params
+        Clip& s = p.clips[ref];
+        for (int i = 0; i < 2; i++) { c.tx_pos[i] = s.tx_pos[i]; c.tx_scale[i] = s.tx_scale[i]; c.tx_anchor[i] = s.tx_anchor[i]; }
+        c.tx_rot = s.tx_rot; c.tx_opacity = s.tx_opacity;
+        static const char* CONTENT[] = {"text", "code", "transcript", "dialog", "sfx_cue", "sfx_at", "credit", "in", "title", "artist"};
+        if (s.params.is_object()) for (auto& pr : s.params.items()) {
+            bool skip = false; for (auto* k : CONTENT) if (pr.key() == k) { skip = true; break; }
+            if (!skip) c.params[pr.key()] = pr.value();
+        }
+        if (!s.label.empty()) c.label = s.label;
+    } else {   // typed defaults for an empty lane
+        if      (rtype == "caption") c.params = json{{"text", "New caption"}, {"style", "lower_third"}};
+        else if (rtype == "code")    c.params = json{{"lang", "python"}, {"code", "# ..."}, {"typewrite", true}, {"line_numbers", true}};
+        else if (rtype == "tts")     c.params = json{{"text", "New line — type here, then Generate VO"}};
+        else if (rtype == "avatar")  c.params = json{{"emotion", "auto"}, {"framing", "bust"}};
+        else if (rtype == "shape")   c.params = json{{"kind", "box"}, {"thickness", 3.0}};
+    }
+    p.clips[id] = c; p.rows[row].clips.push_back(id);
+    if (p.doc.contains("clips"))
+        p.doc["clips"][id] = json{{"row", row}, {"start", t}, {"dur", d}, {"params", c.params},
+            {"transform", json{{"pos", {c.tx_pos[0], c.tx_pos[1]}}, {"scale", {c.tx_scale[0], c.tx_scale[1]}}, {"rot", c.tx_rot}, {"opacity", c.tx_opacity}, {"anchor", {c.tx_anchor[0], c.tx_anchor[1]}}}}};
+    if (p.doc.contains("rows") && p.doc["rows"].contains(row) && p.doc["rows"][row].contains("clips")) p.doc["rows"][row]["clips"].push_back(id);
+    return id;
 }
 
 // ── Library panel: browse/search/preview the global media library; double-click drops at the
@@ -10162,12 +10228,20 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
             !ImGui::GetIO().WantTextInput && !st.selected.empty())
             delReq = st.selected;     // Del / Backspace = delete the selected clip (never while typing in a field)
         if (ImGui::IsKeyPressed(ImGuiKey_Escape) && !g_placeType.empty()) g_placeType.clear();   // disarm the placement tool
+        if (ImGui::IsKeyPressed(ImGuiKey_A) && !ImGui::GetIO().WantTextInput && !ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyAlt)
+            g_placeType = (g_placeType == "__generic__") ? std::string() : std::string("__generic__");   // A = generic add mode
         ImGui::SameLine();
         ImGui::Text("%6.2f / %.2f s", st.playhead, dur);
         ImGui::SameLine();
         ImGui::TextDisabled("(space = play/pause)");
-        // ── placement palette: arm a clip type, then click empty timeline space to add it (drag = length) ──
+        // ── placement palette: A = generic (match neighbours); or arm a type, then click empty timeline ──
         ImGui::SameLine(); ImGui::TextDisabled("  +");
+        { ImGui::SameLine(); bool on = (g_placeType == "__generic__");
+          if (on) { ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(0x8a, 0x84, 0xd0, 255));
+                    ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(0x14, 0x12, 0x20, 255)); }
+          if (ImGui::SmallButton("A")) g_placeType = on ? std::string() : std::string("__generic__");
+          if (on) ImGui::PopStyleColor(2);
+          if (ImGui::IsItemHovered()) ImGui::SetTooltip("Generic add (A): click a lane → a clip that matches its neighbours"); }
         struct PT { const char* label; const char* kind; };
         static const PT PTS[] = { {"Host","host"}, {"Voice","voice"}, {"Sound","sound"}, {"Music","music"},
                                   {"BG","backdrop"}, {"Caption","caption"}, {"Code","code"}, {"Shape","shape"} };
@@ -10179,7 +10253,10 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
             if (ImGui::SmallButton(pt.label)) g_placeType = on ? std::string() : pt.kind;
             if (on) ImGui::PopStyleColor(2);
         }
-        if (!g_placeType.empty()) { ImGui::SameLine(); ImGui::TextColored(ImVec4(0.5f, 0.85f, 0.66f, 1), "→ click/drag empty timeline (Esc cancels)"); }
+        if (!g_placeType.empty()) { ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.5f, 0.85f, 0.66f, 1),
+                g_placeType == "__generic__" ? "→ click a lane (matches neighbours; Esc cancels)"
+                                             : "→ click/drag empty timeline (Esc cancels)"); }
     }
 
     ImGui::BeginChild("timeline", ImVec2(0, 0), true, ImGuiWindowFlags_NoScrollWithMouse);  // wheel = zoom only; lanes scroll via scrollbar / Ctrl+wheel
@@ -10194,8 +10271,9 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
     // ends outside the ImGui active-item model, so flag it → Ctrl+Z right after still has the step.
     // A Ctrl+drag on the timeline requests a duplicate via a global (DrawTimeline can't see dupReq).
     if (dupReq.empty() && !g_dragDupReq.empty()) { dupReq = g_dragDupReq; g_dragDupReq.clear(); }
-    if (!g_placeReq.empty()) {   // placement tool released on empty timeline → add the clip (overlap-aware; may add a track)
-        std::string nid = add_quick_clip(p, g_placeReq, g_placeReqT, g_placeReqDur, g_placeReqRow);
+    if (!g_placeReq.empty()) {   // placement tool released → add the clip (overlap-aware; may add a track)
+        std::string nid = (g_placeReq == "__generic__") ? add_generic_clip(p, g_placeReqRow, g_placeReqT, g_placeReqDur)
+                                                        : add_quick_clip(p, g_placeReq, g_placeReqT, g_placeReqDur, g_placeReqRow);
         if (!nid.empty()) { st.selected = nid; g_bufFor.clear(); g_undoDirty = true; }
         g_placeReq.clear(); g_placeReqRow.clear();
     }
