@@ -6640,8 +6640,24 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
     std::map<std::string, bool> rowAudio;
     std::string moveTrack; int moveDir = 0;   // deferred track reorder (changes draw/z-order)
     std::string deleteTrack;                   // deferred track delete (mutates membership → after the loop)
+    std::string dragTrackId; float dragMouseY = 0;                 // a track dragged vertically → live-reorder p.tracks
+    struct TrackRange { std::string id; float yTop, yBot; };       // for the drop target
+    std::vector<TrackRange> trackRanges;
     for (auto& tk : p.tracks) {
         bool firstRow = true;
+        float trackTop = laneTop + lane * ROWH;
+        int trackRowN = 0; for (auto& rid : tk.rows) if (p.rows.count(rid)) trackRowN++;
+        float trackH = std::max(1, trackRowN) * ROWH;
+        bool handleHot = false;
+        {   // DRAG the track's gutter (left of the reorder buttons) up/down to reorder it live
+            ImGui::PushID(("thandle" + tk.id).c_str());
+            ImGui::SetCursorScreenPos(ImVec2(origin.x, trackTop));
+            ImGui::InvisibleButton("##th", ImVec2(std::max(24.f, (trackX - 58.f) - origin.x), std::max(ROWH - 2.f, trackH - 2.f)));
+            if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) { dragTrackId = tk.id; dragMouseY = ImGui::GetIO().MousePos.y; }
+            handleHot = ImGui::IsItemHovered() || ImGui::IsItemActive();
+            if (handleHot) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+            ImGui::PopID();
+        }
         for (auto& rid : tk.rows) {
             auto it = p.rows.find(rid);
             if (it == p.rows.end()) continue;
@@ -6653,24 +6669,44 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
             dl->AddText(ImVec2(origin.x + 6, ly + 7), IM_COL32(212, 212, 222, 255), lab.c_str());
             if (firstRow) {   // ▲▼ reorder (higher = drawn on top) · ✕ delete the whole track
                 ImGui::PushID(("trk" + tk.id).c_str());
-                ImGui::SetCursorScreenPos(ImVec2(trackX - 52, ly + 4));
+                // compact padding + right-anchored inside the gutter so the buttons never spill into the
+                // clip area (the roomier global FramePadding would push 3 buttons past trackX).
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 2));
+                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f);
+                bool canDel = p.tracks.size() > 1;
+                ImGui::SetCursorScreenPos(ImVec2(trackX - (canDel ? 56.f : 38.f), ly + 4));
                 if (ImGui::SmallButton("^")) { moveTrack = tk.id; moveDir = -1; }
-                ImGui::SameLine(0, 1);
+                ImGui::SameLine(0, 2);
                 if (ImGui::SmallButton("v")) { moveTrack = tk.id; moveDir = 1; }
-                if (p.tracks.size() > 1) {   // never delete the last track
-                    ImGui::SameLine(0, 1);
+                if (canDel) {   // never delete the last track
+                    ImGui::SameLine(0, 2);
                     ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(122, 42, 46, 255));
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(184, 58, 62, 255));
                     if (ImGui::SmallButton("x")) deleteTrack = tk.id;
                     ImGui::PopStyleColor(2);
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("delete this track — its rows + all their clips");
                 }
+                ImGui::PopStyleVar(2);
                 ImGui::PopID();
                 firstRow = false;
             }
             laneY.push_back({rid, ly});
             rowAudio[rid] = (tk.kind == "audio");
             lane++;
+        }
+        if (handleHot)   // drag tint OVER the gutter (after the row bg/labels so it reads)
+            dl->AddRectFilled(ImVec2(origin.x, trackTop), ImVec2(trackX - 2, trackTop + trackH - 2), IM_COL32(0x88, 0x78, 0xd0, 45));
+        trackRanges.push_back({tk.id, trackTop, trackTop + trackH});
+    }
+    if (!dragTrackId.empty() && trackRanges.size() > 1) {   // live vertical reorder to the cursor's slot
+        int from = -1, ins = (int)trackRanges.size();
+        for (int k = 0; k < (int)trackRanges.size(); k++) if (trackRanges[k].id == dragTrackId) { from = k; break; }
+        for (int k = 0; k < (int)trackRanges.size(); k++) { float mid = (trackRanges[k].yTop + trackRanges[k].yBot) * 0.5f; if (dragMouseY < mid) { ins = k; break; } }
+        if (from >= 0 && ins != from && ins != from + 1) {
+            Track moved = p.tracks[from];
+            p.tracks.erase(p.tracks.begin() + from);
+            if (ins > from) ins--;
+            p.tracks.insert(p.tracks.begin() + ins, moved);
         }
     }
     if (!moveTrack.empty()) {
@@ -7880,6 +7916,8 @@ static std::string add_native_clip_at(Project& p, const std::string& type, doubl
 // ── Library panel: browse/search/preview the global media library; double-click drops at the
 // playhead, drag onto the timeline places at the cursor. Add (copies in), rename, delete in place.
 static bool g_showLibrary = true;
+static float g_leftW = 318.f;    // media-pane width (drag the splitter to resize)
+static float g_inspW = 380.f;    // right inspector width (drag to resize; the preview flexes)
 static char g_libSearch[128] = "";
 static int  g_libTypeFilter = 0;             // 0=all 1=image 2=audio 3=video
 static std::string g_libSelected;            // selected item path (drives the viewer, L5)
@@ -8990,6 +9028,21 @@ static void draw_project_settings(Project& p) {
     ImGui::TextDisabled("%s  %g x %g @ %d fps", p.title.c_str(), p.width, p.height, p.fps);
 }
 
+// A draggable vertical splitter (6px wide, height h) that resizes a panel width `*w` by the drag,
+// clamped [mn,mx]. `sign` = +1 when the panel it resizes sits to the splitter's LEFT (drag right →
+// wider), -1 when to its RIGHT. Draws a thin handle that brightens on hover.
+static void v_splitter(const char* id, float* w, float h, float mn, float mx, float sign) {
+    ImGui::InvisibleButton(id, ImVec2(6.0f, h));
+    if (ImGui::IsItemActive()) *w += sign * ImGui::GetIO().MouseDelta.x;
+    if (*w < mn) *w = mn;  if (*w > mx) *w = mx;
+    bool hot = ImGui::IsItemHovered() || ImGui::IsItemActive();
+    if (hot) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+    ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+    float cx = (a.x + b.x) * 0.5f;
+    ImGui::GetWindowDrawList()->AddLine(ImVec2(cx, a.y + 4), ImVec2(cx, b.y - 4),
+        hot ? IM_COL32(0x8a, 0x84, 0xb0, 255) : IM_COL32(0x3a, 0x35, 0x60, 255), hot ? 2.0f : 1.0f);
+}
+
 static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::string, GenLite>& gen) {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(vp->WorkPos);
@@ -9192,21 +9245,27 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
     }
 
     ImVec2 workspace = ImGui::GetContentRegionAvail();
-    float leftW = g_showLibrary ? 318.f : 0.f;
-    if (leftW > 0.f && workspace.x < 980.f) leftW = 260.f;
-    if (leftW > 0.f) {
-        ImGui::BeginChild("media_browser", ImVec2(leftW, 0), true);
+    if (g_showLibrary) {
+        float leftMx = std::max(240.f, workspace.x - 520.f);
+        if (g_leftW < 200.f) g_leftW = 200.f;  if (g_leftW > leftMx) g_leftW = leftMx;
+        ImGui::BeginChild("media_browser", ImVec2(g_leftW, 0), true);
         ImGui::TextUnformatted("Media");
         ImGui::Separator();
         draw_library_contents(p, st);
         ImGui::EndChild();
-        ImGui::SameLine();
+        ImGui::SameLine(0, 0);
+        v_splitter("##splitLeft", &g_leftW, workspace.y, 200.f, leftMx, +1.0f);
+        ImGui::SameLine(0, 0);
     }
     ImGui::BeginGroup();
 
     float topH = ImGui::GetContentRegionAvail().y * 0.5f;
+    float groupW = ImGui::GetContentRegionAvail().x;
+    float inspMx = std::max(320.f, groupW - 360.f);
+    if (g_inspW < 260.f) g_inspW = 260.f;  if (g_inspW > inspMx) g_inspW = inspMx;
+    float previewW = groupW - g_inspW - 6.f; if (previewW < 200.f) previewW = 200.f;
 
-    ImGui::BeginChild("preview", ImVec2(ImGui::GetContentRegionAvail().x * 0.6f, topH), true);
+    ImGui::BeginChild("preview", ImVec2(previewW, topH), true);
     {
         ImGui::TextUnformatted("Preview");
         ImVec2 a = ImGui::GetCursorScreenPos();
@@ -9237,7 +9296,9 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
     }
     ImGui::EndChild();
 
-    ImGui::SameLine();
+    ImGui::SameLine(0, 0);
+    v_splitter("##splitRight", &g_inspW, topH, 260.f, inspMx, -1.0f);
+    ImGui::SameLine(0, 0);
     ImGui::BeginChild("properties", ImVec2(0, topH), true);
     if (ImGui::BeginTabBar("right_panes")) {
         if (ImGui::BeginTabItem("Inspector")) {
