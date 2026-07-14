@@ -19,9 +19,12 @@ session**). The reference cut + all conventions are in `docs/LLM_WORKFLOW.md`; f
    so it grades EVERYTHING, at strength 0.25 · **vignette 0.5** (`look:false` to drop it); **insets sit on the
    bare checker** (`blur_fill:true` opts a nice photo into the blurred backdrop); a **fullscreen video beat
    solos** (no host over wide footage); **fullscreen SCREENSHOTS become framed insets on the checker,
-   alternating** hosted-beside ↔ centered-solo card (`cover:true`/`host:true` opt out); **code beats compile
-   SOLO + centered** on the checker (no host); **host-only beats rotate a room↔desk backdrop**;
-   **quote/term/caption beats sit on the checker**; sections = blur-swaps; captions/code native.
+   alternating** hosted-beside ↔ centered-solo card (`cover:true`/`host:true` opt out) — a HOSTED inset
+   corners the host SMALL (a lower-corner commentator, wings clear of the card); **code beats compile SOLO +
+   centered on the BARE bright grid** (no filler, and the filter carves out code spans so the grade never
+   crushes the grid); **host-only beats rotate a room↔desk backdrop**; **quote/term/caption beats sit on the
+   checker**; **term PILLS use a condensed all-caps display font** (`meta.pill_font` bebas|anton|archivo,
+   default bebas); sections = blur-swaps; captions/code native.
 4. **VO** — `adopt` verbatim lines from an existing tuned cut where possible; `genvo` bulk-generates the
    rest on lame; then `retime` time-warps the timeline onto the real audio durations (rate-aware for shorts)
    + adds a **scene crossfade** on full-frame cuts. Split every sentence into its own TTS clip; tune
@@ -30,8 +33,9 @@ session**). The reference cut + all conventions are in `docs/LLM_WORKFLOW.md`; f
      is the RECORDED **`presets/voice-snips/gemma-heh.wav`** (the "Heh~" from luckymas3 b01). The compiler now
      does this AUTOMATICALLY: a beat whose LINE is just a laugh (`Heh~` / `Fufu~` / `heh heh` / `ふふふ` /
      `*giggle*`, or `"laugh": true`) auto-wires the golden take (genvo skips it) and renders it as a smug
-     closeup that snaps in. So just write the laugh as a beat line — don't hand-wire it. Same for other
-     stumble-prone vocalizations → grow `presets/voice-snips/` and reuse verbatim.
+     closeup that snaps in. A line that LEADS with a laugh then speaks (`"Heh~ Welcome back, mortals"`) auto-
+     SPLITS into a golden-giggle beat + the remainder as normal TTS. So just write the laugh into the line —
+     don't hand-wire it. Same for other stumble-prone vocalizations → grow `presets/voice-snips/`, reuse verbatim.
 5. **GATE — lint MUST pass before render.** `slop.py lint <proj>` flags black spans, no-visual narration,
    asset repeats, missing files, stale VO, stale caption overrides (a reworded line whose `params.transcript`
    kept the OLD wording), overlaps, negative starts, unknown emotions. Also run the
