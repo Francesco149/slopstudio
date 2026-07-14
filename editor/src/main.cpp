@@ -108,6 +108,11 @@ struct Project {
     bool songCredits = true;    // auto "now playing" chip (♪ title — artist) at each song's start (meta.song_credits)
     double songCreditSecs = 10; // how long the chip holds before fading (meta.song_credit_secs)
     std::string songCreditCorner = "tl";  // tl/tr/bl/br — where the chip sits (meta.song_credit_corner)
+    // DEFAULT background style — what fills the frame BEHIND the content when no cover backdrop is present
+    // (empty regions behind an inset / host). "checker" = a subtle diagonal-scrolling soft checkerboard in
+    // the brand purples (default, gives dead space a branded texture); "black"/"none" = the flat black base
+    // (old behaviour). A `filler` clip (explicit blur backdrop) still wins over this within its span. (meta.bg)
+    std::string bgStyle = "checker";
     // per-project tunable position anchors (meta.anchors): category key → base [x,y]. A clip that
     // names one (params.anchor, e.g. "bust"/"code_host"/"tr_room") renders at anchor + transform.pos,
     // so its pos is an OFFSET and one Project-panel knob nudges the whole category in THIS project
@@ -180,6 +185,7 @@ static Project parse_project_json(json j, const std::string& path) {
         p.speechRate = meta.value("speech_rate", portrait ? 1.3 : 1.0);
         p.speechGainDb = meta.value("speech_gain_db", 12.0);      // global speech boost (+12 default)
         p.songCredits = meta.value("song_credits", true);         // auto on-screen now-playing chip
+        p.bgStyle = meta.value("bg", std::string("checker"));      // default frame background style (behind content)
         p.songCreditSecs = meta.value("song_credit_secs", 10.0);
         p.songCreditCorner = meta.value("song_credit_corner", std::string("tl"));
         if (meta.contains("anchors") && meta["anchors"].is_object())
@@ -5551,11 +5557,40 @@ static void draw_song_credit(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0,
     paint(0, 0, 1.0f);
 }
 
+// 4d — the DEFAULT frame background: a soft, diagonally-scrolling checkerboard in the brand purples.
+// Procedural (no readback), drawn at the base clear so it sits BEHIND every layer — a cover backdrop or a
+// `filler` blur hides it, so it only textures the dead space behind an inset / host / letterboxed media.
+// Low contrast (base vs +8-levels "raised") = a subtle premium weave, not a loud checker; the slow diagonal
+// drift gives the frame quiet life. Cheap: ~150 rects/frame, no per-pixel work. Driven by the frame time so
+// preview and export animate identically.
+static void draw_bg_checker(ImDrawList* dl, ImVec2 f0, float fw, float fh, double t) {
+    const ImU32 base = IM_COL32(0x12, 0x10, 0x1e, 255);
+    dl->AddRectFilled(f0, ImVec2(f0.x + fw, f0.y + fh), base);
+    const float cell  = std::max(40.0f, fh / 15.0f);          // finer weave → thin letterbox bars read as texture, not stray squares
+    const float drift = (float)std::fmod(t * (cell / 16.0), cell * 2.0);   // diagonal scroll; wraps at 2 cells (parity period → seamless)
+    // two raised tones (a soft "woven" look, not a flat 2-tone checker): the brighter one carries a hint of
+    // the brand periwinkle. Both only a few levels over the base → a premium, barely-there texture.
+    const ImU32 rA = IM_COL32(0x1a, 0x17, 0x2a, 255);
+    const ImU32 rB = IM_COL32(0x20, 0x1c, 0x33, 255);
+    int nx = (int)(fw / cell) + 4, ny = (int)(fh / cell) + 4;
+    for (int j = -2; j < ny; j++)
+        for (int i = -2; i < nx; i++) {
+            if (((i + j) & 1) == 0) continue;                  // draw only the raised cells over the base → checker
+            float x = f0.x + i * cell - drift, y = f0.y + j * cell - drift;
+            dl->AddRectFilled(ImVec2(x, y), ImVec2(x + cell, y + cell), (i & 1) ? rB : rA);
+        }
+}
+
 static void composite_frame(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0, float fw, float fh) {
     // Black base normally; a soft dark tint while rendering the filler-backdrop pre-pass, so a genuine
     // empty region (a beat with content only on one side) reads as a dim backdrop after the blur, not a
     // stark black hole — without reintroducing the flat bright grey the old filler fell back to.
-    dl->AddRectFilled(f0, ImVec2(f0.x + fw, f0.y + fh), g_compositeSkipFillers ? IM_COL32(20, 20, 26, 255) : IM_COL32(0, 0, 0, 255));
+    if (g_compositeSkipFillers)                               // blur pre-pass → dim flat base (the filler blurs over it)
+        dl->AddRectFilled(f0, ImVec2(f0.x + fw, f0.y + fh), IM_COL32(20, 20, 26, 255));
+    else if (p.bgStyle == "checker")                          // default: soft diagonal-scrolling brand checkerboard
+        draw_bg_checker(dl, f0, fw, fh, st.playhead);
+    else                                                      // "black"/"none": the old flat black base
+        dl->AddRectFilled(f0, ImVec2(f0.x + fw, f0.y + fh), IM_COL32(0, 0, 0, 255));
     g_frameTextBoxes.clear();             // repopulated by draw_caption_clip; read by draw_song_credit at the end
     const float s = fw / (float)p.width;  // project px → preview px
     const ImVec2 center(f0.x + fw * 0.5f, f0.y + fh * 0.5f);
@@ -9395,6 +9430,17 @@ static void draw_project_settings(Project& p) {
     ImGui::TextDisabled(p.format == "portrait"
         ? "shorts defaults: built-in SFX on, ~1.3x speech, fast pace"
         : "full-video defaults: built-in SFX off, 1.0x speech");
+    // ── background: what fills the frame BEHIND content (dead space behind an inset / host / card) ──
+    ImGui::SeparatorText("background");
+    { const char* BGL[] = {"soft checkerboard (default)", "flat black"};
+      int bgi = (p.bgStyle == "black" || p.bgStyle == "none") ? 1 : 0;
+      ImGui::SetNextItemWidth(240);
+      if (ImGui::Combo("scene backdrop", &bgi, BGL, 2)) {
+          p.bgStyle = bgi ? "black" : "checker"; meta["bg"] = p.bgStyle; g_undoDirty = true; }
+      if (ImGui::IsItemHovered())
+          ImGui::SetTooltip("what shows in dead space behind an inset / host / letterboxed media.\n"
+                            "checkerboard = a subtle diagonal-scrolling brand-purple weave (a cover\n"
+                            "backdrop or a `filler` blur still hides it). flat black = the old base."); }
     ImGui::SeparatorText("audio");
     bool sfx = p.sfx;
     if (ImGui::Checkbox("built-in sound effects", &sfx)) { p.sfx = sfx; meta["sfx"] = sfx; g_undoDirty = true; }
