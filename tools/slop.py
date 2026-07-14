@@ -1364,10 +1364,28 @@ def cmd_retime(p, a):
                  or "filler" in cid or "backdrop" in cid or "_bg" in cid)
         if backing and ce<vo_end-0.05:                           # a REAL gap (>50ms), not sub-frame rounding
             c["dur"]=round(vo_end-cs,3); nx+=1
+    # SCENE CROSSFADE: when a FULL-FRAME shot (layout fullscreen/cover/fit) arrives contiguously after
+    # another image/video clip on the same row, let it cross-DISSOLVE instead of hard-snapping — extend the
+    # OUTGOING clip to linger XF into the incoming; the editor cross-dissolves the same-row overlap (the
+    # incoming fades in over the lingering outgoing), so a scene change is smooth (owner: "the whole scene
+    # snaps to the new scene, maybe a smooth crossfade by default"). Contiguous INSET arrivals keep their
+    # spring POP (only a full-frame incoming triggers this). Runs AFTER the warp so the overlap survives.
+    XF=0.4; nxf=0
+    def _full(c): return ((c.get("params") or {}).get("layout")) in ("fullscreen","cover","fit")
+    for rid,r in p["rows"].items():
+        if r.get("type") not in ("image","video"): continue
+        cs=sorted([c for c in (p["clips"].get(x) for x in r.get("clips",[])) if c], key=lambda c:c["start"])
+        for i in range(len(cs)-1):
+            a0,b0=cs[i],cs[i+1]
+            seam=abs((a0["start"]+a0["dur"])-b0["start"])
+            if seam<0.12 and _full(b0) and a0["dur"]>XF+0.4 and b0["dur"]>XF+0.4 \
+               and not (a0.get("params") or {}).get("loop_out") and not (b0.get("params") or {}).get("loop_out"):
+                a0["dur"]=round(a0["dur"]+XF,3); nxf+=1   # outgoing lingers → incoming fades in over it
     # portrait/shorts carry the animated transcript — regenerate it onto the fresh timing
     ntr=transcript_apply(p) if p.get("meta",{}).get("format")=="portrait" else 0
     save(p,a.out or a.project); print(f"retimed {n} clips against {len(vos)} VO lines -> total {total(p):.1f}s"
                                       + (f", extended {nx} outro backing" if nx else "")
+                                      + (f", {nxf} scene crossfade" + ("s" if nxf!=1 else "") if nxf else "")
                                       + (f" (+{ntr} transcript chunks)" if ntr else ""))
 
 # ── adopt: reuse GENERATED assets from another project by matching line text — a rebuild/remix
