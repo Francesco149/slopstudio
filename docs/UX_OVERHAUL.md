@@ -13,28 +13,28 @@ come out well-formed by default** — and **no patchwork** (design coherently). 
 
 **DONE + committed:** Phase 0 (data safety) · Phase 1 (timeline quick wins) · video-duck ·
 Phase 2 (cosmic2d theme + all owner review fixes) · Phase 3 add-tools (quick-add palette +
-click-to-place + generic add mode, overlap-aware) · **gap-fill on click** (`b18bd6d`) · **A-B video loop
-points** (`6853938`). Both ⏳ awaiting owner live-test. Owner has been testing each chunk live and signed
-off through the add tools ("that works").
+click-to-place + generic add mode, overlap-aware) · **gap-fill on click** (`b18bd6d`, owner ✓) · **A-B
+video loop points** (`6853938`, owner ✓ "feels good") · **drag-drop → add-clip UX + portable uris**
+(`35b0d0b`, ⏳ awaiting owner test). Owner tests each chunk live and signs off before the next.
 
-**NEXT (Phase 3 remainder), in rough priority:**
-1. **Marquee multi-select** + act-on-selection.
-2. **Drag-drop of an external file copies it into the project** (task, see below) — the owner
-   dragged `F:\Pictures` images expecting a copy; they stayed as absolute paths.
+**NEXT (Phase 3 remainder):**
+1. **Marquee multi-select** + act-on-selection — the last Phase-3 item.
 
-**Just landed (⏳ owner to test):**
-- **gap-fill on a plain placement click** (`b18bd6d`). A click with a type armed fills the gap up to the
-  next clip on the target lane instead of a fixed default length (a drag still sizes exactly).
-  `place_fill_to_next(row,t,def)` = the shared preview+commit truth; the click path probes row-selection
-  with ~zero width so it lands in the clicked gap. `generic_ref_clip` factored out for the fallback length.
-- **A-B video loop points** (`6853938`). Inspector ▸ playback ▸ "loop segment (A-B)" on a video clip:
-  A/B DragFloats (source seconds) + "set A"/"set B" buttons that grab the frame under the playhead (scrub,
-  then click) — pick a clean loop `[A,B]` inside a long source without hand-cutting. `A = params.in`,
-  `B = params.loop_out` (new; absent = EOF). `video_src_time` factored from `video_frame_index` (shared
-  by the picker + the "set" buttons); `advance_in_folded` folds within [A,B]; an A-B sub-loop mutes its
-  own audio (pingpong rule) across preview/duck/export. Verified headless (index wraps at B; EOF-loop
-  byte-identical). NB: a pre-existing sub-frame decode quirk (same idx → ±1 frame by decode history) is
-  orthogonal + invisible in motion.
+**Just landed (⏳ owner to test): drag-drop routes through the add-clip UX + portable asset uris** (`35b0d0b`).
+Owner: "drag-n-drop should trigger the same add-clip UX we already have, just forced to the asset dropped in."
+(1) `add_asset_clip_placed(path,t,clickedRow)` = the same overlap-aware placement as the palette (clicked
+lane > free lane of type > new track, never overlapping, natural length via `asset_natural_dur`); the OS
+file-drop, Media-pane drag, AND double-click all route through it (was 3 copies of "first row of type").
+(2) `portable_asset_uri` relativizes an imported path to `assets/…`/`library/…` before it becomes a clip uri
+(applied in add_image/audio/video_clip_at) — fixes the kirby missing-images bug class (drops stored the
+ABSOLUTE managed path). Verified: build clean, kirby+recettear render, boundary cases pass.
+
+**Owner-approved earlier this session:**
+- **gap-fill on a plain placement click** (`b18bd6d`, ✓). Click with a type armed fills the gap to the next
+  clip on the target lane (`place_fill_to_next`); drag still sizes exactly.
+- **A-B video loop points** (`6853938`, ✓). Inspector ▸ playback ▸ "loop segment (A-B)": A/B fields + "set
+  A/B from playhead" scrub-to-set; `A=params.in`, `B=params.loop_out`; A-B sub-loop mutes own audio. NB a
+  pre-existing sub-frame decode quirk (same idx → ±1 frame by decode history) is orthogonal, invisible in motion.
 
 **Then:** Phase 4 (the layout engine — the big architectural piece; **checkpoint with owner first**),
 Phase 5 (tldraw-like visual composer), Phase 6 (kirby smoke test). Details below.
@@ -44,7 +44,7 @@ Phase 5 (tldraw-like visual composer), Phase 6 (kirby smoke test). Details below
 `e915be8`+`bfab33d` video-duck (+silent-RMS fix) · `c95f2a2` STATUS · `36ed3e5` cosmic2d theme+Inter ·
 `8d10d3c` track-buttons+resizable-panels+draggable-tracks · `e0d3ddb` mid-mouse-vpan+timeline/preview-divider ·
 `6c90431` quick-add+click-to-place · `352c129` overlap-aware placement · `1382ef0` generic-add(A) · `8220ac4` add-mode-polish ·
-`b18bd6d` gap-fill-on-click · `0b0b488` docs · `6853938` A-B-video-loop.
+`b18bd6d` gap-fill-on-click · `0b0b488` docs · `6853938` A-B-video-loop · `befb3c2` docs · `35b0d0b` drag-drop-add-UX+portable-uris.
 **slopstudio-projects** (2): `3eb0dd6` kirby music reconstruction · `f5d804f` kirby Pictures copy+repoint.
 
 ---
@@ -129,10 +129,13 @@ didn't; only `get_pcm` did). Per-clip `params.duck_music` + inspector toggle. In
 **gap-fill-on-click DONE** (`b18bd6d`, ⏳ owner test): a plain placement click fills to the next clip on the
 target lane (`place_fill_to_next`); the click path probes row-selection with ~0 width so it lands in the
 clicked gap; `generic_ref_clip` factored out for the fallback length. Drag path unchanged.
-**A-B video loop DONE** (`6853938`, ⏳ owner test): `params.loop_out` (B) + `params.in` (A) = the loop window;
+**A-B video loop DONE** (`6853938`, owner ✓): `params.loop_out` (B) + `params.in` (A) = the loop window;
 `video_src_time` (factored from `video_frame_index`) wraps `[A,B]`; inspector "set A/B from playhead" scrub-to-set;
 A-B sub-loop mutes own audio. `docs/PROJECT_FORMAT.md` §clips updated.
-**Phase 3 REMAINING** (see NEXT above): marquee multi-select, drag-drop-copy.
+**Drag-drop + portable uris DONE** (`35b0d0b`, ⏳ owner test): `add_asset_clip_placed` routes the OS drop /
+Media-pane drag / double-click through the overlap-aware placement (clicked > free lane > new track), forced to
+the dropped asset; `portable_asset_uri` relativizes the stored uri (kirby missing-images fix). See the Extra-task note below.
+**Phase 3 REMAINING** (see NEXT above): marquee multi-select — the last item.
 
 ### Phase 4 — The layout engine (BIG; checkpoint with owner before starting)
 - **4a** Generalize `draw_diagram_clip` (the ONE real content-measuring, two-pass auto-fit layout engine in the
@@ -164,10 +167,15 @@ A-B sub-loop mutes own audio. `docs/PROJECT_FORMAT.md` §clips updated.
 Re-compose kirby as a human quickly would; nudge defaults until it composes well with minimal ad-hoc tweaks.
 Needs lame for TTS (`ssh root@code "cold-unlock --host lame --stay"`).
 
-### Extra task — drag-drop of external files copies into the project
+### Extra task — drag-drop of external files copies into the project ✅ DONE (`35b0d0b`, ⏳ owner test)
 Owner dragged `F:\Pictures` images expecting a copy into the project + repointed URI; they stayed absolute
-(caused the kirby missing-images). Fix the OS-file-drop import path (`DrawTimeline` OS-drop → `library_import`
-→ copies into `g_projLibDir` + rewrites the clip URI) so external drops always copy in.
+(caused the kirby missing-images). The OS-drop already imported via `library_import` (copies into
+`g_projLibDir`), but the returned path was ABSOLUTE → stored as the clip uri. Fixed with `portable_asset_uri`
+(relativizes to `assets/…`/`library/…` in `add_image/audio/video_clip_at`; `resolve_asset` reverses it).
+Plus (owner's follow-up ask) the drop now routes through `add_asset_clip_placed` = the same overlap-aware
+add-clip placement as the palette tools, forced to the dropped asset (OS drop + Media-pane drag + double-click
+all share it). `asset_natural_dur` = the fit probe (image default / real audio / real video, never truncated);
+`rig_name_from_path` handles a dropped rig def. Interactive drop = owner-tested live.
 
 ---
 
