@@ -433,7 +433,7 @@ def cmd_skeleton(a):
     p=OD([("schema","slopstudio.project/1"),
           ("meta",OD([("title",sk.get("title","untitled")),("fps",sk.get("fps",30)),
                       ("resolution",res),("sample_rate",48000),
-                      ("vignette",sk.get("vignette",0.0)),   # 0 by default — the vignette now rides the cinematic FILTER clip (below), so it grades on top of everything
+                      ("vignette",sk.get("vignette",0.1)),   # a subtle UNIFORM radial vignette on EVERY beat (drawn in composite_frame). Deliberately NOT on the filter clip: a filter-clip vignette only darkens filter-ACTIVE spans, so filter-carved code/card beats stayed bright while graded beats got dark corners (the owner's "checker looks wrong on some beats but right in the code section"). One uniform vignette = a consistent checker everywhere.
                       ("notes","compiled by slop.py skeleton from "+os.path.basename(a.skeleton))])),
           ("assets",OD()),("tracks",[]),("rows",OD()),("clips",OD())])
     if portrait:
@@ -572,7 +572,11 @@ def cmd_skeleton(a):
                 _fs_img_solo=(fs_img_i%2==1)
                 _vis["layout"]="inset-center" if _fs_img_solo else "inset"   # both get the default pro border
                 fs_img_i+=1
-            if not b.get("solo") and not _quote_solo and not _fs_img_solo and not ((_fs_video or _is_code) and not b.get("host")):
+            # a beat whose visual IS the host ("host"/"host-dark") must ALWAYS draw her — `solo` on such a
+            # beat means "just her, nothing else" (the owner's mental model), NOT "drop the host" (which
+            # leaves a bare backdrop: the reported b04 "Welcome back, mortals" + b20 "sharpening your comment").
+            _is_host_vis = _vis in ("host","host-dark")
+            if _is_host_vis or (not b.get("solo") and not _quote_solo and not _fs_img_solo and not ((_fs_video or _is_code) and not b.get("host"))):
                 fr=b.get("framing", "closeup" if is_laugh else "bust")   # the giggle is a smug FACE closeup
                 aprm=OD([("emotion",emo),("framing",fr)])
                 if fr=="bust": aprm["anchor"]="bust"   # rides the project's bust anchor (Project panel knob)
@@ -808,12 +812,15 @@ def cmd_skeleton(a):
         p["clips"][cb]["asset"]=asset_for((dark if var=="dark" else desk if var=="desk" else room),"image")
     # DEFAULT channel 'basic look': a whole-frame noir grade over the WHOLE video (owner's pick — subtle +
     # persistent). Disable with look:false / "none"; tune via a look dict {filter,strength,vignette}.
-    # noir grade only (no vignette here — the global meta.vignette radial vignette covers everything, so the
-    # look isn't doubled up and the vignette persists even if the look preset is changed/removed)
-    look=sk.get("look", OD([("filter","noir"),("strength",0.25),("vignette",0.5)]))
+    # noir grade only — NO vignette on the filter clip (a filter-clip vignette only darkens filter-ACTIVE
+    # spans, so the filter-carved code/card beats stayed bright while every graded beat got dark corners:
+    # the owner's item-6 "checker looks wrong on some beats but right in the code section"). The vignette now
+    # rides the UNIFORM meta.vignette radial (above) so it grades every beat identically; the grade isn't
+    # doubled up and the vignette persists even if the look preset is changed/removed.
+    look=sk.get("look", OD([("filter","noir"),("strength",0.25),("vignette",0.0)]))
     if look and look!="none" and (not isinstance(look,dict) or look.get("filter","none") not in ("none",None)):
-        lf=look if isinstance(look,dict) else OD([("filter","noir"),("strength",0.25),("vignette",0.5)])
-        fparams=lambda: OD([("filter",lf.get("filter","noir")),("strength",lf.get("strength",0.25)),("vignette",lf.get("vignette",0.5))])
+        lf=look if isinstance(look,dict) else OD([("filter","noir"),("strength",0.25),("vignette",0.0)])
+        fparams=lambda: OD([("filter",lf.get("filter","noir")),("strength",lf.get("strength",0.25)),("vignette",lf.get("vignette",0.0))])
         # CARVE the grade OUT of solo CODE-CARD beats: a code card is a graphic that reads cleanest on the
         # BRIGHT grid (owner: "the solo code sections should be on the grid backdrop") — the noir grade
         # otherwise crushes the checker to near-black. The filter's 0.3s edge-ease fades the grade out as the
