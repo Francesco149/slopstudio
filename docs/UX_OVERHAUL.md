@@ -24,7 +24,7 @@ video loop points** (`6853938`, owner ✓ "feels good") · **drag-drop → add-c
    (taller tts rows) — the delicate part (contentH / laneY / hit-testing / clip band / marquee all assume
    uniform ROWH). Do it as its own chunk.
 
-**Phase-3 core DONE** (`6feff28`, ⏳ owner test): **marquee multi-select** (drag empty lane space → rubber-band;
+**Phase-3 core DONE** (`6feff28` + multi-drag fix `9f3525d`, ⏳ owner test): **marquee multi-select** (drag empty lane space → rubber-band;
 `##lanes_bg` catcher after the clips so a clip wins its own press; empty-click clears) + **act-on-selection**
 (Del deletes the group, drag moves the group rigidly, mint border on non-primary members) + **R = regen
 selected clip(s)** (fresh-take seed bump; `start_generate`; skips already-generating). `UIState.sel` +
@@ -55,7 +55,7 @@ Phase 5 (tldraw-like visual composer), Phase 6 (kirby smoke test). Details below
 `e915be8`+`bfab33d` video-duck (+silent-RMS fix) · `c95f2a2` STATUS · `36ed3e5` cosmic2d theme+Inter ·
 `8d10d3c` track-buttons+resizable-panels+draggable-tracks · `e0d3ddb` mid-mouse-vpan+timeline/preview-divider ·
 `6c90431` quick-add+click-to-place · `352c129` overlap-aware placement · `1382ef0` generic-add(A) · `8220ac4` add-mode-polish ·
-`b18bd6d` gap-fill-on-click · `0b0b488` docs · `6853938` A-B-video-loop · `befb3c2` docs · `35b0d0b` drag-drop-add-UX+portable-uris · `6f9d796` drag-drop-ARMS-placement · `6feff28` marquee+R-regen.
+`b18bd6d` gap-fill-on-click · `0b0b488` docs · `6853938` A-B-video-loop · `befb3c2` docs · `35b0d0b` drag-drop-add-UX+portable-uris · `6f9d796` drag-drop-ARMS-placement · `6feff28` marquee+R-regen · `9f3525d` multi-drag-fix.
 **slopstudio-projects** (2): `3eb0dd6` kirby music reconstruction · `f5d804f` kirby Pictures copy+repoint.
 
 ---
