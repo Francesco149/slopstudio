@@ -4857,7 +4857,6 @@ static void content_centroid_span(const Project& p, double t0, double t1,
 static bool span_has_content(const Project& p, double t0, double t1);
 static bool span_has_fullscreen_content(const Project& p, double t0, double t1);
 static std::string avatar_place_sig(const Project& p, const Clip& c);
-static float frame_blur_strength(Project& p, double t, float& sigmaOut);   // whole-frame `blur` strength at t (for blur-aware host swaps)
 
 // The DECISION half of clip_transition — which transition fires on each edge, edge contiguity,
 // and the avatar pose-swap/glide detection — pulled out so the built-in SFX scheduler can ask
@@ -4952,12 +4951,8 @@ static TransInfo clip_trans_info(Project& p, Clip& c) {
         };
         if (ti.inType  == "swap" || forcesSwap(ti.nbIn,  "out")) ti.swapIn  = true;
         if (ti.outType == "swap" || forcesSwap(ti.nbOut, "in"))  ti.swapOut = true;
-        // BLUR-AWARE: a whole-frame `blur` clip covering the seam already hides the cut, so the pose-swap
-        // slide would play UNDER the blur (invisible) and can leave the host mid-slide when it sharpens back
-        // — the owner's "unwanted transition mid-blur". If the blur is meaningfully up at the seam, drop the
-        // slide (hard-cut under the blur; the sprite/placement still change, just without the wasted glide).
-        { float sg; if (ti.swapIn  && frame_blur_strength(p, c.start,          sg) > 0.35f) ti.swapIn  = false;
-                    if (ti.swapOut && frame_blur_strength(p, c.start + c.dur,  sg) > 0.35f) ti.swapOut = false; }
+        // (No blur-aware suppression: the owner prefers the pose-swap SLIDE off-and-back-in even under a
+        //  blur — suppressing it read as an abrupt SNAP mid-blur, worse than the slide. The slide stays.)
         // SAME sprite, DIFFERENT spot → glide (see clip_transition). The glide delta is the RESOLVED
         // on-screen delta: when glideIn fires the placement sig matches (side/over-footage/offX/solo all
         // equal → those offsets cancel), so the true delta is (anchor + tx_pos) — include the ANCHOR the
@@ -5523,22 +5518,26 @@ static float frame_blur_strength(Project& p, double t, float& sigmaOut) {
 // the grade fades in/out, no pop), false when none is active. params.filter picks the preset;
 // params.strength (or keyframes) scales it. Applied to the read-back frame buffer by grade_rgba, in the
 // preview pre-pass AND the export — so preview and export are identical.
-static bool frame_filter_spec(Project& p, double t, FilterSpec& out, float& strengthOut) {
+static bool frame_filter_spec(Project& p, double t, FilterSpec& out, float& strengthOut, float& vignetteOut) {
     bool any = false; double bestStart = -1e18; std::string bestId;
     for (auto& kv : p.clips) {
         Clip& c = kv.second;
         if (c.type != "filter" || !clip_active(c, t)) continue;
         FilterSpec f = filter_spec(jstr(c.params, "filter"));
         if (!f.set) continue;                                   // unknown/empty preset → nothing to apply
-        const double ease = 0.30;                               // fade the grade in/out over 0.3s at the clip edges
+        const double ease = 0.30;                               // fade the look in/out over 0.3s at the clip edges
         double a = c.dur > 2 * ease ? std::min((t - c.start) / ease, (c.start + c.dur - t) / ease) : 1.0;
         a = a < 0 ? 0 : a > 1 ? 1 : a;
-        double str = a * anim_param(c, "strength", t, 1.0);
+        double str = a * anim_param(c, "strength", t, 1.0);     // colour-grade blend
         str = str < 0 ? 0 : str > 1 ? 1 : str;
-        if (str <= 0.001) continue;
+        // vignette is a SEPARATE knob (owner: "noir 25% strength + 10% vignette" as the basic look, "50% +
+        // 30%" for a heavier hit): params.vignette overrides the preset's; edge-eased but NOT tied to strength.
+        double vig = a * anim_param(c, "vignette", t, f.vignette);
+        vig = vig < 0 ? 0 : vig > 1 ? 1 : vig;
+        if (str <= 0.001 && vig <= 0.001) continue;
         // topmost wins: the latest-starting active filter reads as "on top" (deterministic id tiebreak).
         if (!any || c.start > bestStart || (c.start == bestStart && c.id > bestId)) {
-            bestStart = c.start; bestId = c.id; out = f; strengthOut = (float)str; any = true;
+            bestStart = c.start; bestId = c.id; out = f; strengthOut = (float)str; vignetteOut = (float)vig; any = true;
         }
     }
     return any;
@@ -5605,15 +5604,17 @@ static void blur_rgba(std::vector<unsigned char>& buf, int w, int h, float sigma
 // whole-frame filter reads like the per-clip one, then bakes the filmic post (radial edge vignette +
 // deterministic film grain keyed to t) into the buffer, so PREVIEW and EXPORT match exactly. sat/contrast
 // run per-pixel here (unlike moving per-clip video, which skips them) → full desaturation ("noir") works.
-static void grade_rgba(std::vector<unsigned char>& buf, int w, int h, const FilterSpec& f, double t, float strength) {
-    if (!f.set || strength <= 0.003f || w < 2 || h < 2 || (int)buf.size() < w * h * 4) return;
-    const float S   = strength > 1 ? 1.f : strength;
+static void grade_rgba(std::vector<unsigned char>& buf, int w, int h, const FilterSpec& f, double t, float strength, float vignetteAmt) {
+    if (w < 2 || h < 2 || (int)buf.size() < w * h * 4) return;
+    const float S   = strength   < 0 ? 0.f : strength   > 1 ? 1.f : strength;     // colour-grade blend
+    const float vig = vignetteAmt < 0 ? 0.f : vignetteAmt > 1 ? 1.f : vignetteAmt; // edge vignette — INDEPENDENT knob
+    const bool doGrade = f.set && S > 0.003f;
+    if (!doGrade && vig <= 0.003f) return;                 // nothing to do
     const float sat = (float)f.sat, con = (float)f.con, dim = (float)f.dim;
     const float mr = dim * (1.f + (float)f.temp * 0.3f);   // dim + white-balance per-channel multiply (matches the per-clip AddImage tint)
     const float mg = dim * (1.f + (float)f.tint * 0.3f);
     const float mb = dim * (1.f - (float)f.temp * 0.3f);
-    const float vig = (float)f.vignette;
-    const float grainAmp = (float)f.grain * 26.f;          // signed per-pixel dither amplitude
+    const float grainAmp = (float)f.grain * 26.f;          // signed per-pixel dither amplitude (scaled by strength via the blend)
     const float cx = (w - 1) * 0.5f, cy = (h - 1) * 0.5f;
     const float invr2 = 1.f / std::max(1.f, cx * cx + cy * cy);   // 1 / corner-distance² (skips a per-pixel sqrt)
     const uint32_t seed = (uint32_t)(t * 1000.0) * 2654435761u + 0x9e3779b9u;
@@ -5622,22 +5623,26 @@ static void grade_rgba(std::vector<unsigned char>& buf, int w, int h, const Filt
         for (int x = 0; x < w; x++) {
             unsigned char* px = &buf[((size_t)y * w + x) * 4];
             float r = px[0], g = px[1], b = px[2];
-            float l = 0.299f * r + 0.587f * g + 0.114f * b;                 // saturation around luma
-            r = l + (r - l) * sat; g = l + (g - l) * sat; b = l + (b - l) * sat;
-            r = (r - 127.5f) * con + 127.5f; g = (g - 127.5f) * con + 127.5f; b = (b - 127.5f) * con + 127.5f;  // contrast
-            r *= mr; g *= mg; b *= mb;                                      // dim + white balance
-            if (vig > 0.001f) {                                            // radial edge darken
+            if (doGrade) {                                                  // sat → contrast → dim/wb → grain, blended by strength
+                float l = 0.299f * r + 0.587f * g + 0.114f * b;            // saturation around luma
+                float gr = l + (r - l) * sat, gg = l + (g - l) * sat, gb = l + (b - l) * sat;
+                gr = (gr - 127.5f) * con + 127.5f; gg = (gg - 127.5f) * con + 127.5f; gb = (gb - 127.5f) * con + 127.5f;  // contrast
+                gr *= mr; gg *= mg; gb *= mb;                              // dim + white balance
+                if (grainAmp > 0.01f) {                                    // deterministic film grain (xorshift per pixel)
+                    uint32_t sv = seed ^ ((uint32_t)x * 73856093u) ^ ((uint32_t)y * 19349663u);
+                    sv ^= sv << 13; sv ^= sv >> 17; sv ^= sv << 5;
+                    float n = ((float)(sv & 0xffff) * (1.f / 32768.f) - 1.f) * grainAmp;   // [-amp, amp]
+                    gr += n; gg += n; gb += n;
+                }
+                r += (gr - r) * S; g += (gg - g) * S; b += (gb - b) * S;   // blend colour grade ← original by strength
+            }
+            if (vig > 0.001f) {                                            // radial edge darken — applied AFTER, at its OWN amount
                 float dx = x - cx; float rr2 = (dx * dx + dy * dy) * invr2;
                 float dark = 1.f - vig * 0.55f * rr2; r *= dark; g *= dark; b *= dark;
             }
-            if (grainAmp > 0.01f) {                                        // deterministic film grain (xorshift per pixel)
-                uint32_t sv = seed ^ ((uint32_t)x * 73856093u) ^ ((uint32_t)y * 19349663u);
-                sv ^= sv << 13; sv ^= sv >> 17; sv ^= sv << 5;
-                float n = ((float)(sv & 0xffff) * (1.f / 32768.f) - 1.f) * grainAmp;   // [-amp, amp]
-                r += n; g += n; b += n;
-            }
-            auto mix = [&](float gv, unsigned char ov) { float v = ov + (gv - ov) * S; return (unsigned char)(v < 0 ? 0 : v > 255 ? 255 : v); };
-            px[0] = mix(r, px[0]); px[1] = mix(g, px[1]); px[2] = mix(b, px[2]);   // blend graded ← original by strength
+            px[0] = (unsigned char)(r < 0 ? 0 : r > 255 ? 255 : r);
+            px[1] = (unsigned char)(g < 0 ? 0 : g > 255 ? 255 : g);
+            px[2] = (unsigned char)(b < 0 ? 0 : b > 255 ? 255 : b);
         }
     }
 }
@@ -8077,7 +8082,7 @@ static void draw_native_params(Project& p, Clip& c) {
         } else if (ImGui::SmallButton("override strength (manual/keyframe)")) P["strength"] = 1.0;
     } else if (c.type == "filter") {
         ImGui::SeparatorText("cinematic filter (grades everything below)");
-        ImGui::TextDisabled("A WHOLE-FRAME colour grade over the ENTIRE composite for this clip's\nspan — host, captions, code, footage, every layer (like a scene\nvignette). Grade + film grain + edge vignette; fades in/out at the\nedges. Span one over a run of beats for a consistent 'look'.");
+        ImGui::TextDisabled("A WHOLE-FRAME colour grade over the ENTIRE composite for this clip's\nspan — host, captions, code, footage, every layer. Grade + grain +\nedge vignette; fades in/out at the edges. Span the WHOLE video for a\npersistent 'basic look' (try noir · strength 0.25 · vignette 0.10).");
         static const char* FLT[] = {"cinematic", "noir", "vintage", "cyber", "dream"};
         std::string cur = jstr(P, "filter"); if (cur.empty()) cur = "cinematic";
         int fi = 0; for (int k = 0; k < 5; k++) if (cur == FLT[k]) fi = k;
@@ -8086,10 +8091,14 @@ static void draw_native_params(Project& p, Clip& c) {
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("cinematic (warm filmic) · noir (high-contrast B&W — full desat,\n"
                               "the whole frame reads mono) · vintage (faded 70s) · cyber (cold\n"
-                              "neon) · dream (bright airy). Grain + vignette scale with the look.");
+                              "neon) · dream (bright airy).");
+        FilterSpec _fp = filter_spec(cur);   // preset defaults (for the vignette slider's default)
         float stv = (float)P.value("strength", 1.0);
         if (ImGui::SliderFloat("strength", &stv, 0.f, 1.f)) P["strength"] = (double)stv;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("blend of the graded look over the original (1 = full).");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("blend of the colour grade over the original (1 = full).\nControls sat/contrast/tint/grain — NOT the vignette (own knob below).");
+        float vgv = (float)P.value("vignette", _fp.vignette);
+        if (ImGui::SliderFloat("vignette", &vgv, 0.f, 1.f)) P["vignette"] = (double)vgv;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("edge darkening — INDEPENDENT of strength.\nnoir 0.25 strength + 0.10 vignette = a subtle persistent basic look;\n0.50 + 0.30 = a heavier occasional hit.");
     } else if (c.type == "diagram") {
         ImGui::SeparatorText("diagram (boxes + arrows)");
         ImGui::TextDisabled("author in JSON: flow:[\"A\",\"B\",...] = auto-laid-out chain,\nor nodes:[{label,x,y}] + edges:[{from,to}] = a graph.\nitems can be {label, sub}. reveal 0..1 stages it in.");
@@ -11000,7 +11009,7 @@ static void render_export_frame(Project& p, double t, int w, int h, std::vector<
     // whole-frame cinematic `filter` grade (the sibling of the post-readback blur applied by the callers) —
     // graded here on the sharp full-res frame FIRST, so a `blur` clip over the same span defocuses the graded
     // result. Same grade_rgba as the preview pre-pass → preview and export match.
-    { FilterSpec filt; float fstr = 0.f; if (frame_filter_spec(p, t, filt, fstr)) grade_rgba(out, w, h, filt, t, fstr); }
+    { FilterSpec filt; float fstr = 0.f, fvig = 0.f; if (frame_filter_spec(p, t, filt, fstr, fvig)) grade_rgba(out, w, h, filt, t, fstr, fvig); }
 }
 
 // ── preview whole-frame blur: offscreen targets + an isolated composite pass (like render_export_frame,
@@ -11040,7 +11049,7 @@ static bool ensure_preview_blur_targets(int w, int h) {
 // or both active). Runs its OWN ImGui frame (like export), so it must be called BEFORE the main UI frame's
 // NewFrame. Returns true on success (→ the preview shows g_pvBlurSrv this frame instead of the live
 // composite). Half-res: the blur softens anyway, and a filtered preview is a guide (export is full-res + exact).
-static bool render_preview_post(Project& p, double t, float sigmaProj, const FilterSpec* filt, float filtStr) {
+static bool render_preview_post(Project& p, double t, float sigmaProj, const FilterSpec* filt, float filtStr, float filtVig) {
     int w = std::max(2, (int)p.width / 2), h = std::max(2, (int)p.height / 2);   // half-res (blurred anyway / preview guide)
     if (!ensure_preview_blur_targets(w, h)) return false;
     // Run the offscreen composite on a SEPARATE ImGui context. ImGui::NewFrame() DRAINS the shared
@@ -11068,7 +11077,7 @@ static bool render_preview_post(Project& p, double t, float sigmaProj, const Fil
         for (int y = 0; y < h; ++y) memcpy(&buf[(size_t)y * w * 4], (unsigned char*)m.pData + (size_t)y * m.RowPitch, (size_t)w * 4);
         g_ctx->Unmap(g_pvStaging, 0);
     }
-    if (filt && filt->set) grade_rgba(buf, w, h, *filt, t, filtStr);              // grade the sharp frame first...
+    if (filt && filt->set) grade_rgba(buf, w, h, *filt, t, filtStr, filtVig);     // grade the sharp frame first...
     if (sigmaProj > 0.4f)   blur_rgba(buf, w, h, sigmaProj * (float)w / (float)p.width);   // ...then defocus (project-px sigma → this buffer's px)
     D3D11_MAPPED_SUBRESOURCE mw;
     if (SUCCEEDED(g_ctx->Map(g_pvDyn, 0, D3D11_MAP_WRITE_DISCARD, 0, &mw))) {
@@ -11969,10 +11978,10 @@ int main(int argc, char** argv) {
         g_pvBlurActive = false;
         {   // whole-frame post pre-pass: a `blur` transition and/or a `filter` grade active at the playhead
             float sig = 0.f; frame_blur_strength(proj, st.playhead, sig);
-            FilterSpec filt; float fstr = 0.f; bool haveFilt = frame_filter_spec(proj, st.playhead, filt, fstr);
+            FilterSpec filt; float fstr = 0.f, fvig = 0.f; bool haveFilt = frame_filter_spec(proj, st.playhead, filt, fstr, fvig);
             bool haveBlur = sig > 0.003f;
             if ((haveBlur || haveFilt) && proj.width > 0 && proj.height > 0)
-                g_pvBlurActive = render_preview_post(proj, st.playhead, haveBlur ? sig : 0.f, haveFilt ? &filt : nullptr, fstr);
+                g_pvBlurActive = render_preview_post(proj, st.playhead, haveBlur ? sig : 0.f, haveFilt ? &filt : nullptr, fstr, fvig);
         }
         if (g_perf) { QueryPerformanceCounter(&tP1); QueryPerformanceCounter(&tUI0); }
 
