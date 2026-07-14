@@ -113,6 +113,7 @@ struct Project {
     // the brand purples (default, gives dead space a branded texture); "black"/"none" = the flat black base
     // (old behaviour). A `filler` clip (explicit blur backdrop) still wins over this within its span. (meta.bg)
     std::string bgStyle = "checker";
+    double letterbox = 0;    // scene cinematic bars: fraction of frame HEIGHT per bar (0 = off; ~0.11 ≈ 2.35:1). meta.letterbox
     // per-project tunable position anchors (meta.anchors): category key → base [x,y]. A clip that
     // names one (params.anchor, e.g. "bust"/"code_host"/"tr_room") renders at anchor + transform.pos,
     // so its pos is an OFFSET and one Project-panel knob nudges the whole category in THIS project
@@ -186,6 +187,7 @@ static Project parse_project_json(json j, const std::string& path) {
         p.speechGainDb = meta.value("speech_gain_db", 12.0);      // global speech boost (+12 default)
         p.songCredits = meta.value("song_credits", true);         // auto on-screen now-playing chip
         p.bgStyle = meta.value("bg", std::string("checker"));      // default frame background style (behind content)
+        p.letterbox = meta.value("letterbox", 0.0);                // cinematic letterbox bars (0 = off)
         p.songCreditSecs = meta.value("song_credit_secs", 10.0);
         p.songCreditCorner = meta.value("song_credit_corner", std::string("tl"));
         if (meta.contains("anchors") && meta["anchors"].is_object())
@@ -5147,6 +5149,57 @@ static json resolve_frame(const json& params, bool insetClip) {
     return insetClip ? json(true) : json();
 }
 
+// ── cinematic filter presets (params.filter on an image/video clip) ─────────────────────────
+// A named "look" = a colour grade + a post pass. The colour part (sat/contrast/temperature/tint/dim)
+// is fed AS THE DEFAULT into the clip's existing grade pipeline, so an explicit param/keyframe still
+// wins and a clip with NO filter gets the neutral spec → byte-identical to before. The post part
+// (film grain + an edge vignette) is drawn over the clip's quad. Building blocks for "have a visual
+// for everything": rotate a filtered fullscreen backdrop, a filtered inset, plain footage, etc.
+// NB video SKIPS the sat/contrast texture pass (per-frame cost) → on moving footage a filter grades
+// via temperature/tint/dim + the post only; full desaturation ("noir") lands on stills, not video.
+struct FilterSpec { double sat = 1, con = 1, temp = 0, tint = 0, dim = 1, grain = 0, vignette = 0; bool set = false; };
+static FilterSpec filter_spec(const std::string& name) {
+    FilterSpec f;
+    if (name.empty()) return f;
+    f.set = true;
+    if      (name == "cinematic")               { f.sat=1.06; f.con=1.15; f.temp= 0.11; f.tint=-0.02; f.dim=0.97; f.grain=0.30; f.vignette=0.40; }  // warm teal-orange, filmic
+    else if (name == "noir")                    { f.sat=0.0;  f.con=1.40; f.temp=-0.02; f.tint= 0.00; f.dim=0.92; f.grain=0.55; f.vignette=0.55; }  // high-contrast B&W
+    else if (name == "vintage" || name=="film") { f.sat=0.80; f.con=0.92; f.temp= 0.22; f.tint= 0.07; f.dim=0.95; f.grain=0.48; f.vignette=0.44; }  // warm faded 70s stock
+    else if (name == "cyber"   || name=="cool") { f.sat=1.18; f.con=1.24; f.temp=-0.17; f.tint=-0.05; f.dim=0.95; f.grain=0.18; f.vignette=0.32; }  // cold neon night
+    else if (name == "dream"   || name=="soft") { f.sat=1.12; f.con=0.90; f.temp= 0.09; f.tint= 0.00; f.dim=1.00; f.grain=0.10; f.vignette=0.22; }  // bright, low-contrast, airy
+    else f.set = false;   // unknown name → neutral (no change; forward-compatible)
+    return f;
+}
+// Post pass for a filtered clip: an edge vignette (four soft gradient bands) + animated film grain,
+// clipped to the quad. Deterministic per frame TIME (same t → same grain in preview and export; a new
+// frame reseeds → the grain shimmers). Drawn between the image and its frame border so the border stays
+// crisp. Alpha-blend only (no additive infra), so it composes on the existing draw list.
+static void draw_filter_post(ImDrawList* dl, ImVec2 a, ImVec2 b, const FilterSpec& f, double t, float op) {
+    if (!f.set || op <= 0.01f || (f.grain <= 0.001 && f.vignette <= 0.001)) return;
+    float w = b.x - a.x, h = b.y - a.y; if (w < 2 || h < 2) return;
+    dl->PushClipRect(a, b, true);
+    if (f.vignette > 0.001) {
+        int va = (int)(f.vignette * 135 * op); ImU32 d0 = IM_COL32(0,0,0,va), d1 = IM_COL32(0,0,0,0);
+        float m = std::min(w, h) * 0.32f;
+        dl->AddRectFilledMultiColor(a, ImVec2(a.x + m, b.y), d0, d1, d1, d0);              // left
+        dl->AddRectFilledMultiColor(ImVec2(b.x - m, a.y), b, d1, d0, d0, d1);              // right
+        dl->AddRectFilledMultiColor(a, ImVec2(b.x, a.y + m), d0, d0, d1, d1);              // top
+        dl->AddRectFilledMultiColor(ImVec2(a.x, b.y - m), b, d1, d1, d0, d0);              // bottom
+    }
+    if (f.grain > 0.001) {
+        uint32_t sd = (uint32_t)(t * 1000.0) * 2654435761u ^ (uint32_t)(a.x * 7.f + a.y * 13.f);
+        auto rnd = [&]() { sd ^= sd << 13; sd ^= sd >> 17; sd ^= sd << 5; return sd; };
+        int n = (int)(w * h / 2400.0); if (n > 4000) n = 4000;                              // density cap
+        int ga = (int)(f.grain * 40 * op);
+        for (int i = 0; i < n; i++) {
+            float x = a.x + (float)(rnd() % (uint32_t)w), y = a.y + (float)(rnd() % (uint32_t)h);
+            ImU32 g = (rnd() & 1) ? IM_COL32(255,255,255,ga) : IM_COL32(0,0,0,ga);
+            dl->AddRectFilled(ImVec2(x, y), ImVec2(x + 1.5f, y + 1.5f), g);
+        }
+    }
+    dl->PopClipRect();
+}
+
 // CONTENT side over a TIME SPAN (not a single instant): scale-weighted screen-x of OFF-CENTER
 // image/video clips (screenshots, insets, the CRT — not the centered full-frame bg plate) whose
 // span OVERLAPS [t0,t1). Used to decide a host clip's presenter alignment ONCE for its whole span:
@@ -6144,9 +6197,10 @@ static void composite_frame(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0, 
                         json frameP = resolve_frame(c.params, insetClip);
                         if (!frameP.is_null() && (!frameP.is_object() || frameP.value("shadow", true)))
                             draw_inset_shadow(dl, a, b, (frameP.is_object() ? (float)frameP.value("radius", 9.0) : 9.0f) * s, s, alpha / 255.0f);
-                        double dim  = anim_param(c, "dim", T, 1.0);
-                        double temp = anim_param(c, "temperature", T, 0.0);   // warm(+)/cool(-)
-                        double tnt  = anim_param(c, "tint", T, 0.0);          // green(-)/magenta(+)
+                        FilterSpec flt = filter_spec(jstr(c.params, "filter"));   // sat/contrast skipped on video (no per-frame texture pass); temp/tint/dim + post apply
+                        double dim  = anim_param(c, "dim", T, flt.dim);
+                        double temp = anim_param(c, "temperature", T, flt.temp);   // warm(+)/cool(-)
+                        double tnt  = anim_param(c, "tint", T, flt.tint);          // green(-)/magenta(+)
                         bool autoG = c.params.value("auto_grade", false);     // opt-in white-balance match (sat needs a texture pass → skipped on video)
                         if (autoG) temp += autoTemp;
                         double base = dim < 0 ? 0 : dim > 1 ? 1 : dim;
@@ -6154,6 +6208,7 @@ static void composite_frame(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0, 
                         dl->AddImage((ImTextureID)(intptr_t)ft->srv, a, b, uv0, uv1,
                                      IM_COL32(gc(base * (1.0 + temp * 0.3)), gc(base * (1.0 + tnt * 0.3)),
                                               gc(base * (1.0 - temp * 0.3)), alpha));
+                        draw_filter_post(dl, a, b, flt, T, alpha / 255.0f);   // grain + edge vignette (under the frame border)
                         if (!frameP.is_null()) draw_clip_frame(dl, a, b, frameP, s, alpha / 255.0f);
                     } else {
                         // No frame: source unreadable, or (no libav build) no proxy extracted yet.
@@ -6205,9 +6260,10 @@ static void composite_frame(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0, 
                     ID3D11ShaderResourceView* srv = tex->srv;
                     // keyframeable defocus blur + color grade (saturation/contrast) → a cached
                     // CPU-processed copy (param-hash by uri|blur|sat|contrast); identical in export.
+                    FilterSpec flt = filter_spec(jstr(c.params, "filter"));   // named "look" → supplies grade defaults + a post pass (neutral if none)
                     double blur = anim_param(c, "blur", T, 0.0);
-                    double sat  = anim_param(c, "saturation", T, 1.0);  // chroma scale (1=neutral; <1 tames oversaturated gens)
-                    double con  = anim_param(c, "contrast", T, 1.0);    // contrast around mid-gray (1=neutral; <1 flattens)
+                    double sat  = anim_param(c, "saturation", T, flt.sat);  // chroma scale (1=neutral; <1 tames oversaturated gens)
+                    double con  = anim_param(c, "contrast", T, flt.con);    // contrast around mid-gray (1=neutral; <1 flattens)
                     // opt-in auto color-grade: sit a floating inset in the scene the way the host
                     // does — gentle desat + warm/cool match toward the bottom bg plate.
                     bool autoG = c.params.value("auto_grade", false);
@@ -6218,15 +6274,16 @@ static void composite_frame(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0, 
                     }
                     // dim (darken) + white-balance (temperature/tint) fold into a per-CHANNEL multiply
                     // tint — cheap + keyframeable, no texture pass. `dim` 1=full bright; temp warm(+)/cool(-).
-                    double dim    = anim_param(c, "dim", T, 1.0);
-                    double temp   = anim_param(c, "temperature", T, 0.0);  // warm(+) / cool(-)
-                    double tintgm = anim_param(c, "tint", T, 0.0);         // green(-) / magenta(+)
+                    double dim    = anim_param(c, "dim", T, flt.dim);
+                    double temp   = anim_param(c, "temperature", T, flt.temp);  // warm(+) / cool(-)
+                    double tintgm = anim_param(c, "tint", T, flt.tint);         // green(-) / magenta(+)
                     if (autoG) temp += autoTemp;                            // auto bg→clip white-balance match
                     double base = dim < 0 ? 0 : dim > 1 ? 1 : dim;
                     auto gc = [](double v){ return (int)((v < 0 ? 0 : v > 1 ? 1 : v) * 255.0 + 0.5); };
                     dl->AddImage((ImTextureID)(intptr_t)srv, a, b, uv0, uv1,
                                  IM_COL32(gc(base * (1.0 + temp * 0.3)), gc(base * (1.0 + tintgm * 0.3)),
                                           gc(base * (1.0 - temp * 0.3)), alpha));
+                    draw_filter_post(dl, a, b, flt, T, alpha / 255.0f);   // grain + edge vignette (under the frame border)
                     if (!frameP.is_null()) draw_clip_frame(dl, a, b, frameP, s, alpha / 255.0f);
                 } else {
                     // typed placeholder (avatar before sprites, or a not-yet-ready asset)
@@ -6253,6 +6310,13 @@ static void composite_frame(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0, 
         dl->AddRectFilledMultiColor(ImVec2(q0.x, q1.y - band), q1, d1, d1, d0, d0);            // bottom
         dl->AddRectFilledMultiColor(q0, ImVec2(q0.x + band, q1.y), d0, d1, d1, d0);            // left
         dl->AddRectFilledMultiColor(ImVec2(q1.x - band, q0.y), q1, d1, d0, d0, d1);            // right
+    }
+    // cinematic letterbox bars (meta.letterbox = per-bar fraction of frame HEIGHT; ~0.11 ≈ 2.35:1).
+    // Drawn over the content (after the vignette), before the song credit so the chip still reads.
+    if (p.letterbox > 0.001 && !g_compositeSkipFillers) {
+        float bar = (float)std::min(0.25, p.letterbox) * fh;
+        dl->AddRectFilled(f0, ImVec2(f0.x + fw, f0.y + bar), IM_COL32(0, 0, 0, 255));
+        dl->AddRectFilled(ImVec2(f0.x, f0.y + fh - bar), ImVec2(f0.x + fw, f0.y + fh), IM_COL32(0, 0, 0, 255));
     }
     // auto "now playing" song credit — drawn LAST so it sits on top of the vignette + all content
     // (skipped while rendering the filler-backdrop pre-pass, so it never blurs into the backdrop).
@@ -9441,6 +9505,15 @@ static void draw_project_settings(Project& p) {
           ImGui::SetTooltip("what shows in dead space behind an inset / host / letterboxed media.\n"
                             "checkerboard = a subtle diagonal-scrolling brand-purple weave (a cover\n"
                             "backdrop or a `filler` blur still hides it). flat black = the old base."); }
+    { float lb = (float)p.letterbox;   // cinematic letterbox bars (scene-wide, meta.letterbox)
+      ImGui::SetNextItemWidth(200);
+      if (ImGui::SliderFloat("letterbox bars", &lb, 0.0f, 0.2f, lb < 0.005f ? "off" : "%.2f")) {
+          p.letterbox = lb < 0.005f ? 0.0 : lb;
+          if (p.letterbox > 0) meta["letterbox"] = p.letterbox; else meta.erase("letterbox");
+          g_undoDirty = true; }
+      if (ImGui::IsItemHovered())
+          ImGui::SetTooltip("cinematic black bars top + bottom (fraction of frame height per bar).\n"
+                            "~0.11 ≈ 2.35:1 widescreen. Composes with any clip's cinematic filter."); }
     ImGui::SeparatorText("audio");
     bool sfx = p.sfx;
     if (ImGui::Checkbox("built-in sound effects", &sfx)) { p.sfx = sfx; meta["sfx"] = sfx; g_undoDirty = true; }
@@ -9988,6 +10061,19 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
                     }
                     if (ImGui::IsItemHovered())
                         ImGui::SetTooltip("the pro inset border + drop shadow.\nauto = on for a non-fullscreen inset with no glow\non = always (any size, even with glow) · off = never");
+                    // cinematic filter: a named grade + film-grain + edge-vignette "look" (params.filter)
+                    static const char* FILT[] = {"none", "cinematic", "noir", "vintage", "cyber", "dream"};
+                    std::string curFilt = jstr(LP, "filter");
+                    int filtI = 0; for (int k = 1; k < 6; k++) if (curFilt == FILT[k]) filtI = k;
+                    ImGui::SetNextItemWidth(130);
+                    if (ImGui::Combo("cinematic filter", &filtI, FILT, 6)) {
+                        if (filtI == 0) LP.erase("filter"); else LP["filter"] = std::string(FILT[filtI]);
+                    }
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("a named look = colour grade + film grain + edge vignette.\n"
+                                          "cinematic (warm filmic) · noir (high-contrast — full B&W on stills,\n"
+                                          "moving video keeps colour) · vintage (faded 70s) · cyber (cold neon)\n"
+                                          "· dream (bright airy). Explicit sat/contrast/temp params still win.");
                 }
                 if (c.type == "image" || c.type == "video" || c.type == "avatar") {
                     bool ag = LP.value("auto_grade", c.type == "avatar");
