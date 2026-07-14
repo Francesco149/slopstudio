@@ -4383,7 +4383,7 @@ static void draw_caption_clip(ImDrawList* dl, float cx, float cy, float s, Clip&
     float boxPad = (float)P.value("box_pad", term ? (multi ? 22.0 : 16.0) : 22.0) * scaleX * s;
     ImU32 textCol  = parse_color(P.value("color", json()), IM_COL32(245, 247, 252, 255));
     ImU32 accent   = parse_color(P.value("accent", json()), IM_COL32(220, 120, 200, 255));   // Gemma purple-pink
-    ImU32 boxCol   = parse_color(P.value("box_color", json()), IM_COL32(16, 16, 22, 214));
+    ImU32 boxCol   = parse_color(P.value("box_color", json()), IM_COL32(19, 17, 28, 226));   // deep brand-tinted charcoal (a hint of periwinkle over pure black), a touch more opaque = a cleaner, more deliberate plate
     ImU32 subCol   = parse_color(P.value("sub_color", json()), jp ? accent : IM_COL32(202, 208, 222, 255));
     ImU32 glossCol = parse_color(P.value("gloss_color", json()), IM_COL32(150, 158, 176, 255));
     int align = 1;                                                  // 0 left · 1 center · 2 right
@@ -4424,7 +4424,21 @@ static void draw_caption_clip(ImDrawList* dl, float cx, float cy, float s, Clip&
     }
     float rad = radEarly;                                          // term = pill
 
-    if (box) dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x0 + W, y0 + H), mul_alpha(boxCol, aF), rad);
+    if (box) {
+        // soft drop shadow — a few expanding low-alpha rounded rects (ImDrawList has no blur), offset
+        // slightly DOWN so the plate lifts off busy footage / the checker (broadcast lower-third
+        // separation, not a flat sticker). Deterministic → preview and export match.
+        for (int sh = 3; sh >= 1; --sh) {
+            float e = (float)sh * 2.4f * s;
+            dl->AddRectFilled(ImVec2(x0 - e, y0 - e + 3.f * s), ImVec2(x0 + W + e, y0 + H + e + 3.f * s),
+                              mul_alpha(IM_COL32(0, 0, 0, 32), aF), rad + e);
+        }
+        dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x0 + W, y0 + H), mul_alpha(boxCol, aF), rad);
+        // thin accent hairline around the plate → a crisp, deliberate edge (a premium finish rather than
+        // a raw dark blob). Half-alpha so it reads as a rim light, not a loud border.
+        dl->AddRect(ImVec2(x0, y0), ImVec2(x0 + W, y0 + H), mul_alpha(accent, aF * 0.5f), rad, 0,
+                    std::max(1.5f, screenFont * 0.026f));
+    }
     if (stripeW > 0) dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x0 + stripeW, y0 + H), mul_alpha(accent, aF), rad, ImDrawFlags_RoundCornersLeft);
 
     float tx0 = x0 + (box ? boxPadX : 0) + stripeW + stripeGap, ty = y0 + (box ? boxPad : 0);
@@ -5801,9 +5815,11 @@ static void draw_bg_checker(ImDrawList* dl, ImVec2 f0, float fw, float fh, doubl
     const float cell  = std::max(40.0f, fh / 15.0f);          // finer weave → thin letterbox bars read as texture, not stray squares
     const float drift = (float)std::fmod(t * (cell / 16.0) * (speed <= 0 ? 0.0 : speed), cell * 2.0);   // diagonal scroll (speed×), wraps at 2 cells (parity period → seamless)
     // two raised tones (a soft "woven" look, not a flat 2-tone checker): the brighter one carries a hint of
-    // the brand periwinkle. Both only a few levels over the base → a premium, barely-there texture.
-    const ImU32 rA = IM_COL32(0x1a, 0x17, 0x2a, 255);
-    const ImU32 rB = IM_COL32(0x20, 0x1c, 0x33, 255);
+    // the brand periwinkle. A premium, barely-there texture — but with enough level over the base that it
+    // survives a light cinematic GRADE (a persistent noir would otherwise crush the weave to flat black on
+    // the bare-checker beats — code cards / quotes — the owner wants sitting "on the checkerboard").
+    const ImU32 rA = IM_COL32(0x1e, 0x1a, 0x30, 255);
+    const ImU32 rB = IM_COL32(0x25, 0x20, 0x3a, 255);
     int nx = (int)(fw / cell) + 4, ny = (int)(fh / cell) + 4;
     for (int j = -2; j < ny; j++)
         for (int i = -2; i < nx; i++) {
@@ -5932,12 +5948,16 @@ static void composite_frame(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0, 
                         } else if (lay.rfind("inset", 0) == 0) {
                             // portrait: the content band sits UP TOP (wide, ~40% tall) with the host
                             // presenting BIG from below; landscape: ~half-frame beside the host.
+                            // "inset-center" = a framed card that OWNS the frame (no host) — bigger
+                            // (~72% wide) and centered, for a solo screenshot sitting on the checker.
+                            bool ctr = (lay == "inset-center");
+                            float wfrac = ctr ? 0.72f : 0.55f;
                             float L = porFrame ? std::min(0.86f * FW / nw, 0.42f * FH / nh)
-                                               : std::min(0.55f * FW / nw, 0.72f * FH / nh);
+                                               : std::min(wfrac * FW / nw, (ctr ? 0.82f : 0.72f) * FH / nh);
                             L = std::max(0.2f, std::min(2.0f, L));
                             eSclX *= L; eSclY *= L; layMul = L;
                             if (porFrame) cy -= 0.24f * fh;
-                            else {
+                            else if (!ctr) {
                                 float side = (lay == "inset-left") ? -1.f : 1.f; // default: right-of-center (host takes the other corner)
                                 cx += side * 0.1875f * fw;
                             }
@@ -10349,7 +10369,7 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
                 if (c.type == "image" || c.type == "video") {
                     // layout = render-time adaptive placement (any source size lands well-framed);
                     // the transform below nudges/rescales ON TOP of it.
-                    static const char* LAYS[] = {"(manual)", "inset", "inset-left", "fullscreen", "fit", "cover"};
+                    static const char* LAYS[] = {"(manual)", "inset", "inset-left", "inset-center", "fullscreen", "fit", "cover"};
                     std::string cl = LP.value("layout", std::string());
                     int li = 0; for (int k = 1; k < 6; k++) if (cl == LAYS[k]) li = k;
                     ImGui::SetNextItemWidth(150);
