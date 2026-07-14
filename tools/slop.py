@@ -475,7 +475,9 @@ def cmd_skeleton(a):
             if b.get("sound"):
                 p["clips"][cv]["params"]["sfx_cue"]=b["sound"]
                 if "sound_at" in b: p["clips"][cv]["params"]["sfx_at"]=float(b["sound_at"])
-            if not b.get("solo"):   # solo:true = no host this beat (readable full-width shots, e.g. the apology)
+            _vis=b.get("visual")   # a quote CARD owns the frame (a centred receipt) → no full host over it (auto-solo)
+            _quote_solo=isinstance(_vis,dict) and _vis.get("style")=="quote"
+            if not b.get("solo") and not _quote_solo:   # solo:true = no host this beat (readable full-width shots, e.g. the apology)
                 fr=b.get("framing","bust")
                 aprm=OD([("emotion",emo),("framing",fr)])
                 if fr=="bust": aprm["anchor"]="bust"   # rides the project's bust anchor (Project panel knob)
@@ -490,12 +492,16 @@ def cmd_skeleton(a):
                 if lay=="fullscreen" and not img_covers(uri): lay="fit"   # wide banner: contain over the filler
                 prm=OD([("layout",lay),("motion","zoom_in"),("auto_grade",True)])
                 if "crop" in v: prm["crop"]=v["crop"]          # [x,y,w,h] source fractions — zoom into part of the shot
+                for k in ("filter","inset_style","frame","glow"): # visual-variety kit knobs (cinematic look / fancy frame)
+                    if k in v: prm[k]=v[k]
                 cid=new_clip(p,"image","r_img",at,vdur,prm,f"{pref}{sfx}_img")
                 p["clips"][cid]["asset"]=asset_for(uri,"image")
                 fill = lay!="fullscreen"
             elif "video" in v:
                 prm=OD([("layout",lay),("in",float(v.get("in",0.0))),("video_volume",v.get("volume",0.12)),("loop",True)])
                 if "crop" in v: prm["crop"]=v["crop"]          # [x,y,w,h] source fractions (the copy dialog in a full desktop grab)
+                for k in ("filter","inset_style","frame","glow"): # visual-variety kit knobs (cinematic look / fancy frame)
+                    if k in v: prm[k]=v[k]
                 cid=new_clip(p,"video","r_video",at,vdur,prm,f"{pref}{sfx}_vid")
                 p["clips"][cid]["asset"]=asset_for(v["video"],"video")
                 fill = lay!="fullscreen"
