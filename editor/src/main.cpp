@@ -5180,12 +5180,30 @@ static void draw_clip_frame(ImDrawList* dl, ImVec2 a, ImVec2 b, const json& f, f
 // Resolve the frame treatment for a media clip: an explicit `frame` param, else default-ON for a
 // non-fullscreen INSET (the user's "built-in professional border so it stands out from the bg").
 // Returns null = no frame (e.g. a fullscreen plate, or `frame:false`).
+// Fancy-inset presets (params.inset_style): a named "frame treatment" that composes with the
+// cinematic filter + optional glow to give inset footage a distinct look without hand-setting the
+// frame color/thickness/radius each time. Just a frame spec (draw_clip_frame renders it + its shadow):
+//   device   — a dark rounded bezel (a monitor / tablet)
+//   polaroid — a thick warm-white photo border
+//   card     — a thin crisp border, generous radius (a floating UI card)
+//   clean    — the built-in default pro border, forced on at any size
+static json inset_style_frame(const std::string& name) {
+    if (name == "device")                    return json{{"color", json::array({26, 23, 40})},   {"thickness", 8.0},  {"radius", 22.0}, {"shadow", true}};
+    if (name == "polaroid" || name == "photo") return json{{"color", json::array({250, 249, 244})}, {"thickness", 15.0}, {"radius", 5.0},  {"shadow", true}};
+    if (name == "card")                      return json{{"color", json::array({240, 244, 255})}, {"thickness", 3.0},  {"radius", 16.0}, {"shadow", true}};
+    if (name == "clean")                     return json(true);   // the default pro border, forced on
+    return json();   // unknown / "none" → no styled frame
+}
 static json resolve_frame(const json& params, bool insetClip) {
     if (params.is_object() && params.contains("frame")) {
         const json& f = params["frame"];
         if (f.is_boolean() && !f.get<bool>()) return json();
         if (f.is_object() && f.contains("enabled") && f["enabled"].is_boolean() && !f["enabled"].get<bool>()) return json();
         return f;
+    }
+    if (params.is_object()) {   // a named inset style forces its frame treatment (even on a big clip)
+        json sf = inset_style_frame(jstr(params, "inset_style"));
+        if (!sf.is_null()) return sf;
     }
     return insetClip ? json(true) : json();
 }
@@ -10105,6 +10123,18 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
                     }
                     if (ImGui::IsItemHovered())
                         ImGui::SetTooltip("the pro inset border + drop shadow.\nauto = on for a non-fullscreen inset with no glow\non = always (any size, even with glow) · off = never");
+                    // inset style: a named frame treatment (params.inset_style) — composes with the filter + glow
+                    static const char* INS[] = {"default", "device", "polaroid", "card", "clean"};
+                    std::string curIns = jstr(LP, "inset_style");
+                    int insI = 0; for (int k = 1; k < 5; k++) if (curIns == INS[k]) insI = k;
+                    ImGui::SetNextItemWidth(130);
+                    if (ImGui::Combo("inset style", &insI, INS, 5)) {
+                        if (insI == 0) LP.erase("inset_style"); else LP["inset_style"] = std::string(INS[insI]);
+                    }
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("a fancy frame treatment for inset footage:\n"
+                                          "device (dark bezel) · polaroid (thick photo border) · card (thin, round)\n"
+                                          "· clean (the default pro border, forced on). Composes with the filter + outer glow.");
                     // cinematic filter: a named grade + film-grain + edge-vignette "look" (params.filter)
                     static const char* FILT[] = {"none", "cinematic", "noir", "vintage", "cyber", "dream"};
                     std::string curFilt = jstr(LP, "filter");
