@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
+#include <exception>
 #include <cmath>
 #include <cctype>
 #include <string>
@@ -68,7 +69,9 @@ struct Clip {
     std::string id, row, type, label, asset;
     double start = 0, dur = 0;
     double tx_pos[2] = {0, 0}, tx_scale[2] = {1, 1}, tx_rot = 0, tx_opacity = 1, tx_anchor[2] = {0.5, 0.5};
-    json params;
+    json params = json::object();   // ALWAYS an object — a null here makes raw params.value(k,def) throw
+                                    // json.exception.306 (e.g. an add_generic_clip video/image clip on an
+                                    // empty lane, which set no typed default → crashed span_has_content).
     std::map<std::string, std::vector<KF>> keyframes;  // path → ordered keyframes (any numeric param)
 };
 struct Row {
@@ -265,6 +268,7 @@ static Project parse_project_json(json j, const std::string& path) {
             c.dur = cj.value("dur", 0.0);
             if (cj.contains("asset") && cj["asset"].is_string()) c.asset = cj["asset"].get<std::string>();
             c.params = cj.value("params", json::object());
+            if (!c.params.is_object()) c.params = json::object();   // tolerate an explicit "params": null in the file
             if (cj.contains("transform")) parse_xform(cj["transform"], c);
             if (cj.contains("keyframes") && cj["keyframes"].is_object())
                 for (auto& kk : cj["keyframes"].items()) {
@@ -11361,7 +11365,53 @@ static void apply_editor_theme() {
     s.ScrollbarSize=13; s.GrabMinSize=11;
 }
 
+// ── crash backtrace: on an unhandled SEH fault (segfault / access violation) or an uncaught C++
+// exception, print the fault + a stack backtrace as MODULE-RELATIVE offsets, resolvable offline with
+//   addr2line -f -i -e build/slopstudio.exe 0x<imagebase>+<offset>   (imagebase = objdump -f, usually
+//   0x140000000; a --disable-dynamicbase build pins it so the raw addr resolves directly). Cheap + always
+// on: an interactive-UI crash the owner can't headlessly repro now prints WHERE it died. (env SLOP_NOFAULT=1 disables.)
+static void slop_print_backtrace(const char* why) {
+    HMODULE mod = GetModuleHandleW(nullptr);
+    uintptr_t base = (uintptr_t)mod;
+    fprintf(stderr, "\n*** slopstudio CRASH: %s ***\n    module base %p — resolve: addr2line -f -i -e build/slopstudio.exe <base+offset>\n", why, (void*)base);
+    void* fr[64];
+    USHORT n = CaptureStackBackTrace(0, 64, fr, nullptr);
+    for (USHORT i = 0; i < n; i++) {
+        uintptr_t a = (uintptr_t)fr[i];
+        if (a >= base && a < base + 0x10000000) fprintf(stderr, "    #%02u  +0x%zx\n", i, (size_t)(a - base));
+        else                                    fprintf(stderr, "    #%02u   %p (external/system)\n", i, fr[i]);
+    }
+    fflush(stderr);
+}
+static LONG WINAPI slop_crash_filter(EXCEPTION_POINTERS* ep) {
+    char msg[160]; uintptr_t base = (uintptr_t)GetModuleHandleW(nullptr);
+    uintptr_t ip = (uintptr_t)ep->ExceptionRecord->ExceptionAddress;
+    unsigned long code = ep->ExceptionRecord->ExceptionCode;
+    if (code == EXCEPTION_ACCESS_VIOLATION && ep->ExceptionRecord->NumberParameters >= 2)
+        snprintf(msg, sizeof msg, "access violation %s 0x%zx, fault ip +0x%zx",
+                 ep->ExceptionRecord->ExceptionInformation[0] ? "writing" : "reading",
+                 (size_t)ep->ExceptionRecord->ExceptionInformation[1], (size_t)(ip >= base ? ip - base : ip));
+    else
+        snprintf(msg, sizeof msg, "SEH 0x%08lx, fault ip +0x%zx", code, (size_t)(ip >= base ? ip - base : ip));
+    slop_print_backtrace(msg);
+    return EXCEPTION_EXECUTE_HANDLER;   // terminate (don't loop the faulting instruction)
+}
+static void slop_terminate_handler() {
+    const char* what = "uncaught C++ exception";
+    try { if (std::current_exception()) std::rethrow_exception(std::current_exception()); }
+    catch (const std::exception& e) { static char b[200]; snprintf(b, sizeof b, "uncaught std::exception: %s", e.what()); what = b; }
+    catch (...) {}
+    slop_print_backtrace(what);
+    abort();
+}
+static void install_crash_handler() {
+    if (getenv("SLOP_NOFAULT")) return;
+    SetUnhandledExceptionFilter(slop_crash_filter);
+    std::set_terminate(slop_terminate_handler);
+}
+
 int main(int argc, char** argv) {
+    install_crash_handler();
     std::string projectPath = "examples/signature-opener.slop.json";
     std::string shotPath, shotFramePath, configPath, genClip, exportPlan, splitClip, delClip, dupClip, selectClip, libSelect;
     int seqN = 1;   // --seq-n: render N consecutive frames from --time in ONE process (verify eased motion)

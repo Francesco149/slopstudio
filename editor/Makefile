@@ -37,10 +37,14 @@ IMGUI_OBJ := $(addprefix $(OBJ)/,$(IMGUI_CORE:.cpp=.o) $(IMGUI_BACKEND:.cpp=.o) 
 MAIN_OBJ  := $(OBJ)/main.o
 ALL_OBJ   := $(MAIN_OBJ) $(IMGUI_OBJ)
 
+# EXTRA_CXXFLAGS / EXTRA_LDFLAGS: append hooks for a diagnostic build without restating everything,
+# e.g. `make EXTRA_CXXFLAGS='-g -fno-omit-frame-pointer' EXTRA_LDFLAGS=-Wl,--disable-dynamicbase`
+# → DWARF line info + a fixed image base so the crash handler's backtrace offsets resolve with addr2line.
 CXXFLAGS := -std=c++17 -O2 -Wall -Wno-unknown-pragmas \
   -DUNICODE -D_UNICODE -D_WIN32_WINNT=0x0A00 $(VIDEO_CXXFLAGS) \
-  -I src -I $(IMGUI) -I $(IMGUI)/backends -I $(IMGUI)/misc/cpp -I $(JSON_INC) -I $(STBI) -I $(STBI)/stb
-LDFLAGS  := -static -static-libgcc -static-libstdc++ -mconsole
+  -I src -I $(IMGUI) -I $(IMGUI)/backends -I $(IMGUI)/misc/cpp -I $(JSON_INC) -I $(STBI) -I $(STBI)/stb \
+  $(EXTRA_CXXFLAGS)
+LDFLAGS  := -static -static-libgcc -static-libstdc++ -mconsole $(EXTRA_LDFLAGS)
 LIBS     := -ld3d11 -ldxgi -ld3dcompiler -lgdi32 -ldwmapi -limm32 -lole32 -luuid -lwinmm -lwinhttp -lcomdlg32 -lshell32 $(VIDEO_LIBS)
 
 $(OUT): $(ALL_OBJ) | $(BUILD)
