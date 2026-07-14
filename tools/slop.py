@@ -373,7 +373,7 @@ def cmd_skeleton(a):
     p=OD([("schema","slopstudio.project/1"),
           ("meta",OD([("title",sk.get("title","untitled")),("fps",sk.get("fps",30)),
                       ("resolution",res),("sample_rate",48000),
-                      ("vignette",sk.get("vignette",0.26)),
+                      ("vignette",sk.get("vignette",0.1)),   # a subtle RADIAL vignette over EVERYTHING, always on (owner default)
                       ("notes","compiled by slop.py skeleton from "+os.path.basename(a.skeleton))])),
           ("assets",OD()),("tracks",[]),("rows",OD()),("clips",OD())])
     if portrait:
@@ -719,9 +719,11 @@ def cmd_skeleton(a):
         p["clips"][cb]["asset"]=asset_for((dark if var=="dark" else desk if var=="desk" else room),"image")
     # DEFAULT channel 'basic look': a whole-frame noir grade over the WHOLE video (owner's pick — subtle +
     # persistent). Disable with look:false / "none"; tune via a look dict {filter,strength,vignette}.
-    look=sk.get("look", OD([("filter","noir"),("strength",0.25),("vignette",0.1)]))
+    # noir grade only (no vignette here — the global meta.vignette radial vignette covers everything, so the
+    # look isn't doubled up and the vignette persists even if the look preset is changed/removed)
+    look=sk.get("look", OD([("filter","noir"),("strength",0.25),("vignette",0.0)]))
     if look and look!="none" and (not isinstance(look,dict) or look.get("filter","none") not in ("none",None)):
-        lf=look if isinstance(look,dict) else OD([("filter","noir"),("strength",0.25),("vignette",0.1)])
+        lf=look if isinstance(look,dict) else OD([("filter","noir"),("strength",0.25),("vignette",0.0)])
         new_clip(p,"filter","r_filter",0.0,round(tot,3),
                  OD([("filter",lf.get("filter","noir")),("strength",lf.get("strength",0.25)),("vignette",lf.get("vignette",0.1))]),"c_look")
     if sk.get("music"):

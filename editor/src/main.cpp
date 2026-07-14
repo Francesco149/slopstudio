@@ -6489,16 +6489,26 @@ static void composite_frame(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0, 
             }
         }
     }
-    // scene vignette: darken frame edges to unify bg + host (crude 4-edge gradient; meta.vignette).
+    // scene vignette (meta.vignette): a proper RADIAL darkening toward the corners — clear centre, darkest
+    // corners — that reads as a real vignette "covering everything" (the old 4-edge-band version was too weak
+    // to see even at 0.26; owner wanted a visible ~10% default). Drawn as a grid of gradient quads whose
+    // vertex alpha follows r² from the centre (cheap: ~144 quads, no readback → preview == export, no perf hit).
     if (p.vignette > 0.01) {
-        float vg = (float)(p.vignette > 1 ? 1 : p.vignette);
-        ImU32 d0 = IM_COL32(0, 0, 0, (int)(vg * 150)), d1 = IM_COL32(0, 0, 0, 0);
-        ImVec2 q0 = f0, q1 = ImVec2(f0.x + fw, f0.y + fh);
-        float band = (fw < fh ? fw : fh) * 0.30f;
-        dl->AddRectFilledMultiColor(q0, ImVec2(q1.x, q0.y + band), d0, d0, d1, d1);            // top
-        dl->AddRectFilledMultiColor(ImVec2(q0.x, q1.y - band), q1, d1, d1, d0, d0);            // bottom
-        dl->AddRectFilledMultiColor(q0, ImVec2(q0.x + band, q1.y), d0, d1, d1, d0);            // left
-        dl->AddRectFilledMultiColor(ImVec2(q1.x - band, q0.y), q1, d1, d0, d0, d1);            // right
+        const float vg = (float)(p.vignette > 1 ? 1 : p.vignette);
+        const float cX = f0.x + fw * 0.5f, cY = f0.y + fh * 0.5f;
+        const float invMaxR2 = 1.f / std::max(1.f, 0.25f * (fw * fw + fh * fh));   // 1/(centre→corner)²
+        auto va = [&](float x, float y) -> ImU32 {
+            float dx = x - cX, dy = y - cY, r2 = (dx * dx + dy * dy) * invMaxR2;    // 0 centre .. 1 corner
+            int a = (int)(vg * 215.f * (r2 > 1 ? 1 : r2));                          // r² falloff, corner-weighted
+            return IM_COL32(0, 0, 0, a < 0 ? 0 : a > 255 ? 255 : a);
+        };
+        const int N = 12;
+        for (int j = 0; j < N; j++)
+            for (int i = 0; i < N; i++) {
+                float x0 = f0.x + fw * i / N, x1 = f0.x + fw * (i + 1) / N;
+                float y0 = f0.y + fh * j / N, y1 = f0.y + fh * (j + 1) / N;
+                dl->AddRectFilledMultiColor(ImVec2(x0, y0), ImVec2(x1, y1), va(x0, y0), va(x1, y0), va(x1, y1), va(x0, y1));
+            }
     }
     // cinematic letterbox bars (meta.letterbox = per-bar fraction of frame HEIGHT; ~0.11 ≈ 2.35:1).
     // Drawn over the content (after the vignette), before the song credit so the chip still reads.
@@ -8061,7 +8071,9 @@ static void draw_native_params(Project& p, Clip& c) {
         float feather  = (float)P.value("feather", 0.45); if (ImGui::SliderFloat("feather", &feather, 0.05f, 1.f)) P["feather"] = feather;
         float anch[2] = {0.5f, 0.5f};
         if (P.contains("anchor") && P["anchor"].is_array() && P["anchor"].size() == 2) { anch[0] = P["anchor"][0].get<float>(); anch[1] = P["anchor"][1].get<float>(); }
-        if (ImGui::DragFloat2("anchor (0..1)", anch, 0.005f, 0.f, 1.f)) P["anchor"] = json::array({anch[0], anch[1]});
+        // "focus" (not "anchor"): the gradient's centre point. A distinct label AND ImGui ID from the clip
+        // TRANSFORM's "anchor (0..1)" below — the shared label collided (ImGui "2 items with conflicting id").
+        if (ImGui::DragFloat2("focus (0..1)##gradanchor", anch, 0.005f, 0.f, 1.f)) P["anchor"] = json::array({anch[0], anch[1]});
         if (k == "linear") {
             const char* DIRS[] = {"down", "up", "left", "right"};
             std::string d = P.value("dir", std::string("down"));
