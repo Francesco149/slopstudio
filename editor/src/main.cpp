@@ -3366,7 +3366,10 @@ static std::string g_ctrlDupDragId;      // clip a Ctrl+drag copy was already sp
 static std::string g_dragDupReq;         // DrawTimeline → DrawUI: request a duplicate (deferred; p rebuild)
 static double g_dupAtStart = -1e18;      // where to place the pending copy (-1e18 = default: right after)
 // Placement tool: click empty timeline space to add a clip of the armed type (drag = draw its length).
-static std::string g_placeType;          // armed clip type ("" = off); set by the palette, cleared by Esc
+static std::string g_placeType;          // armed clip type ("" = off; a kind; "__generic__"; "__asset__"); cleared by Esc
+static std::string g_placeAsset;         // asset path/uri to place when g_placeType == "__asset__" (armed by a drop)
+static bool g_placeIgnoreUntilUp = false;// after a drop arms the tool, ignore placement until the mouse is released
+                                         // (so the drop's OWN release/click doesn't immediately commit the placement)
 static std::string g_placeReq;           // DrawTimeline → DrawUI: a placement to commit (deferred)
 static std::string g_placeReqRow;        // the lane the cursor was over (row-selection prefers it)
 static double g_placeReqT = 0, g_placeReqDur = -1;
@@ -7150,25 +7153,18 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
         dl->AddText(ImVec2(origin.x + GUT + 6, origin.y + canvasH - 16), IM_COL32(150, 150, 160, 255), ov);
     }
 
-    // consume an OS file drop: import into the project library (portable managed copy), then place it
-    // with the SAME overlap-aware add-clip placement as the palette tools — forced to the dropped asset
-    // (owner: "trigger the same add-clip UX, just forced to the asset dropped in").
+    // consume an OS file drop: import into the project library (portable managed copy), then ARM the
+    // placement tool loaded with that asset — the user positions it with the live ghost + a fresh click
+    // (the SAME add-clip UX as the palette; the drop's own release is swallowed via g_placeIgnoreUntilUp,
+    // and add_asset_clip_placed on commit stores a project-relative uri). Owner: "trigger the add mode".
     if (g_hasDrop && !g_dropPath.empty()) {
         float dx = (float)g_dropPt.x, dy = (float)g_dropPt.y;
-        if (dx >= trackX && dx <= origin.x + canvasW && dy >= laneTop && dy <= yBot) {
-            double t = std::max(0.0, st.tlScroll + (dx - trackX) / pps);
-            std::string row;
-            for (auto& pr : laneY) if (dy >= pr.second && dy < pr.second + ROWH) { row = pr.first; break; }
-            // Import first (same as the Media pane's "Add files...") so the clip references the managed
-            // copy under the project — an external original at F:\wherever never enters the project file,
-            // and add_asset_clip_placed → add_*_clip_at store a project-relative (portable) uri.
-            if (std::string imp = library_import(g_dropPath); !imp.empty()) g_dropPath = imp;
-            std::string nid = add_asset_clip_placed(p, g_dropPath, t, row);   // clicked lane > free lane > new track
-            if (!nid.empty()) st.selected = nid;
-        } else
-            library_import(g_dropPath);   // dropped outside the timeline (Media pane etc.) → import-only
-        g_hasDrop = false;   // consume the drop
-        g_undoDirty = true;  // OS drop is outside ImGui → flag it for the undo checkpoint
+        bool onTimeline = (dx >= trackX && dx <= origin.x + canvasW && dy >= laneTop && dy <= yBot);
+        if (std::string imp = library_import(g_dropPath); !imp.empty()) g_dropPath = imp;   // → managed copy
+        if (onTimeline && has_media_ext(ext_lower(g_dropPath))) {   // arm placement with the dropped asset
+            g_placeType = "__asset__"; g_placeAsset = g_dropPath; g_placeIgnoreUntilUp = true;
+        }
+        g_hasDrop = false;   // consume the drop (import-only when dropped outside the timeline)
     }
 
     // ── placement tool: with a type armed (palette), click empty lane space to add that clip at the
@@ -7181,20 +7177,32 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
         auto rowY  = [&](const std::string& r) -> float { for (auto& pr : laneY) if (pr.first == r) return pr.second; return -1.f; };
         static double placeT0 = -1e30; static std::string placeRow;
         bool active = placeActive;               // captured from the pre-clip catcher above
+        // A drop arms the tool mid-gesture; swallow input until the mouse is released so the drop's OWN
+        // release doesn't instantly commit — the user gets the ghost preview, then clicks fresh to place.
+        if (g_placeIgnoreUntilUp) {
+            if (!pio.MouseDown[0]) g_placeIgnoreUntilUp = false;      // released → ready for the next press
+            active = placeActivated = placeDeact = false;             // (placeHover still shows the ghost)
+        }
         if (placeActivated) { placeT0 = tAt(pio.MousePos.x); placeRow = rowAt(pio.MousePos.y); }
         bool generic = (g_placeType == "__generic__");
+        bool asset   = (g_placeType == "__asset__");     // placing a specific dropped/library asset (forced type)
+        LibType assetLt = LIB_IMAGE; double assetDur = 4.0; std::string assetType;
+        if (asset) { assetLt = lib_type_of(ext_lower(g_placeAsset));
+                     assetType = (assetLt == LIB_VIDEO) ? "video" : (assetLt == LIB_AUDIO) ? "music" : "image";
+                     assetDur  = asset_natural_dur(g_placeAsset, assetLt); }
         if (active || placeHover) {   // live preview: WHICH lane will it land on (re-evaluated as it grows)?
             double a  = active ? std::min(placeT0, tAt(pio.MousePos.x)) : tAt(pio.MousePos.x);
             double bb = active ? std::max(placeT0, tAt(pio.MousePos.x)) : a;
             std::string clk = active ? placeRow : rowAt(pio.MousePos.y);
-            std::string want = generic ? (p.rows.count(clk) ? p.rows[clk].type : std::string()) : std::string();
-            if (!generic || !want.empty()) {   // generic needs a real lane under the cursor
+            std::string want = asset ? assetType : generic ? (p.rows.count(clk) ? p.rows[clk].type : std::string()) : std::string();
+            if (asset || !generic || !want.empty()) {   // generic needs a real lane under the cursor; asset/kind always typed
                 bool drag = (bb - a > 0.15);
-                double probe = drag ? (bb - a) : 0.02;   // click/hover probes ~zero-width (mirrors the commit)
-                std::string tgt = generic ? choose_row_of_type(p, want, clk, a, probe) : choose_place_row(p, g_placeType, clk, a, probe);
+                double probe = asset ? assetDur : (drag ? (bb - a) : 0.02);   // an asset lands at its natural length
+                std::string tgt = (asset || generic) ? choose_row_of_type(p, want, clk, a, probe) : choose_place_row(p, g_placeType, clk, a, probe);
                 bool newLane = tgt.empty();
-                double durP;                             // gap-fill on a plain click; exact span on a drag
-                if (drag) durP = bb - a;
+                double durP;                             // asset = natural length; else gap-fill on a click / exact span on a drag
+                if (asset) durP = assetDur;
+                else if (drag) durP = bb - a;
                 else {
                     double def;                          // fallback when nothing follows: kind default (or the ref clip's length)
                     if (generic) { std::string r = generic_ref_clip(p, clk, a); def = r.empty() ? place_default_dur(want) : p.clips[r].dur; }
@@ -7215,7 +7223,8 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
         }
         if (placeDeact && placeT0 > -1e29) {   // release → commit (deferred: p may add a track)
             double a = std::min(placeT0, tAt(pio.MousePos.x)), b = std::max(placeT0, tAt(pio.MousePos.x));
-            if (!generic || p.rows.count(placeRow)) {   // generic needs a real clicked lane
+            if (asset) { g_placeReq = "__asset__"; g_placeReqT = a; g_placeReqRow = placeRow; }
+            else if (!generic || p.rows.count(placeRow)) {   // generic needs a real clicked lane
                 g_placeReq = g_placeType; g_placeReqT = a; g_placeReqDur = (b - a > 0.15) ? (b - a) : -1.0; g_placeReqRow = placeRow;
             }
             placeT0 = -1e30;
@@ -7225,17 +7234,18 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
     ImGui::SetCursorScreenPos(origin);
     ImGui::Dummy(ImVec2(canvasW, vextH));   // reserve the FULL lane height so the child scrolls to every lane
 
-    // drop a Library item onto a lane → place it with the same overlap-aware add-clip placement
-    // (clicked lane > free lane of the type > new track; a rig def → an avatar clip).
+    // drop a Library item onto the timeline → ARM the placement tool with that asset (user positions it
+    // with the ghost + a fresh click; same as an OS drop). A rig def isn't click-placed — it goes to its
+    // own avatar row — so it's added immediately.
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("LIB_ITEM")) {
             std::string path((const char*)pl->Data);
-            ImVec2 m = ImGui::GetMousePos();
-            double t = std::max(0.0, st.tlScroll + (m.x - trackX) / pps);
-            std::string row;
-            for (auto& pr : laneY) if (m.y >= pr.second && m.y < pr.second + ROWH) { row = pr.first; break; }
-            std::string nid = add_asset_clip_placed(p, path, t, row);
-            if (!nid.empty()) st.selected = nid;
+            if (!rig_name_from_path(path).empty()) {   // rig → avatar clip on its own row (not click-placed)
+                std::string nid = add_asset_clip_placed(p, path, st.playhead, "");
+                if (!nid.empty()) { st.selected = nid; g_undoDirty = true; }
+            } else if (has_media_ext(ext_lower(path))) {   // media → arm; the drop's own release is swallowed
+                g_placeType = "__asset__"; g_placeAsset = path; g_placeIgnoreUntilUp = true;
+            }
         }
         ImGui::EndDragDropTarget();
     }
@@ -10346,7 +10356,7 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
         if ((ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace)) &&
             !ImGui::GetIO().WantTextInput && !st.selected.empty())
             delReq = st.selected;     // Del / Backspace = delete the selected clip (never while typing in a field)
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape) && !g_placeType.empty()) g_placeType.clear();   // disarm the placement tool
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape) && !g_placeType.empty()) { g_placeType.clear(); g_placeAsset.clear(); g_placeIgnoreUntilUp = false; }   // disarm the placement tool
         if (ImGui::IsKeyPressed(ImGuiKey_A) && !ImGui::GetIO().WantTextInput && !ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyAlt)
             g_placeType = (g_placeType == "__generic__") ? std::string() : std::string("__generic__");   // A = generic add mode
         ImGui::SameLine();
@@ -10373,9 +10383,13 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
             if (on) ImGui::PopStyleColor(2);
         }
         if (!g_placeType.empty()) { ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.5f, 0.85f, 0.66f, 1),
-                g_placeType == "__generic__" ? "→ click a lane (matches neighbours; Esc cancels)"
-                                             : "→ click/drag empty timeline (Esc cancels)"); }
+            if (g_placeType == "__asset__") {
+                std::string fn = g_placeAsset; size_t sl = fn.find_last_of("/\\"); if (sl != std::string::npos) fn = fn.substr(sl + 1);
+                ImGui::TextColored(ImVec4(0.5f, 0.85f, 0.66f, 1), "\xE2\x86\x92 click to place \"%s\" (Esc cancels)", fn.c_str());
+            } else
+                ImGui::TextColored(ImVec4(0.5f, 0.85f, 0.66f, 1),
+                    g_placeType == "__generic__" ? "\xE2\x86\x92 click a lane (matches neighbours; Esc cancels)"
+                                                 : "\xE2\x86\x92 click/drag empty timeline (Esc cancels)"); }
     }
 
     ImGui::BeginChild("timeline", ImVec2(0, 0), true, ImGuiWindowFlags_NoScrollWithMouse);  // wheel = zoom only; lanes scroll via scrollbar / Ctrl+wheel
@@ -10391,9 +10405,11 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
     // A Ctrl+drag on the timeline requests a duplicate via a global (DrawTimeline can't see dupReq).
     if (dupReq.empty() && !g_dragDupReq.empty()) { dupReq = g_dragDupReq; g_dragDupReq.clear(); }
     if (!g_placeReq.empty()) {   // placement tool released → add the clip (overlap-aware; may add a track)
-        std::string nid = (g_placeReq == "__generic__") ? add_generic_clip(p, g_placeReqRow, g_placeReqT, g_placeReqDur)
+        std::string nid = (g_placeReq == "__asset__")   ? add_asset_clip_placed(p, g_placeAsset, g_placeReqT, g_placeReqRow)
+                        : (g_placeReq == "__generic__") ? add_generic_clip(p, g_placeReqRow, g_placeReqT, g_placeReqDur)
                                                         : add_quick_clip(p, g_placeReq, g_placeReqT, g_placeReqDur, g_placeReqRow);
-        if (!nid.empty()) { st.selected = nid; g_bufFor.clear(); g_undoDirty = true; g_placeType.clear(); }  // auto-select the new clip + auto-exit add mode
+        if (!nid.empty()) { st.selected = nid; g_bufFor.clear(); g_undoDirty = true;   // auto-select the new clip + auto-exit add mode
+                            g_placeType.clear(); g_placeAsset.clear(); }
         g_placeReq.clear(); g_placeReqRow.clear();
     }
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) g_ctrlDupDragId.clear();   // re-arm for the next Ctrl+drag
