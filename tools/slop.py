@@ -339,13 +339,30 @@ def est_dur(text, rate=1.0):
 # signature giggle; see the gemma-fufu-signature note). Explicit `"laugh": true|false` on a beat
 # overrides the auto-detect.
 GEMMA_HEH = "presets/voice-snips/gemma-heh.wav"
-_LAUGH_TOK = (r"(?:h+e+h*|e?heh+|fu+(?:fu+)*|ku+(?:ku+)+|ふ+|へ+|"
-              r"\*?\s*(?:giggles?|laughs?|chuckles?|snickers?)\s*\*?)")
-_LAUGH_PUNC = r"[\s~～♥☆、。!！?？.…\-]*"
+# a real laugh has a trailing 'h' (heh/hah) or repetition (hehe/fufu) — NOT bare "he"/"ha"/"fu" (which are
+# words / word-starts: "He cheats", "Full moon"). This distinction stops _split_laugh eating real speech.
+_LAUGH_TOK = (r"(?:(?:he){2,}h?|heh+|(?:ha){2,}h?|hah+|(?:fu){2,}|(?:ku){2,}|ふ{2,}|へ{2,}|"
+              r"\*?\s*(?:giggles?|laughs?|chuckles?|snickers?|mwahaha\w*)\s*\*?)")
+_LAUGH_PUNC = r"[\s~～♥☆、。,!！?？.…\-]*"
 _LAUGH_RE = re.compile(r"^" + _LAUGH_PUNC + r"(?:" + _LAUGH_TOK + _LAUGH_PUNC + r")+$", re.IGNORECASE)
+_LEAD_LAUGH_RE = re.compile(r"^(" + _LAUGH_PUNC + r"(?:" + _LAUGH_TOK + _LAUGH_PUNC + r")+)(.+)$", re.IGNORECASE)
 def _is_laugh(line):
     """the whole line is nothing but a laugh (Heh~ / Fufu~ / heh heh / ふふふ / *giggle*) → golden take."""
     return bool(line) and bool(_LAUGH_RE.match(line.strip()))
+def _split_laugh(line):
+    """a line that LEADS with a laugh then SPEAKS ("Heh~ Welcome back, mortals") → (laugh, speech). The
+    laugh part reuses the golden take (baked), the remainder generates as normal TTS (owner). None if the
+    line isn't a lead-laugh (a whole-line laugh returns None here — that's _is_laugh's job)."""
+    if not line: return None
+    s=line.strip()
+    if _is_laugh(s): return None
+    m=_LEAD_LAUGH_RE.match(s)
+    if not m: return None
+    laugh=m.group(1).strip(" \t~～♥☆、。,!！?？.…-"); rest=m.group(2).strip(" \t,、")
+    # the remainder must be real speech (has a letter), not just more punctuation/laughter
+    if not laugh or not rest or _is_laugh(rest) or not re.search(r"[A-Za-z぀-ヿ一-鿿]", rest):
+        return None
+    return laugh, rest
 def _laugh_asset(p):
     """register (once) the golden 'Heh~' take as a ready speech asset; return (key, hold_dur). The hold
     is the take + a short smug beat so the snap-in closeup registers (and retime holds the beat there)."""
@@ -360,6 +377,22 @@ def _laugh_asset(p):
         p.setdefault("assets", OD())[lk] = OD([("provider", "preset"), ("type", "speech"), ("status", "ready"),
             ("uri", GEMMA_HEH), ("meta", OD([("duration", hold), ("sample_rate", sr)]))])
     return lk, p["assets"][lk]["meta"]["duration"]
+def _expand_laughs(beats):
+    """pre-split a leading-laugh beat ("Heh~ Welcome back, mortals") into TWO beats: a pure-giggle beat (the
+    golden take + a smug closeup snap — see the laugh handling) followed by the SPEECH beat (normal TTS). The
+    giggle is always a host closeup (it's HER giggling); the speech beat keeps the original visual/emotion/
+    plate/etc. Non-line beats (sections/pauses) and whole-line laughs pass through untouched."""
+    out = []
+    for b in beats:
+        sl = (_split_laugh(b.get("line", "")) if (isinstance(b, dict) and b.get("laugh") is None
+                                                  and not b.get("solo")) else None)
+        if not sl:
+            out.append(b); continue
+        laugh_txt, speech = sl
+        out.append(OD([("line", laugh_txt), ("emotion", "smug"), ("laugh", True), ("visual", "host")]))
+        sp = OD(b); sp["line"] = speech         # remainder speaks normally, keeping the beat's visual/emotion
+        out.append(sp)
+    return out
 
 def _clip_rate(p, c):
     """effective playback rate of a tts clip: its own params.rate, else the project default
@@ -480,7 +513,7 @@ def cmd_skeleton(a):
         if not d: return True
         ar=(d[0]/d[1])/(res[0]/res[1])
         return (1/ar if ar>1 else ar) >= 0.45
-    for b in sk.get("beats",[]):
+    for b in _expand_laughs(sk.get("beats",[])):   # split "Heh~ Welcome back" → golden giggle beat + speech beat
         if "section" in b:
             # scene cut: blur-swap straddling the boundary + a marker note + a branded act card
             # (a small pill in the least-busy corner for the first seconds of the act)
@@ -619,6 +652,7 @@ def cmd_skeleton(a):
                 prm=OD((k,val) for k,val in v.items() if k not in ("layout","zoom","for"))
                 # centred by default now (owner) — no dock:"top"; the card sits mid-frame on the checker with no host
                 cid=new_clip(p,"code","r_code",at,vdur,prm,f"{pref}{sfx}_code")
+                fill=False   # NO filler — the code card sits on the BARE grid (owner: "on the grid backdrop")
             elif "caption" in v:
                 prm=OD([("text",v["caption"]),("style",v.get("style","lower_third"))])
                 if "sub" in v: prm["sub"]=v["sub"]
@@ -780,8 +814,23 @@ def cmd_skeleton(a):
     look=sk.get("look", OD([("filter","noir"),("strength",0.25),("vignette",0.5)]))
     if look and look!="none" and (not isinstance(look,dict) or look.get("filter","none") not in ("none",None)):
         lf=look if isinstance(look,dict) else OD([("filter","noir"),("strength",0.25),("vignette",0.5)])
-        new_clip(p,"filter","r_filter",0.0,round(tot,3),
-                 OD([("filter",lf.get("filter","noir")),("strength",lf.get("strength",0.25)),("vignette",lf.get("vignette",0.1))]),"c_look")
+        fparams=lambda: OD([("filter",lf.get("filter","noir")),("strength",lf.get("strength",0.25)),("vignette",lf.get("vignette",0.5))])
+        # CARVE the grade OUT of solo CODE-CARD beats: a code card is a graphic that reads cleanest on the
+        # BRIGHT grid (owner: "the solo code sections should be on the grid backdrop") — the noir grade
+        # otherwise crushes the checker to near-black. The filter's 0.3s edge-ease fades the grade out as the
+        # card comes in and back after. Holes come from the placed r_code clips (est time; the holes + these
+        # segments warp TOGETHER through retime, staying aligned). No code → one full-length clip as before.
+        holes=sorted((p["clips"][cid]["start"], p["clips"][cid]["start"]+p["clips"][cid]["dur"])
+                     for cid in p["rows"].get("r_code",{}).get("clips",[]))
+        segs=[]; cur=0.0
+        for h0,h1 in holes:
+            if h0>cur+0.35: segs.append((cur,min(h0,tot)))
+            cur=max(cur,min(h1,tot))
+        if cur<tot-0.35: segs.append((cur,tot))
+        if not segs: segs=[(0.0,tot)]
+        for si2,(s0,s1) in enumerate(segs):
+            new_clip(p,"filter","r_filter",round(s0,3),round(s1-s0,3),fparams(),
+                     "c_look" if si2==0 else f"c_look{si2+1}")
     if sk.get("music"):
         cm=new_clip(p,"music","r_music",0.0,round(tot,3),OD([("gain_db",sk.get("music_gain",_bed_default_gain(sk["music"])))]),"c_music")
         p["clips"][cm]["asset"]=asset_for(sk["music"],"music")
