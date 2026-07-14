@@ -801,6 +801,28 @@ def cmd_lint(p, a):
     # 4b. clips starting before t=0 (export starts at 0 — they play truncated)
     for cid,c in p["clips"].items():
         if c.get("start",0) < -0.01: warn.append(f"NEGATIVE {cid} starts at {c['start']:.2f}s (before 0)")
+    # 4d. SPATIAL — OFF-FRAME: a manually-positioned visual whose CENTER lands off the visible frame
+    # (params.anchor base + transform.pos, in project px from the frame centre). High-signal for the
+    # "aligns off-frame right" bug class (a nudge/anchor pushed a card or image past the edge). Excludes
+    # avatars (the compositor adds render-time presenter/over-footage offsets not in the JSON), layout-
+    # driven media (cover/fit/inset self-centre) and auto-placed captions (`place` = a corner offset).
+    # Fuller spatial lint (host-over-footage, box overlap) needs the compositor's RESOLVED on-screen
+    # boxes — a future editor `--dump-boxes` — so it isn't attempted from the JSON here.
+    W,H=(p.get("meta",{}).get("resolution",[1920,1080])+[1920,1080])[:2]
+    anchors=p.get("meta",{}).get("anchors",{})
+    for cid,c in p["clips"].items():
+        rt=p["rows"].get(c.get("row",""),{}).get("type")
+        if rt not in ("image","video","diagram","shape"): continue
+        pr=c.get("params",{}) or {}
+        if pr.get("place"): continue                 # auto-cornered → pos is a corner-relative offset
+        lay=pr.get("layout","")
+        if lay in ("cover","fullscreen","fit") or lay.startswith("inset"): continue  # layout self-positions
+        tf=c.get("transform",{}) or {}
+        pos=(tf.get("pos",[0,0])+[0,0])[:2]
+        ab=anchors.get(pr.get("anchor",""),[0,0])
+        ox,oy=pos[0]+ab[0], pos[1]+ab[1]
+        if abs(ox)>W*0.55 or abs(oy)>H*0.55:         # centre >10% past the frame edge (half = 0.5·dim)
+            warn.append(f"OFF-FRAME {cid}: centre at ({ox:+.0f},{oy:+.0f}) px is off the {int(W)}x{int(H)} frame (pos {pos} + anchor {ab})")
     # 5. same-row overlaps — audio doubles up (warn); visuals may be intentional side-by-side (info)
     for rid,r in p["rows"].items():
         cs=sorted([p["clips"][c] for c in r.get("clips",[]) if c in p["clips"]], key=lambda c:c["start"])
