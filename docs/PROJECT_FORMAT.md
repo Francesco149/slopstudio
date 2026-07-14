@@ -97,6 +97,8 @@ pacing in `slop.py skeleton`). Explicit keys always win over the format's defaul
   inset / host / letterboxed media). `"checker"` = a subtle diagonal-scrolling soft checkerboard in the
   brand purples (gives that space a branded texture, not a black void); `"black"`/`"none"` = the old flat
   base. A cover backdrop or an explicit `filler` blur clip still hides it. (Project ▸ background.)
+- **`checker_scroll`** (default **2.0**) — the checkerboard's diagonal drift speed (`1.0` = the original
+  slow drift; `0` = hold still). (Project ▸ background ▸ checker scroll speed.)
 - **`letterbox`** (default **0**) — cinematic black bars top+bottom, as a fraction of frame HEIGHT per
   bar (~`0.11` ≈ 2.35:1). Composes with any clip's `filter`. (Project ▸ background ▸ letterbox bars.)
 
@@ -302,6 +304,12 @@ auto-reloads** on external/LLM edits — and every numeric one is **keyframeable
   `temperature`/`tint`/`dim` still wins. Grain is deterministic per frame time. (Inspector Look ▸ *cinematic
   filter*.) Scene-wide **`meta.letterbox`** (fraction of frame height per bar; ~0.11 ≈ 2.35:1) adds cinematic
   bars top+bottom. Composes with everything below.
+  - **Whole-frame `filter` CLIP** (a clip of `type:"filter"`, the colour sibling of the `blur` transition
+    clip) — grades the ENTIRE composite for its span (host, captions, footage — every layer), not one clip.
+    `params.filter` picks the preset (same five), `params.strength` (0..1) blends it, and it fades in/out at
+    the clip's edges. Because it grades the read-back frame buffer (not a per-clip texture pass), **full noir
+    desaturation works on the whole frame incl. moving video.** Add via Edit ▸ Add special clip ▸ Cinematic
+    filter (or a `filter` row); preview == export.
 - **`inset_style`** (image *and* video) — a fancy frame treatment for inset footage that composes with the
   `filter` + `glow`: `device` (dark rounded bezel) · `polaroid` (thick photo border) · `card` (thin, round) ·
   `clean` (the default pro border forced on). Each carries its drop shadow. (Inspector Look ▸ *inset style*.)

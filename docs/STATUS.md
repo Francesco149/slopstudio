@@ -3,6 +3,25 @@
 Hand-maintained "what's true right now." **Read this first after `CLAUDE.md`** and update it
 in the same change that lands work, so a fresh session reorients in ~60s. Last updated:
 **2026-07-14**. For composing a video as an agent, **`docs/LLM_WORKFLOW.md`**.
+**★★ OWNER LIVE-TEST SESSION (2026-07-14 pm) — 5 fixes, all owner-confirmed:**
+- **Playback perf FIXED** (`d8fd36d`): recettear playback tanked to ~100 ms/frame. Profiled via a new
+  **`SLOP_PERF=1` frame profiler** (kept, gated) → the cost was `audio_pump` rebuilding the whole mixer
+  source list (`collect_audio`+`collect_duck_windows`, all 449 clips) **every UI frame** (~44.5 ms). Now
+  cached, rebuilt only on change (edit/gen/play-start; invalidated at the 3 `g_pcmCache.erase` sites so a
+  cached `Pcm*` can't dangle). **44.5 → 0.1 ms/frame, whole frame 51 → ~1.8 ms (≈60fps).** Owner: "super smooth."
+- **Crash FIXED** (`fe25762`): smart-add drag-out of a generic overlay (video) clip over the playhead →
+  `Clip.params` was default-null (add_generic_clip set a default only for caption/code/tts/avatar/shape) →
+  `span_has_content`'s raw `.value()` threw `json 306`. `Clip.params` now always an object (+ loader coerces
+  `params:null`). Also added a **permanent crash-backtrace handler** (SEH + terminate → module-relative
+  offsets, `addr2line`-resolvable) — this is what pinned it; owner repro'd once, done.
+- **`filter` clip type** (`3ec2cac`): a whole-frame cinematic grade over EVERYTHING below it, the colour
+  sibling of the `blur` clip (Add special clip ▸ Cinematic filter; `params.filter`+`strength`). Grades the
+  read-back buffer → full noir desat works whole-frame; preview==export.
+- **Checker bg** (`3ec2cac`): clipped to the frame (no more leak into the preview letterbox); **scroll speed
+  is a project global** `meta.checker_scroll` (default 2.0 = 2× the old drift) + Project-panel slider.
+- **Hero `editor.png`** (`5ba98fe`): owner's cosmic2d-theme re-capture (the one thing left from the overnight arc).
+**STILL OPEN (this session's remaining asks):** Phase 4c host-transition polish · Phase 4a layout engine · a fresh **kirby smoke-test cut** (needs lame for TTS).
+
 **★ The mouse-driven-UX overhaul + the visual-variety stretch goal — most of it LANDED in an autonomous
 overnight session (2026-07-14 night). Full arc + what remains: `docs/UX_OVERHAUL.md` (top STATUS block).**
 Committed this session (owner live-tests the interactive bits in the AM): **VO-clip editing cluster** (`4d7239f`

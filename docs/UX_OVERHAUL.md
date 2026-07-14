@@ -48,7 +48,13 @@ drift — grep function names.
 - **Phase 4a** — the BIG layout-engine refactor (generalize `draw_diagram_clip` into a shared frame-region slot
   solver). Explicitly "attempt last"; not started. A compositor `--dump-boxes` for real spatial lint falls out of it.
 - **Phase 5** (thumbtool tldraw-ish) + **Phase 6** (kirby smoke test, needs lame). Not started.
-- **hero editor.png** — owner screenshot with the cosmic2d theme.
+- ~~**hero editor.png** — owner screenshot with the cosmic2d theme.~~ ✅ DONE (`5ba98fe`, owner-supplied).
+
+**★ Owner live-test session 2026-07-14 pm (post-overnight):** playback perf fixed (mixer-source-list cache;
+`audio_pump` was rebuilding all 449 clips' sources every frame → 44.5ms → 0.1ms; `d8fd36d` + a kept
+`SLOP_PERF` profiler) · generic-overlay-clip crash fixed (null `Clip.params`; `fe25762` + a permanent
+crash-backtrace handler) · whole-frame `filter` grade clip + checker-clipped-to-frame + `meta.checker_scroll`
+(`3ec2cac`). All owner-confirmed. Phase 4c / 4a / kirby smoke-test still open.
 
 ---
 
