@@ -333,6 +333,34 @@ def est_dur(text, rate=1.0):
     same text takes proportionally less timeline."""
     return max(0.9 if rate > 1.05 else 1.2, round((len(text)*CPS+0.4)/rate, 2))
 
+# The golden Gemma laugh take. The TTS renders a clean giggle only ~1 try in N, so a beat whose
+# LINE is *just* a laugh reuses this verbatim (owner) instead of (re)generating — wired as a ready
+# speech asset so genvo skips it, and the host plays it as a smug closeup that SNAPS in (the
+# signature giggle; see the gemma-fufu-signature note). Explicit `"laugh": true|false` on a beat
+# overrides the auto-detect.
+GEMMA_HEH = "presets/voice-snips/gemma-heh.wav"
+_LAUGH_TOK = (r"(?:h+e+h*|e?heh+|fu+(?:fu+)*|ku+(?:ku+)+|ふ+|へ+|"
+              r"\*?\s*(?:giggles?|laughs?|chuckles?|snickers?)\s*\*?)")
+_LAUGH_PUNC = r"[\s~～♥☆、。!！?？.…\-]*"
+_LAUGH_RE = re.compile(r"^" + _LAUGH_PUNC + r"(?:" + _LAUGH_TOK + _LAUGH_PUNC + r")+$", re.IGNORECASE)
+def _is_laugh(line):
+    """the whole line is nothing but a laugh (Heh~ / Fufu~ / heh heh / ふふふ / *giggle*) → golden take."""
+    return bool(line) and bool(_LAUGH_RE.match(line.strip()))
+def _laugh_asset(p):
+    """register (once) the golden 'Heh~' take as a ready speech asset; return (key, hold_dur). The hold
+    is the take + a short smug beat so the snap-in closeup registers (and retime holds the beat there)."""
+    lk = "snip_gemma_heh"
+    if lk not in p.get("assets", {}):
+        try:
+            import soundfile as _sf; _si = _sf.info(GEMMA_HEH)
+            adur = round(_si.frames / _si.samplerate, 3); sr = int(_si.samplerate)
+        except Exception:
+            adur, sr = 0.3, 24000
+        hold = round(adur + 0.55, 3)
+        p.setdefault("assets", OD())[lk] = OD([("provider", "preset"), ("type", "speech"), ("status", "ready"),
+            ("uri", GEMMA_HEH), ("meta", OD([("duration", hold), ("sample_rate", sr)]))])
+    return lk, p["assets"][lk]["meta"]["duration"]
+
 def _clip_rate(p, c):
     """effective playback rate of a tts clip: its own params.rate, else the project default
     (meta.speech_rate — the editor's mixer/export use the same fallback)."""
@@ -373,7 +401,7 @@ def cmd_skeleton(a):
     p=OD([("schema","slopstudio.project/1"),
           ("meta",OD([("title",sk.get("title","untitled")),("fps",sk.get("fps",30)),
                       ("resolution",res),("sample_rate",48000),
-                      ("vignette",sk.get("vignette",0.1)),   # a subtle RADIAL vignette over EVERYTHING, always on (owner default)
+                      ("vignette",sk.get("vignette",0.0)),   # 0 by default — the vignette now rides the cinematic FILTER clip (below), so it grades on top of everything
                       ("notes","compiled by slop.py skeleton from "+os.path.basename(a.skeleton))])),
           ("assets",OD()),("tracks",[]),("rows",OD()),("clips",OD())])
     if portrait:
@@ -386,7 +414,7 @@ def cmd_skeleton(a):
     # (the host draws OVER side-showcase images AND code/diagram cards — she overlaps content,
     # content never covers her; only captions/plates and the gag arrow sit above her)
     # r_overlay sits ABOVE the host (a bottom reaction meme draws over her lower body, face still shows)
-    for rid in ("r_cap","r_gag","r_shape","r_overlay","r_av","r_code","r_diagram","r_img","r_video","r_blur","r_filter","r_bg","r_fill","r_vo"):
+    for rid in ("r_filter","r_cap","r_gag","r_shape","r_overlay","r_av","r_code","r_diagram","r_img","r_video","r_blur","r_bg","r_fill","r_vo"):
         if rid=="r_filter":   # whole-frame cinematic grade over everything (the default channel 'basic look')
             p["rows"][rid]=OD([("type","filter"),("name","Filter"),("params",OD()),("clips",[])])
             p["tracks"].append(OD([("id","tk_filter"),("name","Filter"),("kind","video"),("rows",[rid])]))
@@ -411,6 +439,7 @@ def cmd_skeleton(a):
         akeys[uri]=k; return k
     t=0.0; bi=0
     host_bg_i=0                 # rotates host-only backdrops: room (day) ↔ desk
+    fs_img_i=0                  # fullscreen SCREENSHOTS alternate: hosted inset ↔ centered solo card
     held_kind=None              # what the held visual is: "card" (code/diagram/stack) | "media" | None
     open_vis=[]                 # clip ids of the held visual(s) — extend until the next visual change
     open_fill=None              # filler under the current content run
@@ -468,9 +497,21 @@ def cmd_skeleton(a):
         dur=float(b.get("dur", est_dur(line, rate))) if (line or "dur" in b) else float(b.get("dur",2.0))
         bi+=1; pref=f"b{bi:02d}"
         emo=b.get("emotion","neutral")
+        # a pure-laugh line reuses the golden 'Heh~' take (never regenerated — the TTS renders a clean
+        # giggle only ~1 in N tries) as a smug closeup that SNAPS in. `"laugh": true|false` overrides.
+        is_laugh=bool(line) and b.get("laugh", _is_laugh(line))
+        laugh_key=None
+        if is_laugh:
+            if emo in ("neutral","auto"): emo="smug"          # the signature giggle reads smug
+            laugh_key,_lhold=_laugh_asset(p)
+            if "dur" not in b: dur=_lhold                      # size the beat to the take + a short smug hold
         if line:
             cv=new_clip(p,"tts","r_vo",t,dur,OD([("text",line),("emotion",emo),("voice_preset",voice)]),f"{pref}_vo")
             p["clips"][cv]["notes"]=line[:60]
+            if is_laugh:
+                # point the VO at the golden take + drop the TTS text so genvo never (re)generates the laugh
+                p["clips"][cv]["asset"]=laugh_key
+                p["clips"][cv]["params"].pop("text",None)
             # {"transcript": "..."} = what the on-screen transcript DISPLAYS when the line is
             # written weird for the TTS (phonetic spellings etc.); defaults to the line itself.
             if b.get("transcript"): p["clips"][cv]["params"]["transcript"]=b["transcript"]
@@ -485,10 +526,25 @@ def cmd_skeleton(a):
             # and a corner host covers detail — so a fullscreen video beat auto-solos (owner). Fullscreen
             # cutout IMAGES keep the host (she corners cleanly, the checker fills the cutout). `host:true` forces her back.
             _fs_video=isinstance(_vis,dict) and "video" in _vis and _vis.get("layout")=="fullscreen"
-            if not b.get("solo") and not _quote_solo and not (_fs_video and not b.get("host")):
-                fr=b.get("framing","bust")
+            # CODE beats go SOLO + centred (owner: "code segments look cleaner centered on the checkerboard,
+            # no host") — the card owns the frame; `host:true` forces her back.
+            _is_code=isinstance(_vis,dict) and "code" in _vis
+            # A fullscreen SCREENSHOT reads better as a framed INSET on the checker than bleeding
+            # edge-to-edge with the host cornered over it (owner). Alternate for variety: even → host
+            # presenting BESIDE the card (layout "inset"); odd → a clean CENTERED solo card
+            # ("inset-center", no host). `cover:true` or a wide banner opts out; `host:true` forces her back.
+            _is_img_fs=(isinstance(_vis,dict) and "image" in _vis and _vis.get("layout")=="fullscreen"
+                        and not _vis.get("cover") and img_covers(_vis["image"]))
+            _fs_img_solo=False
+            if _is_img_fs and not b.get("host") and not b.get("solo"):
+                _fs_img_solo=(fs_img_i%2==1)
+                _vis["layout"]="inset-center" if _fs_img_solo else "inset"   # both get the default pro border
+                fs_img_i+=1
+            if not b.get("solo") and not _quote_solo and not _fs_img_solo and not ((_fs_video or _is_code) and not b.get("host")):
+                fr=b.get("framing", "closeup" if is_laugh else "bust")   # the giggle is a smug FACE closeup
                 aprm=OD([("emotion",emo),("framing",fr)])
                 if fr=="bust": aprm["anchor"]="bust"   # rides the project's bust anchor (Project panel knob)
+                if is_laugh: aprm["transition"]=OD([("in","none"),("out","none")])   # SNAPS in — no zoom/fade
                 ca=new_clip(p,"avatar","r_av",t,dur+gap,aprm,f"{pref}_av")
         def make_visual(v, at, vdur, sfx=""):
             """one visual spec → clip(s). Returns (clip_ids, needs_filler)."""
@@ -561,7 +617,7 @@ def cmd_skeleton(a):
                 # docks TOP, auto-fits its font to the frame width (drop font_px to opt in), and the
                 # host goes small lower-right — the code owns the frame.
                 prm=OD((k,val) for k,val in v.items() if k not in ("layout","zoom","for"))
-                if "dock" not in prm: prm["dock"]="top"
+                # centred by default now (owner) — no dock:"top"; the card sits mid-frame on the checker with no host
                 cid=new_clip(p,"code","r_code",at,vdur,prm,f"{pref}{sfx}_code")
             elif "caption" in v:
                 prm=OD([("text",v["caption"]),("style",v.get("style","lower_third"))])
@@ -639,11 +695,11 @@ def cmd_skeleton(a):
                     at=round(at+vdur,3)
                 held_kind = "card" if any(k in v for v in seq for k in ("code","diagram","stack")) else "media"
                 # code sections get the strict-teacher pose on the beat that reveals the card
-                if line and not b.get("solo") and any("code" in v for v in seq):
+                if line and not b.get("solo") and any("code" in v for v in seq) and f"{pref}_av" in p["clips"]:
                     p["clips"][f"{pref}_av"]["params"]["emotion"]="teaching"
-        # data-dense cards (code/diagram/stack) own the frame — while one is up (incl. HOLD beats)
-        # the host goes small in the lower-right, flipped to face the content.
-        if held_kind=="card" and line and not b.get("solo"):
+        # data-dense cards (DIAGRAM/stack) own the frame — the host goes small lower-right, facing the
+        # content. (CODE beats are solo/centred now → no host clip exists → guarded.)
+        if held_kind=="card" and line and not b.get("solo") and f"{pref}_av" in p["clips"]:
             av=p["clips"][f"{pref}_av"]
             av["params"]["framing"]="bust"; av["params"]["face"]="left"
             # portrait: the code card is TOP-docked and auto-sizes to its content, so there's always room
@@ -721,9 +777,9 @@ def cmd_skeleton(a):
     # persistent). Disable with look:false / "none"; tune via a look dict {filter,strength,vignette}.
     # noir grade only (no vignette here — the global meta.vignette radial vignette covers everything, so the
     # look isn't doubled up and the vignette persists even if the look preset is changed/removed)
-    look=sk.get("look", OD([("filter","noir"),("strength",0.25),("vignette",0.0)]))
+    look=sk.get("look", OD([("filter","noir"),("strength",0.25),("vignette",0.5)]))
     if look and look!="none" and (not isinstance(look,dict) or look.get("filter","none") not in ("none",None)):
-        lf=look if isinstance(look,dict) else OD([("filter","noir"),("strength",0.25),("vignette",0.0)])
+        lf=look if isinstance(look,dict) else OD([("filter","noir"),("strength",0.25),("vignette",0.5)])
         new_clip(p,"filter","r_filter",0.0,round(tot,3),
                  OD([("filter",lf.get("filter","noir")),("strength",lf.get("strength",0.25)),("vignette",lf.get("vignette",0.1))]),"c_look")
     if sk.get("music"):
