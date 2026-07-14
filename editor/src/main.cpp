@@ -113,6 +113,7 @@ struct Project {
     // the brand purples (default, gives dead space a branded texture); "black"/"none" = the flat black base
     // (old behaviour). A `filler` clip (explicit blur backdrop) still wins over this within its span. (meta.bg)
     std::string bgStyle = "checker";
+    double checkerScroll = 2.0;  // checker-bg diagonal drift speed multiplier (1 = the original slow drift). meta.checker_scroll
     double letterbox = 0;    // scene cinematic bars: fraction of frame HEIGHT per bar (0 = off; ~0.11 ≈ 2.35:1). meta.letterbox
     // per-project tunable position anchors (meta.anchors): category key → base [x,y]. A clip that
     // names one (params.anchor, e.g. "bust"/"code_host"/"tr_room") renders at anchor + transform.pos,
@@ -187,6 +188,7 @@ static Project parse_project_json(json j, const std::string& path) {
         p.speechGainDb = meta.value("speech_gain_db", 12.0);      // global speech boost (+12 default)
         p.songCredits = meta.value("song_credits", true);         // auto on-screen now-playing chip
         p.bgStyle = meta.value("bg", std::string("checker"));      // default frame background style (behind content)
+        p.checkerScroll = meta.value("checker_scroll", 2.0);       // checker diagonal drift speed (1 = original slow)
         p.letterbox = meta.value("letterbox", 0.0);                // cinematic letterbox bars (0 = off)
         p.songCreditSecs = meta.value("song_credit_secs", 10.0);
         p.songCreditCorner = meta.value("song_credit_corner", std::string("tl"));
@@ -3503,6 +3505,7 @@ static ImU32 type_color(const std::string& t) {
     if (t == "caption") return IM_COL32(200, 200, 110, 255);
     if (t == "gradient") return IM_COL32(110, 130, 175, 255);
     if (t == "blur")    return IM_COL32(150, 185, 215, 255);
+    if (t == "filter")  return IM_COL32(212, 170, 96, 255);   // cinematic grade over everything below (amber)
     if (t == "anchor")  return IM_COL32( 95, 220, 185, 255);   // caption anchor — the caption-move handle
     if (t == "diagram") return IM_COL32(120, 205, 235, 255);
     if (t == "filler")  return IM_COL32( 90, 110, 130, 255);
@@ -5472,6 +5475,34 @@ static float frame_blur_strength(Project& p, double t, float& sigmaOut) {
     return best;
 }
 
+// The whole-frame FILTER clip (params.filter = a named look) is the colour-grade sibling of the `blur`
+// clip: a `filter` clip is NOT a plate — it grades the ENTIRE composite for its span (host, captions,
+// code, footage: every layer), exactly like a scene vignette or a blur transition covers the whole
+// frame. Returns the topmost active filter's spec + an edge-eased strength (0 at the clip's two ends →
+// the grade fades in/out, no pop), false when none is active. params.filter picks the preset;
+// params.strength (or keyframes) scales it. Applied to the read-back frame buffer by grade_rgba, in the
+// preview pre-pass AND the export — so preview and export are identical.
+static bool frame_filter_spec(Project& p, double t, FilterSpec& out, float& strengthOut) {
+    bool any = false; double bestStart = -1e18; std::string bestId;
+    for (auto& kv : p.clips) {
+        Clip& c = kv.second;
+        if (c.type != "filter" || !clip_active(c, t)) continue;
+        FilterSpec f = filter_spec(jstr(c.params, "filter"));
+        if (!f.set) continue;                                   // unknown/empty preset → nothing to apply
+        const double ease = 0.30;                               // fade the grade in/out over 0.3s at the clip edges
+        double a = c.dur > 2 * ease ? std::min((t - c.start) / ease, (c.start + c.dur - t) / ease) : 1.0;
+        a = a < 0 ? 0 : a > 1 ? 1 : a;
+        double str = a * anim_param(c, "strength", t, 1.0);
+        str = str < 0 ? 0 : str > 1 ? 1 : str;
+        if (str <= 0.001) continue;
+        // topmost wins: the latest-starting active filter reads as "on top" (deterministic id tiebreak).
+        if (!any || c.start > bestStart || (c.start == bestStart && c.id > bestId)) {
+            bestStart = c.start; bestId = c.id; out = f; strengthOut = (float)str; any = true;
+        }
+    }
+    return any;
+}
+
 // In-place heavy separable gaussian over a full RGBA frame (row-major w*h*4): downsample by a
 // sigma-derived factor → blur at working res → bilinear upscale back — the same cheap-heavy-blur
 // trick as get_processed_srv, applied to the WHOLE composited frame. sigma is in this buffer's px.
@@ -5525,6 +5556,49 @@ static void blur_rgba(std::vector<unsigned char>& buf, int w, int h, float sigma
                 px[c] = (unsigned char)(v < 0 ? 0 : v > 255 ? 255 : v);
             }
         }
+}
+
+// Apply a whole-frame cinematic grade (a `filter` clip's look) to a composited RGBA buffer, blended by
+// `strength` (0 = untouched, 1 = full look). Mirrors the per-clip grade math — saturation around luma +
+// contrast around mid-gray (get_processed_srv) then the dim + temperature/tint channel multiply — so a
+// whole-frame filter reads like the per-clip one, then bakes the filmic post (radial edge vignette +
+// deterministic film grain keyed to t) into the buffer, so PREVIEW and EXPORT match exactly. sat/contrast
+// run per-pixel here (unlike moving per-clip video, which skips them) → full desaturation ("noir") works.
+static void grade_rgba(std::vector<unsigned char>& buf, int w, int h, const FilterSpec& f, double t, float strength) {
+    if (!f.set || strength <= 0.003f || w < 2 || h < 2 || (int)buf.size() < w * h * 4) return;
+    const float S   = strength > 1 ? 1.f : strength;
+    const float sat = (float)f.sat, con = (float)f.con, dim = (float)f.dim;
+    const float mr = dim * (1.f + (float)f.temp * 0.3f);   // dim + white-balance per-channel multiply (matches the per-clip AddImage tint)
+    const float mg = dim * (1.f + (float)f.tint * 0.3f);
+    const float mb = dim * (1.f - (float)f.temp * 0.3f);
+    const float vig = (float)f.vignette;
+    const float grainAmp = (float)f.grain * 26.f;          // signed per-pixel dither amplitude
+    const float cx = (w - 1) * 0.5f, cy = (h - 1) * 0.5f;
+    const float invr2 = 1.f / std::max(1.f, cx * cx + cy * cy);   // 1 / corner-distance² (skips a per-pixel sqrt)
+    const uint32_t seed = (uint32_t)(t * 1000.0) * 2654435761u + 0x9e3779b9u;
+    for (int y = 0; y < h; y++) {
+        float dy = y - cy;
+        for (int x = 0; x < w; x++) {
+            unsigned char* px = &buf[((size_t)y * w + x) * 4];
+            float r = px[0], g = px[1], b = px[2];
+            float l = 0.299f * r + 0.587f * g + 0.114f * b;                 // saturation around luma
+            r = l + (r - l) * sat; g = l + (g - l) * sat; b = l + (b - l) * sat;
+            r = (r - 127.5f) * con + 127.5f; g = (g - 127.5f) * con + 127.5f; b = (b - 127.5f) * con + 127.5f;  // contrast
+            r *= mr; g *= mg; b *= mb;                                      // dim + white balance
+            if (vig > 0.001f) {                                            // radial edge darken
+                float dx = x - cx; float rr2 = (dx * dx + dy * dy) * invr2;
+                float dark = 1.f - vig * 0.55f * rr2; r *= dark; g *= dark; b *= dark;
+            }
+            if (grainAmp > 0.01f) {                                        // deterministic film grain (xorshift per pixel)
+                uint32_t sv = seed ^ ((uint32_t)x * 73856093u) ^ ((uint32_t)y * 19349663u);
+                sv ^= sv << 13; sv ^= sv >> 17; sv ^= sv << 5;
+                float n = ((float)(sv & 0xffff) * (1.f / 32768.f) - 1.f) * grainAmp;   // [-amp, amp]
+                r += n; g += n; b += n;
+            }
+            auto mix = [&](float gv, unsigned char ov) { float v = ov + (gv - ov) * S; return (unsigned char)(v < 0 ? 0 : v > 255 ? 255 : v); };
+            px[0] = mix(r, px[0]); px[1] = mix(g, px[1]); px[2] = mix(b, px[2]);   // blend graded ← original by strength
+        }
+    }
 }
 
 // ── "now playing" song-credit chip ──────────────────────────────────────────────────────────
@@ -5675,11 +5749,11 @@ static void draw_song_credit(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0,
 // Low contrast (base vs +8-levels "raised") = a subtle premium weave, not a loud checker; the slow diagonal
 // drift gives the frame quiet life. Cheap: ~150 rects/frame, no per-pixel work. Driven by the frame time so
 // preview and export animate identically.
-static void draw_bg_checker(ImDrawList* dl, ImVec2 f0, float fw, float fh, double t) {
+static void draw_bg_checker(ImDrawList* dl, ImVec2 f0, float fw, float fh, double t, double speed) {
     const ImU32 base = IM_COL32(0x12, 0x10, 0x1e, 255);
     dl->AddRectFilled(f0, ImVec2(f0.x + fw, f0.y + fh), base);
     const float cell  = std::max(40.0f, fh / 15.0f);          // finer weave → thin letterbox bars read as texture, not stray squares
-    const float drift = (float)std::fmod(t * (cell / 16.0), cell * 2.0);   // diagonal scroll; wraps at 2 cells (parity period → seamless)
+    const float drift = (float)std::fmod(t * (cell / 16.0) * (speed <= 0 ? 0.0 : speed), cell * 2.0);   // diagonal scroll (speed×), wraps at 2 cells (parity period → seamless)
     // two raised tones (a soft "woven" look, not a flat 2-tone checker): the brighter one carries a hint of
     // the brand periwinkle. Both only a few levels over the base → a premium, barely-there texture.
     const ImU32 rA = IM_COL32(0x1a, 0x17, 0x2a, 255);
@@ -5694,19 +5768,24 @@ static void draw_bg_checker(ImDrawList* dl, ImVec2 f0, float fw, float fh, doubl
 }
 
 static void composite_frame(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0, float fw, float fh) {
+    // Clip EVERYTHING (the bg included) to the frame FIRST: the checker deliberately over-scans the frame
+    // (cells drawn from i,j = -2 + a drift offset for a seamless scroll), so painting it before the clip
+    // rect leaked checker cells into the preview's letterbox bars OUTSIDE the video frame (the owner's "the
+    // checker bg being present outside of the frame is a bit odd"). Export passes an exact frame rect so
+    // this is a no-op there.
+    dl->PushClipRect(f0, ImVec2(f0.x + fw, f0.y + fh), true);
     // Black base normally; a soft dark tint while rendering the filler-backdrop pre-pass, so a genuine
     // empty region (a beat with content only on one side) reads as a dim backdrop after the blur, not a
     // stark black hole — without reintroducing the flat bright grey the old filler fell back to.
     if (g_compositeSkipFillers)                               // blur pre-pass → dim flat base (the filler blurs over it)
         dl->AddRectFilled(f0, ImVec2(f0.x + fw, f0.y + fh), IM_COL32(20, 20, 26, 255));
     else if (p.bgStyle == "checker")                          // default: soft diagonal-scrolling brand checkerboard
-        draw_bg_checker(dl, f0, fw, fh, st.playhead);
+        draw_bg_checker(dl, f0, fw, fh, st.playhead, p.checkerScroll);
     else                                                      // "black"/"none": the old flat black base
         dl->AddRectFilled(f0, ImVec2(f0.x + fw, f0.y + fh), IM_COL32(0, 0, 0, 255));
     g_frameTextBoxes.clear();             // repopulated by draw_caption_clip; read by draw_song_credit at the end
     const float s = fw / (float)p.width;  // project px → preview px
     const ImVec2 center(f0.x + fw * 0.5f, f0.y + fh * 0.5f);
-    dl->PushClipRect(f0, ImVec2(f0.x + fw, f0.y + fh), true);
 
     // AUTO bg→host match: sample the bottom-most active image clip (the bg plate) so avatar clips
     // grade toward it + get a contact shadow BY DEFAULT (no per-clip params; explicit params win).
@@ -5971,6 +6050,11 @@ static void composite_frame(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0, 
                 // host, captions, code, insets — not just one image plate. The clip is just the
                 // timing/strength source; skip it in the per-clip draw.
                 if (c.type == "blur") continue;
+
+                // filter: a WHOLE-FRAME cinematic grade over the entire composite (see frame_filter_spec +
+                // grade_rgba, applied to the read-back buffer in the preview pre-pass + the export). The
+                // clip is just the timing/preset source; it draws nothing in the per-clip walk.
+                if (c.type == "filter") continue;
 
                 // caption anchor: a move handle for the captions in its span (caption_anchor_off,
                 // applied in the caption branch above) — the clip itself draws nothing.
@@ -7950,6 +8034,21 @@ static void draw_native_params(Project& p, Clip& c) {
             if (ImGui::SliderFloat("strength (manual)", &stv, 0.f, 1.f)) P["strength"] = (double)stv;
             ImGui::SameLine(); if (ImGui::SmallButton("→ auto bell")) P.erase("strength");
         } else if (ImGui::SmallButton("override strength (manual/keyframe)")) P["strength"] = 1.0;
+    } else if (c.type == "filter") {
+        ImGui::SeparatorText("cinematic filter (grades everything below)");
+        ImGui::TextDisabled("A WHOLE-FRAME colour grade over the ENTIRE composite for this clip's\nspan — host, captions, code, footage, every layer (like a scene\nvignette). Grade + film grain + edge vignette; fades in/out at the\nedges. Span one over a run of beats for a consistent 'look'.");
+        static const char* FLT[] = {"cinematic", "noir", "vintage", "cyber", "dream"};
+        std::string cur = jstr(P, "filter"); if (cur.empty()) cur = "cinematic";
+        int fi = 0; for (int k = 0; k < 5; k++) if (cur == FLT[k]) fi = k;
+        ImGui::SetNextItemWidth(200);
+        if (ImGui::Combo("look", &fi, FLT, 5)) P["filter"] = std::string(FLT[fi]);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("cinematic (warm filmic) · noir (high-contrast B&W — full desat,\n"
+                              "the whole frame reads mono) · vintage (faded 70s) · cyber (cold\n"
+                              "neon) · dream (bright airy). Grain + vignette scale with the look.");
+        float stv = (float)P.value("strength", 1.0);
+        if (ImGui::SliderFloat("strength", &stv, 0.f, 1.f)) P["strength"] = (double)stv;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("blend of the graded look over the original (1 = full).");
     } else if (c.type == "diagram") {
         ImGui::SeparatorText("diagram (boxes + arrows)");
         ImGui::TextDisabled("author in JSON: flow:[\"A\",\"B\",...] = auto-laid-out chain,\nor nodes:[{label,x,y}] + edges:[{from,to}] = a graph.\nitems can be {label, sub}. reveal 0..1 stages it in.");
@@ -8302,6 +8401,7 @@ static std::string add_native_clip_at(Project& p, const std::string& type, doubl
     else if (type == "gradient") { dur = 4.0; params = json{{"gradient","vignette"},{"strength",0.6}}; label = "vignette"; }
     else if (type == "diagram")  { dur = 5.0; params = json::object(); label = "diagram"; }
     else if (type == "blur")     { dur = 1.5; params = json{{"blur",30.0}}; label = "blur"; t = std::max(0.0, t - dur * 0.5); }  // center the bell on the playhead
+    else if (type == "filter")   { dur = 5.0; params = json{{"filter","cinematic"}}; label = "filter"; }   // whole-frame cinematic grade over its span
     else if (type == "filler")   { dur = 5.0; params = json{{"source","auto"},{"blur",30.0},{"dim",0.55}}; label = "bg fill"; }
     else if (type == "anchor")   { dur = 8.0; params = json::object(); label = "cap anchor"; }   // caption move-handle: pos shifts every caption starting in its span
 
@@ -8343,7 +8443,8 @@ static std::string place_row_type(const std::string& kind) {
 static double place_default_dur(const std::string& kind) {
     if (kind == "diagram") return 5.0;
     if (kind == "code" || kind == "gradient" || kind == "backdrop" || kind == "filler") return 4.0;
-    if (kind == "blur")  return 1.5;
+    if (kind == "blur")   return 1.5;
+    if (kind == "filter") return 5.0;
     if (kind == "sound") return 1.0;
     if (kind == "music") return 20.0;
     return 3.0;   // host/voice/caption/shape/anchor
@@ -9567,6 +9668,17 @@ static void draw_project_settings(Project& p) {
           ImGui::SetTooltip("what shows in dead space behind an inset / host / letterboxed media.\n"
                             "checkerboard = a subtle diagonal-scrolling brand-purple weave (a cover\n"
                             "backdrop or a `filler` blur still hides it). flat black = the old base."); }
+    if (p.bgStyle != "black" && p.bgStyle != "none") {   // checker drift speed (meta.checker_scroll)
+        float cs = (float)p.checkerScroll;
+        ImGui::SetNextItemWidth(240);
+        if (ImGui::SliderFloat("checker scroll speed", &cs, 0.0f, 6.0f, cs < 0.02f ? "still" : "%.1fx")) {
+            p.checkerScroll = cs < 0.02f ? 0.0 : cs;
+            if (std::fabs(p.checkerScroll - 2.0) > 1e-6) meta["checker_scroll"] = p.checkerScroll; else meta.erase("checker_scroll");
+            g_undoDirty = true;
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("how fast the checkerboard drifts diagonally (2.0x default). 0 = hold still.");
+    }
     { float lb = (float)p.letterbox;   // cinematic letterbox bars (scene-wide, meta.letterbox)
       ImGui::SetNextItemWidth(200);
       if (ImGui::SliderFloat("letterbox bars", &lb, 0.0f, 0.2f, lb < 0.005f ? "off" : "%.2f")) {
@@ -9754,6 +9866,7 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
                 static const NT NTS[] = {
                     {"Vignette / gradient wash", "gradient"},
                     {"Blur transition",          "blur"},
+                    {"Cinematic filter (grade everything below)", "filter"},
                     {"Background fill (blur)",   "filler"},
                     {"Caption / text",           "caption"},
                     {"Code card",                "code"},
@@ -10841,6 +10954,10 @@ static void render_export_frame(Project& p, double t, int w, int h, std::vector<
             memcpy(&out[(size_t)y * w * 4], (unsigned char*)m.pData + (size_t)y * m.RowPitch, (size_t)w * 4);
         g_ctx->Unmap(g_expStaging, 0);
     }
+    // whole-frame cinematic `filter` grade (the sibling of the post-readback blur applied by the callers) —
+    // graded here on the sharp full-res frame FIRST, so a `blur` clip over the same span defocuses the graded
+    // result. Same grade_rgba as the preview pre-pass → preview and export match.
+    { FilterSpec filt; float fstr = 0.f; if (frame_filter_spec(p, t, filt, fstr)) grade_rgba(out, w, h, filt, t, fstr); }
 }
 
 // ── preview whole-frame blur: offscreen targets + an isolated composite pass (like render_export_frame,
@@ -10875,11 +10992,13 @@ static bool ensure_preview_blur_targets(int w, int h) {
     g_pvW = w; g_pvH = h; return true;
 }
 
-// Render the FULL composite at t into g_pvTex, read it back, CPU-blur by sigmaProj, upload → g_pvBlurSrv.
-// Runs its OWN ImGui frame (like export), so it must be called BEFORE the main UI frame's NewFrame.
-// Returns true on success (→ the preview shows g_pvBlurSrv this frame instead of the live composite).
-static bool render_preview_blur(Project& p, double t, float sigmaProj) {
-    int w = std::max(2, (int)p.width / 2), h = std::max(2, (int)p.height / 2);   // half-res (blurred anyway)
+// Render the FULL composite at t into g_pvTex, read it back, apply the whole-frame POST (cinematic grade
+// then blur), upload → g_pvBlurSrv. Drives BOTH the `blur` transition and the `filter` grade clip (either
+// or both active). Runs its OWN ImGui frame (like export), so it must be called BEFORE the main UI frame's
+// NewFrame. Returns true on success (→ the preview shows g_pvBlurSrv this frame instead of the live
+// composite). Half-res: the blur softens anyway, and a filtered preview is a guide (export is full-res + exact).
+static bool render_preview_post(Project& p, double t, float sigmaProj, const FilterSpec* filt, float filtStr) {
+    int w = std::max(2, (int)p.width / 2), h = std::max(2, (int)p.height / 2);   // half-res (blurred anyway / preview guide)
     if (!ensure_preview_blur_targets(w, h)) return false;
     // Run the offscreen composite on a SEPARATE ImGui context. ImGui::NewFrame() DRAINS the shared
     // input-event queue, so doing this pre-pass on the main context (once per interactive frame) ATE the
@@ -10906,7 +11025,8 @@ static bool render_preview_blur(Project& p, double t, float sigmaProj) {
         for (int y = 0; y < h; ++y) memcpy(&buf[(size_t)y * w * 4], (unsigned char*)m.pData + (size_t)y * m.RowPitch, (size_t)w * 4);
         g_ctx->Unmap(g_pvStaging, 0);
     }
-    blur_rgba(buf, w, h, sigmaProj * (float)w / (float)p.width);   // project-px sigma → this buffer's px
+    if (filt && filt->set) grade_rgba(buf, w, h, *filt, t, filtStr);              // grade the sharp frame first...
+    if (sigmaProj > 0.4f)   blur_rgba(buf, w, h, sigmaProj * (float)w / (float)p.width);   // ...then defocus (project-px sigma → this buffer's px)
     D3D11_MAPPED_SUBRESOURCE mw;
     if (SUCCEEDED(g_ctx->Map(g_pvDyn, 0, D3D11_MAP_WRITE_DISCARD, 0, &mw))) {
         for (int y = 0; y < h; ++y) memcpy((unsigned char*)mw.pData + (size_t)y * mw.RowPitch, &buf[(size_t)y * w * 4], (size_t)w * 4);
@@ -11641,7 +11761,7 @@ int main(int argc, char** argv) {
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(g_dev, g_ctx);
 
-    // A private ImGui context for the offscreen whole-frame-blur pre-pass (see render_preview_blur):
+    // A private ImGui context for the offscreen whole-frame post pre-pass (see render_preview_post):
     // it runs its OWN NewFrame/Render each interactive frame, which on the main context would drain the
     // editor's input-event queue and freeze scrubbing over a blur clip. Shares the main font atlas
     // (many-contexts-one-atlas is supported); gets its own DX11 backend (no win32 backend — offscreen).
@@ -11750,10 +11870,12 @@ int main(int argc, char** argv) {
         }
 
         g_pvBlurActive = false;
-        {
-            float sig = 0.f;
-            if (proj.width > 0 && proj.height > 0 && frame_blur_strength(proj, st.playhead, sig) > 0.003f)
-                g_pvBlurActive = render_preview_blur(proj, st.playhead, sig);
+        {   // whole-frame post pre-pass: a `blur` transition and/or a `filter` grade active at the playhead
+            float sig = 0.f; frame_blur_strength(proj, st.playhead, sig);
+            FilterSpec filt; float fstr = 0.f; bool haveFilt = frame_filter_spec(proj, st.playhead, filt, fstr);
+            bool haveBlur = sig > 0.003f;
+            if ((haveBlur || haveFilt) && proj.width > 0 && proj.height > 0)
+                g_pvBlurActive = render_preview_post(proj, st.playhead, haveBlur ? sig : 0.f, haveFilt ? &filt : nullptr, fstr);
         }
 
         ImGui_ImplDX11_NewFrame();
