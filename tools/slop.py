@@ -386,8 +386,11 @@ def cmd_skeleton(a):
     # (the host draws OVER side-showcase images AND code/diagram cards — she overlaps content,
     # content never covers her; only captions/plates and the gag arrow sit above her)
     # r_overlay sits ABOVE the host (a bottom reaction meme draws over her lower body, face still shows)
-    for rid in ("r_cap","r_gag","r_shape","r_overlay","r_av","r_code","r_diagram","r_img","r_video","r_blur","r_bg","r_fill","r_vo"):
-        if rid=="r_bg":
+    for rid in ("r_cap","r_gag","r_shape","r_overlay","r_av","r_code","r_diagram","r_img","r_video","r_blur","r_filter","r_bg","r_fill","r_vo"):
+        if rid=="r_filter":   # whole-frame cinematic grade over everything (the default channel 'basic look')
+            p["rows"][rid]=OD([("type","filter"),("name","Filter"),("params",OD()),("clips",[])])
+            p["tracks"].append(OD([("id","tk_filter"),("name","Filter"),("kind","video"),("rows",[rid])]))
+        elif rid=="r_bg":
             p["rows"][rid]=OD([("type","image"),("name","Background"),("params",OD()),("clips",[])])
             p["tracks"].append(OD([("id","tk_bg"),("name","Background"),("kind","video"),("rows",[rid])]))
         elif rid=="r_overlay":
@@ -407,6 +410,7 @@ def cmd_skeleton(a):
         p["assets"][k]=OD([("provider","external"),("type",typ),("status","ready"),("uri",uri),("meta",OD())])
         akeys[uri]=k; return k
     t=0.0; bi=0
+    host_bg_i=0                 # rotates host-only backdrops: room (day) ↔ desk
     held_kind=None              # what the held visual is: "card" (code/diagram/stack) | "media" | None
     open_vis=[]                 # clip ids of the held visual(s) — extend until the next visual change
     open_fill=None              # filler under the current content run
@@ -477,7 +481,11 @@ def cmd_skeleton(a):
                 if "sound_at" in b: p["clips"][cv]["params"]["sfx_at"]=float(b["sound_at"])
             _vis=b.get("visual")   # a quote CARD owns the frame (a centred receipt) → no full host over it (auto-solo)
             _quote_solo=isinstance(_vis,dict) and _vis.get("style")=="quote"
-            if not b.get("solo") and not _quote_solo:   # solo:true = no host this beat (readable full-width shots, e.g. the apology)
+            # FULLSCREEN VIDEO owns the frame too: wide footage would be tiny if scaled to sit beside the host,
+            # and a corner host covers detail — so a fullscreen video beat auto-solos (owner). Fullscreen
+            # cutout IMAGES keep the host (she corners cleanly, the checker fills the cutout). `host:true` forces her back.
+            _fs_video=isinstance(_vis,dict) and "video" in _vis and _vis.get("layout")=="fullscreen"
+            if not b.get("solo") and not _quote_solo and not (_fs_video and not b.get("host")):
                 fr=b.get("framing","bust")
                 aprm=OD([("emotion",emo),("framing",fr)])
                 if fr=="bust": aprm["anchor"]="bust"   # rides the project's bust anchor (Project panel knob)
@@ -496,7 +504,7 @@ def cmd_skeleton(a):
                     if k in v: prm[k]=v[k]
                 cid=new_clip(p,"image","r_img",at,vdur,prm,f"{pref}{sfx}_img")
                 p["clips"][cid]["asset"]=asset_for(uri,"image")
-                fill = lay!="fullscreen"
+                fill = (lay!="fullscreen") and bool(v.get("blur_fill", False))   # inset default = bare checker bg; blur_fill:true opts into the blurred backdrop (nice photos)
             elif "video" in v:
                 prm=OD([("layout",lay),("in",float(v.get("in",0.0))),("video_volume",v.get("volume",0.12)),("loop",True)])
                 if "crop" in v: prm["crop"]=v["crop"]          # [x,y,w,h] source fractions (the copy dialog in a full desktop grab)
@@ -504,7 +512,7 @@ def cmd_skeleton(a):
                     if k in v: prm[k]=v[k]
                 cid=new_clip(p,"video","r_video",at,vdur,prm,f"{pref}{sfx}_vid")
                 p["clips"][cid]["asset"]=asset_for(v["video"],"video")
-                fill = lay!="fullscreen"
+                fill = (lay!="fullscreen") and bool(v.get("blur_fill", False))   # inset default = bare checker bg; blur_fill:true opts in
             elif "stack" in v:
                 # multiple images shown together — zoom-crop pairs (menu bar + tasks), a banner +
                 # the site under it, a collage of wallpapers/savers. side:"center" = 2 stacked big,
@@ -600,15 +608,17 @@ def cmd_skeleton(a):
         if vis is not None:
             close_vis(t)
             if vis in ("host","host-dark"):
-                open_bg(t, "dark" if vis=="host-dark" else "day")   # solo/reaction beat → the room set
+                # host-only shots ROTATE room ↔ desk (owner); host-dark keeps the dark room (gag/outro)
+                if vis=="host-dark": open_bg(t, "dark")
+                else: open_bg(t, "desk" if host_bg_i%2 else "day"); host_bg_i+=1
                 held_kind=None
             else:
                 seq = vis if isinstance(vis,list) else [vis]
-                # plate-only beats KEEP the room set (a plate over the bare fill gradient reads empty —
-                # "either images or a shot in the room"); media/cards close it for the filler backdrop.
+                # caption/quote/term-plate beats sit on the CHECKER now (owner: checker preferred; a plate
+                # over the checker reads clean — the old "keep the room set" was a pre-checker workaround).
                 cap_only = all("caption" in v for v in seq)
                 if scene: pass                                       # scene beats keep the forced room
-                elif cap_only: open_bg(t, bg_variant if bg_open is not None else "day")
+                elif cap_only: close_bg(t)                           # → checker
                 else: close_bg(t)
                 # sequential swap inside one beat: items with "for" take that long, the rest split evenly
                 fixed=sum(float(v.get("for",0)) for v in seq)
@@ -690,16 +700,28 @@ def cmd_skeleton(a):
         for ts in sec_ts:
             if ts-0.7 <= end <= ts+0.1: return ts+0.6
         return end
-    if sk.get("bg"):   # the standing set backs HOST + plate-only spans; content beats get the filler gradient
-        dark=sk.get("bg_dark","presets/backgrounds/room-dark.png")
-        for si,(b0,b1,var) in enumerate(bg_spans):
-            b1x=blur_extend(b1)
-            # portrait: the 16:9 room set must COVER the 9:16 frame (fullscreen would degrade
-            # to contain on the extreme mismatch and letterbox the backdrop)
-            prm=OD([("layout","cover" if portrait else "fullscreen"),("motion","none"),("saturation",0.95)])
-            if b1x>b1: prm["transition"]=OD([("out",OD([("type","fade"),("dur",0.8)]))])
-            cb=new_clip(p,"image","r_bg",round(b0,3),round(b1x-b0,3),prm,f"c_bg{si+1:02d}")
-            p["clips"][cb]["asset"]=asset_for(dark if var=="dark" else sk["bg"],"image")
+    # standing set behind HOST-ONLY beats — a ROOM/DESK backdrop (rotated, owner: "host-only shots rotate
+    # between room and desk"). Materialised by DEFAULT now (not only when the skeleton sets `bg`): host-only
+    # beats want a real set, not the bare checker. Cap/quote/inset beats no longer open a span → they keep
+    # the checker (owner: checker preferred over the blur fill).
+    room=sk.get("bg","presets/backgrounds/room-day.png")
+    dark=sk.get("bg_dark","presets/backgrounds/room-dark.png")
+    desk=sk.get("bg_desk","presets/backgrounds/desk.png")
+    for si,(b0,b1,var) in enumerate(bg_spans):
+        b1x=blur_extend(b1)
+        # portrait: the 16:9 room set must COVER the 9:16 frame (fullscreen would degrade
+        # to contain on the extreme mismatch and letterbox the backdrop)
+        prm=OD([("layout","cover" if portrait else "fullscreen"),("motion","none"),("saturation",0.95)])
+        if b1x>b1: prm["transition"]=OD([("out",OD([("type","fade"),("dur",0.8)]))])
+        cb=new_clip(p,"image","r_bg",round(b0,3),round(b1x-b0,3),prm,f"c_bg{si+1:02d}")
+        p["clips"][cb]["asset"]=asset_for((dark if var=="dark" else desk if var=="desk" else room),"image")
+    # DEFAULT channel 'basic look': a whole-frame noir grade over the WHOLE video (owner's pick — subtle +
+    # persistent). Disable with look:false / "none"; tune via a look dict {filter,strength,vignette}.
+    look=sk.get("look", OD([("filter","noir"),("strength",0.25),("vignette",0.1)]))
+    if look and look!="none" and (not isinstance(look,dict) or look.get("filter","none") not in ("none",None)):
+        lf=look if isinstance(look,dict) else OD([("filter","noir"),("strength",0.25),("vignette",0.1)])
+        new_clip(p,"filter","r_filter",0.0,round(tot,3),
+                 OD([("filter",lf.get("filter","noir")),("strength",lf.get("strength",0.25)),("vignette",lf.get("vignette",0.1))]),"c_look")
     if sk.get("music"):
         cm=new_clip(p,"music","r_music",0.0,round(tot,3),OD([("gain_db",sk.get("music_gain",_bed_default_gain(sk["music"])))]),"c_music")
         p["clips"][cm]["asset"]=asset_for(sk["music"],"music")
