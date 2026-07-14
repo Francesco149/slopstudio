@@ -3538,6 +3538,7 @@ static ImU32 type_color(const std::string& t) {
     if (t == "filter")  return IM_COL32(212, 170, 96, 255);   // cinematic grade over everything below (amber)
     if (t == "anchor")  return IM_COL32( 95, 220, 185, 255);   // caption anchor — the caption-move handle
     if (t == "diagram") return IM_COL32(120, 205, 235, 255);
+    if (t == "plot")    return IM_COL32(140, 225, 170, 255);   // native chart card (green)
     if (t == "filler")  return IM_COL32( 90, 110, 130, 255);
     return IM_COL32(150, 150, 150, 255);
 }
@@ -4152,6 +4153,14 @@ static ImFont* g_pillFontArchivo = nullptr;  // labels. Selected per-project via
 static ImU32 parse_color(const json& j, ImU32 def) {
     if (j.is_array() && j.size() >= 3)
         return IM_COL32(j[0].get<int>(), j[1].get<int>(), j[2].get<int>(), j.size() >= 4 ? j[3].get<int>() : 255);
+    if (j.is_string()) {                               // "#RGB" / "#RRGGBB" / "#RRGGBBAA" hex (LLMs write these)
+        std::string h = j.get<std::string>();
+        if (!h.empty() && h[0] == '#') h.erase(0, 1);
+        auto hb = [&](int i, int n) -> int { std::string s = h.substr(i, n); if (n == 1) s += s; return (int)strtol(s.c_str(), nullptr, 16); };
+        if (h.size() == 3) return IM_COL32(hb(0, 1), hb(1, 1), hb(2, 1), 255);
+        if (h.size() == 6) return IM_COL32(hb(0, 2), hb(2, 2), hb(4, 2), 255);
+        if (h.size() == 8) return IM_COL32(hb(0, 2), hb(2, 2), hb(4, 2), hb(6, 2));
+    }
     return def;
 }
 
@@ -4758,6 +4767,222 @@ static void draw_diagram_clip(ImDrawList* dl, float cx, float cy, float s, Clip&
     }
 }
 
+// ── native PLOT / chart card ─────────────────────────────────────────────────────────────────
+// A transparent, layout-adaptive line/step/scatter figure with axes, ticks, labelled markers,
+// shaded regions and a left-to-right reveal — the NATIVE replacement for baked matplotlib PNGs
+// (the sine transfer curve, the flick spike, the DCM square-wave). Because it composites from
+// primitives it reflows when moved/resized and sits on the checker with no opaque background.
+// Schema (params):
+//   x / y : {min,max,label,ticks:[...],fmt:"int"|"hex"|"f1"|"f2"|"pct"}   (min/max auto from data if omitted)
+//   series: [{points:[[x,y],...], color, kind:"line"|"step"|"scatter"|"bar", width, fill, label}]
+//   markers: [{x,y,label,color,sub,dy}]        // annotated point: dot + callout above it (dy nudges the label)
+//   regions: [{x0,x1|y0,y1, color, label}]     // a shaded band under the series (x-band or y-band)
+//   title · card(true) · grid(true) · legend(false) · font_px(28) · width_px(1180) · height_px(560) · reveal(1)
+// reveal (keyframeable 0..1) draws the series progressively by point index — a "plotter" entrance.
+static void draw_plot_clip(ImDrawList* dl, float cx, float cy, float s, Clip& c, int alpha, double t,
+                           ImVec2 f0 = ImVec2(0, 0), float fw = 0, float fh = 0, float sclMul = 1.0f) {
+    json& P = c.params;
+    if (!P.is_object()) return;
+    float scaleX = (float)anim_xform(c, "transform.scale", 0, t, c.tx_scale[0]) * sclMul;
+    float ancX = (float)anim_xform(c, "transform.anchor", 0, t, c.tx_anchor[0]);
+    float ancY = (float)anim_xform(c, "transform.anchor", 1, t, c.tx_anchor[1]);
+    ImFont* font = g_captionFont ? g_captionFont : ImGui::GetFont();
+    float aF = alpha / 255.0f;
+    ImU32 accent  = parse_color(P.value("accent", json()),     IM_COL32(120, 205, 235, 255));  // techy cyan
+    ImU32 axisCol = parse_color(P.value("axis_color", json()), IM_COL32(150, 162, 186, 255));
+    ImU32 gridCol = IM_COL32(72, 80, 102, 105);
+    ImU32 txtCol  = parse_color(P.value("color", json()),      IM_COL32(238, 244, 252, 255));
+    ImU32 subCol  = parse_color(P.value("sub_color", json()),  IM_COL32(162, 174, 198, 255));
+    double reveal = anim_param(c, "reveal", t, 1.0);
+
+    struct Pt { double x, y; };
+    struct Series { std::vector<Pt> pts; ImU32 col; std::string kind, label; float width; bool fill; };
+    std::vector<Series> series;
+    if (P.contains("series") && P["series"].is_array())
+        for (auto& js : P["series"]) {
+            Series sr; sr.col = parse_color(js.value("color", json()), accent);
+            sr.kind = js.value("kind", std::string("line")); sr.label = js.value("label", std::string());
+            sr.width = (float)js.value("width", 2.6); sr.fill = js.value("fill", false);
+            if (js.contains("points") && js["points"].is_array())
+                for (auto& jp : js["points"])
+                    if (jp.is_array() && jp.size() >= 2) sr.pts.push_back({jp[0].get<double>(), jp[1].get<double>()});
+            if (!sr.pts.empty()) series.push_back(sr);
+        }
+    if (series.empty()) return;
+
+    // data range → auto unless given
+    double xmin = 1e300, xmax = -1e300, ymin = 1e300, ymax = -1e300;
+    for (auto& sr : series) for (auto& p : sr.pts) {
+        xmin = std::min(xmin, p.x); xmax = std::max(xmax, p.x);
+        ymin = std::min(ymin, p.y); ymax = std::max(ymax, p.y);
+    }
+    auto axRange = [&](const char* ax, double& lo, double& hi) {
+        if (P.contains(ax) && P[ax].is_object()) {
+            if (P[ax].contains("min")) lo = P[ax]["min"].get<double>();
+            if (P[ax].contains("max")) hi = P[ax]["max"].get<double>();
+        }
+    };
+    axRange("x", xmin, xmax); axRange("y", ymin, ymax);
+    if (xmax - xmin < 1e-9) xmax = xmin + 1;
+    if (ymax - ymin < 1e-9) { double pad = std::max(1.0, fabs(ymin) * 0.05); ymin -= pad; ymax += pad; }
+
+    auto fmtNum = [&](double v, const std::string& fmt) -> std::string {
+        char buf[48];
+        if (fmt == "hex")      snprintf(buf, sizeof buf, "0x%X", (int)llround(v));
+        else if (fmt == "f1")  snprintf(buf, sizeof buf, "%.1f", v);
+        else if (fmt == "f2")  snprintf(buf, sizeof buf, "%.2f", v);
+        else if (fmt == "pct") snprintf(buf, sizeof buf, "%.0f%%", v);
+        else if (fabs(v - llround(v)) < 1e-6) snprintf(buf, sizeof buf, "%lld", (long long)llround(v));
+        else                   snprintf(buf, sizeof buf, "%.2f", v);
+        return std::string(buf);
+    };
+    auto axFmt = [&](const char* ax) -> std::string {
+        return (P.contains(ax) && P[ax].is_object()) ? P[ax].value("fmt", std::string("int")) : std::string("int");
+    };
+    auto axLabel = [&](const char* ax) -> std::string {
+        return (P.contains(ax) && P[ax].is_object()) ? P[ax].value("label", std::string()) : std::string();
+    };
+    auto axTicks = [&](const char* ax, double lo, double hi) -> std::vector<double> {
+        std::vector<double> tk;
+        if (P.contains(ax) && P[ax].is_object() && P[ax].contains("ticks") && P[ax]["ticks"].is_array())
+            for (auto& tv : P[ax]["ticks"]) tk.push_back(tv.get<double>());
+        else for (int i = 0; i <= 4; ++i) tk.push_back(lo + (hi - lo) * i / 4.0);   // 5 even ticks
+        return tk;
+    };
+
+    // geometry: a W×H box; auto-fit to the frame width; margins hold the axis labels/ticks
+    float fpx = (float)anim_param(c, "font_px", t, 28.0) * scaleX * s; if (fpx < 6.0f) fpx = 6.0f;
+    float W = (float)P.value("width_px", 1180.0) * scaleX * s;
+    float H = (float)P.value("height_px", 560.0) * scaleX * s;
+    if (fw > 1 && W > fw * 0.92f) { float k = fw * 0.92f / W; W *= k; H *= k; fpx *= k; }
+    std::string title = jstr(P, "title");
+    float mL = fpx * 4.6f, mB = fpx * 3.0f, mR = fpx * 1.4f, mT = (title.empty() ? fpx * 0.9f : fpx * 2.6f);
+    float boxX = cx - W * ancX, boxY = cy - H * ancY;
+    float pX0 = boxX + mL, pY0 = boxY + mT, pW = std::max(10.0f, W - mL - mR), pH = std::max(10.0f, H - mT - mB);
+    auto SX = [&](double x) -> float { return pX0 + (float)((x - xmin) / (xmax - xmin)) * pW; };
+    auto SY = [&](double y) -> float { return pY0 + pH - (float)((y - ymin) / (ymax - ymin)) * pH; };
+
+    // backdrop card (default ON): one soft dark panel behind the figure, like the diagram/code cards
+    if (P.value("card", true)) {
+        float cp = fpx * 0.7f, rad = fpx * 0.4f;
+        dl->AddRectFilled(ImVec2(boxX - cp, boxY - cp), ImVec2(boxX + W + cp, boxY + H + cp), mul_alpha(IM_COL32(15, 17, 26, 230), aF), rad);
+        dl->AddRect(ImVec2(boxX - cp, boxY - cp), ImVec2(boxX + W + cp, boxY + H + cp), mul_alpha(IM_COL32(88, 96, 120, 130), aF), rad, 0, std::max(1.0f, 1.2f * s));
+    }
+    if (!title.empty()) {
+        ImVec2 mt = font->CalcTextSizeA(fpx * 1.06f, 1e30f, 0, title.c_str());
+        dl->AddText(font, fpx * 1.06f, ImVec2(boxX + (W - mt.x) * 0.5f, boxY + fpx * 0.5f), mul_alpha(accent, aF), title.c_str());
+    }
+
+    // shaded regions (under everything): x-band {x0,x1} or y-band {y0,y1}
+    if (P.contains("regions") && P["regions"].is_array())
+        for (auto& jr : P["regions"]) {
+            ImU32 rc = mul_alpha(parse_color(jr.value("color", json()), IM_COL32(210, 90, 90, 40)), aF);
+            float ra, rb, rc0, rc1;
+            if (jr.contains("x0")) { ra = SX(jr.value("x0", xmin)); rb = SX(jr.value("x1", xmax)); rc0 = pY0; rc1 = pY0 + pH; }
+            else                   { rc0 = SY(jr.value("y1", ymax)); rc1 = SY(jr.value("y0", ymin)); ra = pX0; rb = pX0 + pW; }
+            dl->AddRectFilled(ImVec2(std::min(ra, rb), rc0), ImVec2(std::max(ra, rb), rc1), rc);
+            std::string rl = jr.value("label", std::string());
+            if (!rl.empty()) { ImVec2 ml = font->CalcTextSizeA(fpx * 0.62f, 1e30f, 0, rl.c_str());
+                dl->AddText(font, fpx * 0.62f, ImVec2(std::min(ra, rb) + 6 * s, rc0 + 4 * s), mul_alpha(subCol, aF), rl.c_str()); }
+        }
+
+    // grid + axes + ticks
+    std::vector<double> xt = axTicks("x", xmin, xmax), yt = axTicks("y", ymin, ymax);
+    bool grid = P.value("grid", true);
+    for (double gx : xt) { float X = SX(gx); if (grid) dl->AddLine(ImVec2(X, pY0), ImVec2(X, pY0 + pH), mul_alpha(gridCol, aF), 1.0f);
+        std::string lab = fmtNum(gx, axFmt("x")); ImVec2 ml = font->CalcTextSizeA(fpx * 0.6f, 1e30f, 0, lab.c_str());
+        dl->AddText(font, fpx * 0.6f, ImVec2(X - ml.x * 0.5f, pY0 + pH + fpx * 0.35f), mul_alpha(subCol, aF), lab.c_str()); }
+    for (double gy : yt) { float Y = SY(gy); if (grid) dl->AddLine(ImVec2(pX0, Y), ImVec2(pX0 + pW, Y), mul_alpha(gridCol, aF), 1.0f);
+        std::string lab = fmtNum(gy, axFmt("y")); ImVec2 ml = font->CalcTextSizeA(fpx * 0.6f, 1e30f, 0, lab.c_str());
+        dl->AddText(font, fpx * 0.6f, ImVec2(pX0 - ml.x - fpx * 0.45f, Y - ml.y * 0.5f), mul_alpha(subCol, aF), lab.c_str()); }
+    dl->AddLine(ImVec2(pX0, pY0 + pH), ImVec2(pX0 + pW, pY0 + pH), mul_alpha(axisCol, aF), std::max(1.4f, 1.8f * scaleX * s));  // x axis
+    dl->AddLine(ImVec2(pX0, pY0), ImVec2(pX0, pY0 + pH), mul_alpha(axisCol, aF), std::max(1.4f, 1.8f * scaleX * s));          // y axis
+    // axis labels
+    std::string xl = axLabel("x"), yl = axLabel("y");
+    if (!xl.empty()) { ImVec2 ml = font->CalcTextSizeA(fpx * 0.68f, 1e30f, 0, xl.c_str());
+        dl->AddText(font, fpx * 0.68f, ImVec2(pX0 + (pW - ml.x) * 0.5f, boxY + H - fpx * 1.15f), mul_alpha(axisCol, aF), xl.c_str()); }
+    if (!yl.empty()) {   // vertical: stack glyphs (no rotated text in ImDrawList) — cheap + legible for short labels
+        float yy = pY0 + pH * 0.5f - (float)yl.size() * fpx * 0.34f;
+        for (char ch : yl) { char cs[2] = {ch, 0}; ImVec2 mc = font->CalcTextSizeA(fpx * 0.6f, 1e30f, 0, cs);
+            dl->AddText(font, fpx * 0.6f, ImVec2(boxX + fpx * 0.35f, yy), mul_alpha(axisCol, aF), cs); yy += mc.y * 0.92f; } }
+
+    // series (reveal by point index → a left-to-right plotter draw)
+    ImU32 clipReset = 0; (void)clipReset;
+    dl->PushClipRect(ImVec2(pX0 - 2, pY0 - 2), ImVec2(pX0 + pW + 2, pY0 + pH + 2), true);
+    for (auto& sr : series) {
+        int N = (int)sr.pts.size();
+        double fpts = reveal >= 1.0 ? (double)(N - 1) : reveal * (N - 1);
+        int kfull = std::max(0, std::min(N - 1, (int)floor(fpts)));
+        float lw = std::max(1.4f, sr.width * scaleX * s);
+        // build the revealed screen polyline
+        std::vector<ImVec2> poly;
+        for (int i = 0; i <= kfull; ++i) poly.push_back(ImVec2(SX(sr.pts[i].x), SY(sr.pts[i].y)));
+        if (kfull < N - 1 && fpts > kfull) {   // partial last segment
+            double fr = fpts - kfull;
+            double px = sr.pts[kfull].x + (sr.pts[kfull + 1].x - sr.pts[kfull].x) * fr;
+            double py = sr.pts[kfull].y + (sr.pts[kfull + 1].y - sr.pts[kfull].y) * fr;
+            poly.push_back(ImVec2(SX(px), SY(py)));
+        }
+        if (sr.kind == "step") {   // rebuild as a staircase (hold each y until the next x)
+            std::vector<ImVec2> st2; for (size_t i = 0; i < poly.size(); ++i) { st2.push_back(poly[i]);
+                if (i + 1 < poly.size()) st2.push_back(ImVec2(poly[i + 1].x, poly[i].y)); }
+            poly.swap(st2);
+        }
+        if (sr.kind == "scatter") {
+            for (auto& pp : poly) dl->AddCircleFilled(pp, lw * 1.7f, mul_alpha(sr.col, aF));
+        } else if (sr.kind == "bar") {
+            float base = SY(std::max(ymin, 0.0));
+            for (int i = 0; i <= kfull; ++i) { float X = SX(sr.pts[i].x), Y = SY(sr.pts[i].y);
+                float bw = pW / std::max(1, N) * 0.6f;
+                dl->AddRectFilled(ImVec2(X - bw * 0.5f, std::min(Y, base)), ImVec2(X + bw * 0.5f, std::max(Y, base)), mul_alpha(sr.col, aF)); }
+        } else {   // line / step
+            if (sr.fill && poly.size() >= 2) {   // area under the curve to the baseline
+                float base = SY(std::max(ymin, std::min(ymax, 0.0 < ymin ? ymin : (ymin <= 0 && ymax >= 0 ? 0.0 : ymin))));
+                ImU32 fc = mul_alpha(sr.col, aF * 0.16f);
+                for (size_t i = 0; i + 1 < poly.size(); ++i)
+                    dl->AddQuadFilled(poly[i], poly[i + 1], ImVec2(poly[i + 1].x, base), ImVec2(poly[i].x, base), fc);
+            }
+            if (poly.size() >= 2) dl->AddPolyline(poly.data(), (int)poly.size(), mul_alpha(sr.col, aF), 0, lw);
+        }
+    }
+    dl->PopClipRect();
+
+    // annotated markers: a dot + a small callout label above it (dy nudges vertically, in data-agnostic px)
+    if (P.contains("markers") && P["markers"].is_array())
+        for (auto& jm : P["markers"]) {
+            double mx = jm.value("x", 0.0), my = jm.value("y", 0.0);
+            float X = SX(mx), Y = SY(my);
+            ImU32 mc = parse_color(jm.value("color", json()), IM_COL32(255, 213, 74, 255));
+            dl->AddCircleFilled(ImVec2(X, Y), std::max(3.0f, 4.5f * scaleX * s), mul_alpha(mc, aF));
+            dl->AddCircle(ImVec2(X, Y), std::max(5.0f, 8.0f * scaleX * s), mul_alpha(mc, aF), 0, std::max(1.2f, 1.6f * s));
+            std::string lab = jm.value("label", std::string()), sub = jm.value("sub", std::string());
+            if (lab.empty()) continue;
+            float dy = (float)jm.value("dy", -1.0) * fpx * 1.4f;   // default: one line above the dot
+            ImVec2 ml = font->CalcTextSizeA(fpx * 0.72f, 1e30f, 0, lab.c_str());
+            ImVec2 ms = sub.empty() ? ImVec2(0, 0) : font->CalcTextSizeA(fpx * 0.56f, 1e30f, 0, sub.c_str());
+            float bw = std::max(ml.x, ms.x) + fpx * 0.7f, bh = ml.y + (sub.empty() ? 0 : ms.y + 2 * s) + fpx * 0.4f;
+            float lx = X - bw * 0.5f, ly = Y + dy - bh;
+            lx = std::max(pX0, std::min(pX0 + pW - bw, lx));           // keep the pill inside the plot
+            dl->AddLine(ImVec2(X, Y), ImVec2(X, ly + bh), mul_alpha(mc, aF), std::max(1.0f, 1.3f * s));
+            dl->AddRectFilled(ImVec2(lx, ly), ImVec2(lx + bw, ly + bh), mul_alpha(IM_COL32(18, 20, 30, 240), aF), fpx * 0.25f);
+            dl->AddRect(ImVec2(lx, ly), ImVec2(lx + bw, ly + bh), mul_alpha(mc, aF), fpx * 0.25f, 0, std::max(1.0f, 1.2f * s));
+            dl->AddText(font, fpx * 0.72f, ImVec2(lx + (bw - ml.x) * 0.5f, ly + fpx * 0.2f), mul_alpha(txtCol, aF), lab.c_str());
+            if (!sub.empty()) dl->AddText(font, fpx * 0.56f, ImVec2(lx + (bw - ms.x) * 0.5f, ly + fpx * 0.2f + ml.y + 2 * s), mul_alpha(subCol, aF), sub.c_str());
+        }
+
+    // legend (optional): series colour swatches + labels, top-right inside the plot
+    if (P.value("legend", false)) {
+        float lyy = pY0 + fpx * 0.4f;
+        for (auto& sr : series) { if (sr.label.empty()) continue;
+            ImVec2 ml = font->CalcTextSizeA(fpx * 0.62f, 1e30f, 0, sr.label.c_str());
+            float sw = fpx * 0.7f, lxx = pX0 + pW - ml.x - sw - fpx * 0.6f;
+            dl->AddRectFilled(ImVec2(lxx, lyy + ml.y * 0.2f), ImVec2(lxx + sw, lyy + ml.y * 0.8f), mul_alpha(sr.col, aF), 2.0f);
+            dl->AddText(font, fpx * 0.62f, ImVec2(lxx + sw + fpx * 0.25f, lyy), mul_alpha(txtCol, aF), sr.label.c_str());
+            lyy += ml.y * 1.25f;
+        }
+    }
+}
+
 // gradient/vignette overlay — a full-frame wash to tame a busy background or fade an edge.
 // kind: "vignette" (darken toward the anchor, edges biased away from it) · "linear" (directional
 // fade: dir = down/up/left/right). color + keyframeable `strength` (0..1) + `feather` (band size);
@@ -4923,7 +5148,7 @@ static TransInfo clip_trans_info(Project& p, Clip& c) {
         if (c.type == "image" || c.type == "video") {
             std::string lay = jstr(c.params, "layout");
             if (lay == "fit" || lay.rfind("inset", 0) == 0) ti.inType = "pop";
-        } else if (c.type == "diagram") ti.inType = "pop";   // diagram cards enter like image showcases
+        } else if (c.type == "diagram" || c.type == "plot") ti.inType = "pop";   // diagram/plot cards enter like image showcases
     }
     double half = c.dur * 0.5;
     ti.inDur = std::min(ti.inDur, half); ti.outDur = std::min(ti.outDur, half);   // short clip → proportional
@@ -5344,7 +5569,7 @@ static void content_centroid_span(const Project& p, double t0, double t1,
             auto rit = p.rows.find(rid);
             if (rit == p.rows.end()) continue;
             const std::string& rt = rit->second.type;   // code/diagram cards count as content too (the host must dodge them)
-            if (rt != "image" && rt != "video" && rt != "code" && rt != "diagram") continue;
+            if (rt != "image" && rt != "video" && rt != "code" && rt != "diagram" && rt != "plot") continue;
             for (auto& cid : rit->second.clips) {
                 auto cit = p.clips.find(cid);
                 if (cit == p.clips.end()) continue;
@@ -5374,7 +5599,7 @@ static bool span_has_content(const Project& p, double t0, double t1) {
             auto rit = p.rows.find(rid);
             if (rit == p.rows.end()) continue;
             const std::string& rt = rit->second.type;
-            if (rt != "image" && rt != "video" && rt != "code" && rt != "diagram") continue;
+            if (rt != "image" && rt != "video" && rt != "code" && rt != "diagram" && rt != "plot") continue;
             for (auto& cid : rit->second.clips) {
                 auto cit = p.clips.find(cid);
                 if (cit == p.clips.end()) continue;
@@ -6112,6 +6337,8 @@ static void composite_frame(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0, 
                 if (c.type == "shape") { draw_shape_clip(dl, cx, cy, s, c, alpha, st.playhead); continue; }
                 // diagram: reusable boxes + arrows (flow chains / labeled graphs) with a staged reveal.
                 if (c.type == "diagram") { draw_diagram_clip(dl, cx, cy, s, c, alpha, st.playhead, f0, fw, fh, fx.sclMul); continue; }
+                // plot: a native line/step/scatter chart (axes + labelled markers + reveal) — the receipts, transparent.
+                if (c.type == "plot") { draw_plot_clip(dl, cx, cy, s, c, alpha, st.playhead, f0, fw, fh, fx.sclMul); continue; }
                 // gradient/vignette: a full-frame wash to tame a busy bg or fade an edge.
                 if (c.type == "gradient") { draw_gradient_clip(dl, f0, fw, fh, c, alpha, st.playhead); continue; }
                 // filler: a heavily-blurred, cover-scaled backdrop that fills black/empty bg with the
@@ -8229,6 +8456,22 @@ static void draw_native_params(Project& p, Clip& c) {
         if (ImGui::InputText("title", tb, sizeof tb)) P["title"] = std::string(tb);
         color_param("accent",   P, "accent", IM_COL32(120, 205, 235, 255));
         color_param("box fill", P, "fill",   IM_COL32(26, 30, 40, 235));
+    } else if (c.type == "plot") {
+        ImGui::SeparatorText("plot (native chart)");
+        ImGui::TextDisabled("author in JSON: series:[{points:[[x,y],...], kind:line|step|scatter|bar, color, fill}]\n"
+                            "x/y:{min,max,label,ticks:[...],fmt:int|hex|f1|f2|pct}. markers:[{x,y,label,sub}]\n"
+                            "annotate points; regions:[{x0,x1|y0,y1,color,label}] shade a band. reveal draws it in.");
+        float rv = (float)P.value("reveal", 1.0); if (ImGui::SliderFloat("reveal (0..1)", &rv, 0.f, 1.f)) P["reveal"] = (double)rv;
+        float fp = (float)P.value("font_px", 28.0); if (ImGui::DragFloat("font px", &fp, 0.5f, 6.f, 200.f)) P["font_px"] = (double)fp;
+        float wpx = (float)P.value("width_px", 1180.0); if (ImGui::DragFloat("width px", &wpx, 4.f, 200.f, 1900.f)) P["width_px"] = (double)wpx;
+        float hpx = (float)P.value("height_px", 560.0); if (ImGui::DragFloat("height px", &hpx, 4.f, 120.f, 1060.f)) P["height_px"] = (double)hpx;
+        bool gr = P.value("grid", true);   if (ImGui::Checkbox("grid", &gr))   P["grid"] = gr;
+        ImGui::SameLine(); bool lg = P.value("legend", false); if (ImGui::Checkbox("legend", &lg)) P["legend"] = lg;
+        ImGui::SameLine(); bool cd = P.value("card", true);   if (ImGui::Checkbox("card", &cd))   P["card"] = cd;
+        std::string ti = jstr(P, "title");
+        char tb[160]; strncpy(tb, ti.c_str(), sizeof tb - 1); tb[sizeof tb - 1] = 0;
+        if (ImGui::InputText("title", tb, sizeof tb)) P["title"] = std::string(tb);
+        color_param("accent", P, "accent", IM_COL32(120, 205, 235, 255));
     } else if (c.type == "anchor") {
         ImGui::SeparatorText("caption anchor");
         ImGui::TextDisabled("A move handle: every caption whose START falls inside this clip's span\n"
@@ -8561,6 +8804,9 @@ static std::string add_native_clip_at(Project& p, const std::string& type, doubl
     else if (type == "shape")    { dur = 3.0; params = json{{"kind","box"},{"thickness",3.0},{"grow",true}}; label = "shape"; }
     else if (type == "gradient") { dur = 4.0; params = json{{"gradient","vignette"},{"strength",0.6}}; label = "vignette"; }
     else if (type == "diagram")  { dur = 5.0; params = json::object(); label = "diagram"; }
+    else if (type == "plot")     { dur = 6.0; label = "plot"; params = json::object(); params["title"] = "chart";
+                                   json _sr = json::object(); _sr["points"] = json::array({json::array({0,0}), json::array({1,1}), json::array({2,4}), json::array({3,9})});
+                                   params["series"] = json::array({_sr}); }
     else if (type == "blur")     { dur = 1.5; params = json{{"blur",30.0}}; label = "blur"; t = std::max(0.0, t - dur * 0.5); }  // center the bell on the playhead
     else if (type == "filter")   { dur = 5.0; params = json{{"filter","cinematic"}}; label = "filter"; }   // whole-frame cinematic grade over its span
     else if (type == "filler")   { dur = 5.0; params = json{{"source","auto"},{"blur",30.0},{"dim",0.55}}; label = "bg fill"; }
@@ -8599,9 +8845,11 @@ static std::string place_row_type(const std::string& kind) {
     if (kind == "voice") return "tts";
     if (kind == "music" || kind == "sound") return "music";
     if (kind == "backdrop") return "image";
+    if (kind == "plot") return "plot";   // native chart clips get their own row (a figure card; counts as content like diagram)
     return kind;   // caption/code/shape/diagram/gradient/blur/filler/anchor
 }
 static double place_default_dur(const std::string& kind) {
+    if (kind == "plot") return 6.0;
     if (kind == "diagram") return 5.0;
     if (kind == "code" || kind == "gradient" || kind == "backdrop" || kind == "filler") return 4.0;
     if (kind == "blur")   return 1.5;
@@ -10033,6 +10281,7 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
                     {"Code card",                "code"},
                     {"Shape / callout",          "shape"},
                     {"Diagram (boxes + arrows)", "diagram"},
+                    {"Plot / chart (native)",    "plot"},
                     {"Caption anchor (move captions in range)", "anchor"},
                 };
                 for (auto& nt : NTS)

@@ -21,7 +21,7 @@ OD = collections.OrderedDict
 # ── clip-type defaults: row + a sensible param skeleton (what the compositor reads) ──
 ROW_OF = {"code":"r_code","caption":"r_cap","text":"r_cap","shape":"r_shape","gradient":"r_grade",
           "image":"r_img","video":"r_video","avatar":"r_av","tts":"r_vo","music":"r_music","blur":"r_blur",
-          "diagram":"r_diagram","filler":"r_fill","anchor":"r_capanchor"}
+          "diagram":"r_diagram","plot":"r_plot","filler":"r_fill","anchor":"r_capanchor"}
 TRACK_OF = {"r_code":("tk_code","Decompile","video"),"r_cap":("tk_cap","Captions","video"),
             "r_shape":("tk_shape","Callouts","video"),"r_grade":("tk_grade","Grade","video"),
             "r_img":("tk_img","Footage","video"),"r_video":("tk_video","Video","video"),
@@ -88,7 +88,7 @@ def ensure_row_after(p, rid, after, typ="image"):
 def gen_id(p, typ):
     base = {"caption":"c_cap","text":"c_cap","code":"c_cd","shape":"c_sh","gradient":"c_vig",
             "image":"c_im","video":"c_vid","avatar":"c_av","tts":"v_","music":"c_mus","blur":"c_blur",
-            "diagram":"c_diag","filler":"c_fill","anchor":"c_anc"}.get(typ,"c_")
+            "diagram":"c_diag","plot":"c_plot","filler":"c_fill","anchor":"c_anc"}.get(typ,"c_")
     i=1
     while f"{base}{i}" in p["clips"]: i+=1
     return f"{base}{i}"
@@ -323,6 +323,9 @@ def cmd_overview(p, args):
 #       {"line": "...", "visual": {"caption": "BIG TEXT", "sub": "small text"}},  // plate → least-busy corner;
 #                                                                        // caption-only beats keep the ROOM bg (no bare fill)
 #       {"line": "...", "visual": {"diagram": {...draw_diagram params...}}},      // card+autofit; traffic/dead animate
+#       {"line": "...", "visual": {"plot": {"series":[{"points":[[x,y],...],"kind":"line"}],  // NATIVE chart (no baked PNG):
+#            "x":{"label":"tilt","ticks":[-90,0,90],"fmt":"int"}, "y":{"fmt":"hex","label":"register"}, // line|step|scatter|bar,
+#            "markers":[{"x":0,"y":33648,"label":"flat = 0x8370"}], "reveal":1}}},   // markers/regions annotate; reveal draws it in
 #       {"line": "...", "solo": true, "visual": {...}},                  // no host this beat (readable full-width shots)
 #       {"section": "Act 2"},                                            // blur-swap scene cut
 #       {"pause": 0.8} ] }
@@ -446,7 +449,7 @@ def cmd_skeleton(a):
     # (the host draws OVER side-showcase images AND code/diagram cards — she overlaps content,
     # content never covers her; only captions/plates and the gag arrow sit above her)
     # r_overlay sits ABOVE the host (a bottom reaction meme draws over her lower body, face still shows)
-    for rid in ("r_filter","r_cap","r_gag","r_shape","r_overlay","r_av","r_code","r_diagram","r_img","r_video","r_blur","r_bg","r_fill","r_vo"):
+    for rid in ("r_filter","r_cap","r_gag","r_shape","r_overlay","r_av","r_code","r_diagram","r_plot","r_img","r_video","r_blur","r_bg","r_fill","r_vo"):
         if rid=="r_filter":   # whole-frame cinematic grade over everything (the default channel 'basic look')
             p["rows"][rid]=OD([("type","filter"),("name","Filter"),("params",OD()),("clips",[])])
             p["tracks"].append(OD([("id","tk_filter"),("name","Filter"),("kind","video"),("rows",[rid])]))
@@ -670,6 +673,11 @@ def cmd_skeleton(a):
             elif "diagram" in v:
                 cid=new_clip(p,"diagram","r_diagram",at,vdur,OD(v["diagram"]),f"{pref}{sfx}_diag")
                 _set_xform(p["clips"][cid],S(0,-60))    # centered card (auto-fits width; host goes small)
+            elif "plot" in v:
+                # native chart card (line/step/scatter + axes/markers/reveal) — the transparent, reflowable
+                # replacement for a baked matplotlib PNG. Rides r_diagram (a figure card; counts as content).
+                cid=new_clip(p,"plot","r_plot",at,vdur,OD(v["plot"]),f"{pref}{sfx}_plot")
+                _set_xform(p["clips"][cid],S(0,-40))    # centered; auto-fits width; a host beside it goes small
             if cid and zoom!=1.0:
                 tf=p["clips"][cid]["transform"]; tf["scale"]=[tf["scale"][0]*zoom, tf["scale"][1]*zoom]
             # place:"bottom" = a bottom reaction OVERLAY (a meme) — over the host, ~width_frac wide,
@@ -730,7 +738,7 @@ def cmd_skeleton(a):
                         if fill and not cap_only and not scene:      # a scene beat's backdrop IS the room
                             open_fill=new_clip(p,"filler","r_fill",at,vdur,OD(),f"{pref}{sfx}_fill")
                     at=round(at+vdur,3)
-                held_kind = "card" if any(k in v for v in seq for k in ("code","diagram","stack")) else "media"
+                held_kind = "card" if any(k in v for v in seq for k in ("code","diagram","plot","stack")) else "media"
                 # code sections get the strict-teacher pose on the beat that reveals the card
                 if line and not b.get("solo") and any("code" in v for v in seq) and f"{pref}_av" in p["clips"]:
                     p["clips"][f"{pref}_av"]["params"]["emotion"]="teaching"
@@ -766,7 +774,7 @@ def cmd_skeleton(a):
                 # bottom band; a plate/host beat renders her SOLO-BIG (avatar_fit solo) — the
                 # label rides above the horns with a short arrow down at the forehead.
                 seqv = vis if isinstance(vis,list) else ([vis] if isinstance(vis,dict) else [])
-                hasCont = any(k in v for v in seqv for k in ("image","video","code","diagram","stack"))
+                hasCont = any(k in v for v in seqv for k in ("image","video","code","diagram","plot","stack"))
                 # non-content = the host is solo-BIG, so the label rides high and the arrow tip stops
                 # ABOVE the horns (not over her face); content = small bottom host, callout mid-left.
                 if hasCont: cpos,afrom,ato = ((-330,20),[-315,30],[-140,210])
@@ -865,9 +873,9 @@ def cmd_lint(p, a):
     warn=[]; info=[]
     tot=total(p)
     vo=_spans(p,("tts",))
-    vis=_spans(p,("image","video","code","caption","diagram","shape"))
+    vis=_spans(p,("image","video","code","caption","diagram","plot","shape"))
     # 1. narration with NOTHING on screen but the host/bg (fine) — vs literally nothing
-    allvis=_spans(p,("image","video","code","caption","diagram","shape","avatar","gradient","filler"))
+    allvis=_spans(p,("image","video","code","caption","diagram","plot","shape","avatar","gradient","filler"))
     def gaps(cover, lo, hi, min_gap):
         g=[]; cur=lo
         for s,e in cover:
@@ -955,7 +963,7 @@ def cmd_lint(p, a):
     anchors=p.get("meta",{}).get("anchors",{})
     for cid,c in p["clips"].items():
         rt=p["rows"].get(c.get("row",""),{}).get("type")
-        if rt not in ("image","video","diagram","shape"): continue
+        if rt not in ("image","video","diagram","plot","shape"): continue
         pr=c.get("params",{}) or {}
         if pr.get("place"): continue                 # auto-cornered → pos is a corner-relative offset
         lay=pr.get("layout","")
@@ -1150,7 +1158,7 @@ def transcript_apply(p):
         [t0,t1]? Mirrors the editor's span_has_content — decides room-beat vs content-beat transcript y.
         A bg-desk scene with a cat-meme overlay reads as a ROOM beat (the overlay isn't a dodge-worthy card)."""
         for c2 in p["clips"].values():
-            if p["rows"].get(c2.get("row",""),{}).get("type") not in ("image","video","code","diagram"): continue
+            if p["rows"].get(c2.get("row",""),{}).get("type") not in ("image","video","code","diagram","plot"): continue
             if c2.get("params",{}).get("layout")=="cover" or c2.get("params",{}).get("overlay"): continue
             if c2["start"]<t1 and c2["start"]+c2["dur"]>t0: return True
         return False
