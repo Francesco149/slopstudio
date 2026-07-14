@@ -30,8 +30,17 @@ in the same change that lands work, so a fresh session reorients in ~60s. Last u
   skeleton` gaps (`2db7b96`): kit look-knobs (`filter`/`inset_style`/`frame`/`glow`) now pass through from a
   skeleton beat; a quote card auto-SOLOs (a full host was drawn over the centred quote → illegible). Note: the
   per-clip `filter` is subtle on a cutout — the whole-frame `filter` CLIP reads stronger for a scene look.
-**STILL OPEN:** Phase 4a layout engine (the big frame-region solver — deferred, "attempt last"; the kirby test
-showed the current inference-based placement composes well, so 4a is lower-urgency than thought).
+**Owner feedback round (same session, all landed):**
+- **Filter strength + vignette are now INDEPENDENT knobs** (`414d2ac`): `params.strength` blends only the
+  colour grade; `params.vignette` sets edge darkening on its own. Owner's basic-look candidate = a full-length
+  `filter` clip, noir · strength 0.25 · vignette 0.10 (0.50/0.30 for a heavier occasional hit). Verified.
+- **Reverted the blur-aware swap suppression** (`414d2ac`): owner prefers the pose-swap SLIDE off-and-back-in
+  even under a blur (my suppression read as a snap at 365s). Slide restored; glide-anchor fix kept.
+- **Scene crossfade by default** (`1b81c60`): `retime` now overlaps a contiguous FULL-FRAME scene cut by 0.4s
+  so it cross-dissolves (editor fades the same-row overlap) instead of hard-snapping (owner's 392s note).
+  Same-row only for now; cross-row image→video scene changes are a noted follow-up.
+**STILL OPEN:** Phase 4a layout engine (deferred, "attempt last"; the kirby test showed the current
+inference-based placement composes well) · scene crossfade for CROSS-ROW cuts (image-row → video-row).
 
 **★ The mouse-driven-UX overhaul + the visual-variety stretch goal — most of it LANDED in an autonomous
 overnight session (2026-07-14 night). Full arc + what remains: `docs/UX_OVERHAUL.md` (top STATUS block).**
