@@ -20,7 +20,18 @@ in the same change that lands work, so a fresh session reorients in ~60s. Last u
 - **Checker bg** (`3ec2cac`): clipped to the frame (no more leak into the preview letterbox); **scroll speed
   is a project global** `meta.checker_scroll` (default 2.0 = 2× the old drift) + Project-panel slider.
 - **Hero `editor.png`** (`5ba98fe`): owner's cosmic2d-theme re-capture (the one thing left from the overnight arc).
-**STILL OPEN (this session's remaining asks):** Phase 4c host-transition polish · Phase 4a layout engine · a fresh **kirby smoke-test cut** (needs lame for TTS).
+**Then (same session, all landed):**
+- **Phase 4c host-transition polish** (`7adb8a5`): glide reads the RESOLVED on-screen delta (adds the anchor
+  offset it dropped → a host that changes anchor between same-pose beats glides instead of teleporting; zero
+  recettear change, verified) + **blur-aware swaps** (a pose-swap slide under a covering blur is suppressed —
+  the owner's "unwanted transition mid-blur"; changes 12 recettear blur-seams, before/after on the feed).
+- **Kirby visual-variety SMOKE TEST** — a fresh ~66s cut (`../slopstudio-projects/kirby-tilt-n-tumble/kirby-smoke.slop.json`,
+  `0853780`) VO'd + retimed + lint-clean. **The kit composes WELL by default.** Surfaced + fixed two `slop.py
+  skeleton` gaps (`2db7b96`): kit look-knobs (`filter`/`inset_style`/`frame`/`glow`) now pass through from a
+  skeleton beat; a quote card auto-SOLOs (a full host was drawn over the centred quote → illegible). Note: the
+  per-clip `filter` is subtle on a cutout — the whole-frame `filter` CLIP reads stronger for a scene look.
+**STILL OPEN:** Phase 4a layout engine (the big frame-region solver — deferred, "attempt last"; the kirby test
+showed the current inference-based placement composes well, so 4a is lower-urgency than thought).
 
 **★ The mouse-driven-UX overhaul + the visual-variety stretch goal — most of it LANDED in an autonomous
 overnight session (2026-07-14 night). Full arc + what remains: `docs/UX_OVERHAUL.md` (top STATUS block).**
