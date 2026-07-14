@@ -169,6 +169,7 @@ static void parse_xform(const json& tr, Clip& c) {
 static std::vector<std::string> g_projAssetDirs;
 static std::string g_projDir;        // dir of the loaded .slop.json (set at startup; project-relative uri root)
 static std::string g_repoRoot;       // code-repo root (holds library/, cache/, presets/); CWD-independent
+static std::string g_pillFontName = "bebas";   // meta.pill_font: term/label PILL display face (bebas|anton|archivo|default); set at project load, read in draw_caption_clip
 
 static Project parse_project_json(json j, const std::string& path) {
     Project p;
@@ -195,6 +196,7 @@ static Project parse_project_json(json j, const std::string& path) {
         p.letterbox = meta.value("letterbox", 0.0);                // cinematic letterbox bars (0 = off)
         p.songCreditSecs = meta.value("song_credit_secs", 10.0);
         p.songCreditCorner = meta.value("song_credit_corner", std::string("tl"));
+        g_pillFontName = meta.value("pill_font", std::string("bebas"));   // term/label PILL display face
         if (meta.contains("anchors") && meta["anchors"].is_object())
             for (auto& kv : meta["anchors"].items())
                 if (kv.value().is_array() && kv.value().size() == 2)
@@ -4143,6 +4145,9 @@ static inline ImU32 mul_alpha(ImU32 c, float f) {
 // to upscale for big on-screen text). Loaded in main() at 48px with JP ranges → crisp Latin
 // AND Japanese (the mini-lessons). null → ImGui default font.
 static ImFont* g_captionFont = nullptr;
+static ImFont* g_pillFontAnton = nullptr;    // condensed all-caps display faces for term/label PILLS —
+static ImFont* g_pillFontBebas = nullptr;    // read FAR better than the CJK caption face on uppercase
+static ImFont* g_pillFontArchivo = nullptr;  // labels. Selected per-project via meta.pill_font (g_pillFontName).
 // Param colour: [r,g,b] / [r,g,b,a] (0..255) → ImU32, else the default.
 static ImU32 parse_color(const json& j, ImU32 def) {
     if (j.is_array() && j.size() >= 3)
@@ -4335,6 +4340,16 @@ static void draw_caption_clip(ImDrawList* dl, float cx, float cy, float s, Clip&
     float fpx = (float)anim_param(c, "font_px", t, lower ? 52.0 : jp ? 106.0 : 56.0);   // jp lessons ARE the shot — big by default (distilled from the user's 1.4x etymology tweak)
     float screenFont = fpx * scaleX * s; if (screenFont < 4.0f) screenFont = 4.0f;
     ImFont* font = g_captionFont ? g_captionFont : ImGui::GetFont();
+    // term/label PILLS get the condensed all-caps display face (meta.pill_font) + an UPPERCASED label —
+    // reads far cleaner than the CJK caption face, and a pill IS a label. Only the LABEL swaps font/case;
+    // sub/gloss stay in the clean caption face (heavy display headline + light sentence-case sub = a pro
+    // lower-third hierarchy).
+    ImFont* labelFont = font;
+    if (term) {
+        ImFont* pf = g_pillFontName == "anton" ? g_pillFontAnton : g_pillFontName == "archivo" ? g_pillFontArchivo
+                   : g_pillFontName == "bebas" ? g_pillFontBebas : nullptr;
+        if (pf) { labelFont = pf; for (char& ch : text) if (ch >= 'a' && ch <= 'z') ch = (char)(ch - 32); }
+    }
     float aF = alpha / 255.0f;
 
     // ── quote / pull-quote card: a big CENTRED statement with a decorative mark, an accent rule and an
@@ -4391,8 +4406,8 @@ static void draw_caption_clip(ImDrawList* dl, float cx, float cy, float s, Clip&
 
     float wrap = (float)P.value("wrap_px", 0.0) * scaleX * s;
     float f1 = screenFont, f2 = screenFont * 0.58f, f3 = screenFont * 0.46f, gap = screenFont * 0.16f;
-    auto meas = [&](const std::string& str, float fs) -> ImVec2 { return str.empty() ? ImVec2(0, 0) : font->CalcTextSizeA(fs, wrap > 0 ? wrap : 1e30f, wrap > 0 ? wrap : 0.0f, str.c_str()); };
-    ImVec2 m1 = meas(text, f1), m2 = meas(sub, f2), m3 = meas(gloss, f3);
+    auto meas = [&](const std::string& str, float fs, ImFont* fnt) -> ImVec2 { return str.empty() ? ImVec2(0, 0) : fnt->CalcTextSizeA(fs, wrap > 0 ? wrap : 1e30f, wrap > 0 ? wrap : 0.0f, str.c_str()); };
+    ImVec2 m1 = meas(text, f1, labelFont), m2 = meas(sub, f2, font), m3 = meas(gloss, f3, font);
     float blockW = std::max(std::max(m1.x, m2.x), m3.x);
     float blockH = m1.y + (sub.empty() ? 0 : gap + m2.y) + (gloss.empty() ? 0 : gap + m3.y);
     float stripeW = (lower || jp) ? screenFont * 0.14f : 0.0f;
@@ -4442,15 +4457,15 @@ static void draw_caption_clip(ImDrawList* dl, float cx, float cy, float s, Clip&
     if (stripeW > 0) dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x0 + stripeW, y0 + H), mul_alpha(accent, aF), rad, ImDrawFlags_RoundCornersLeft);
 
     float tx0 = x0 + (box ? boxPadX : 0) + stripeW + stripeGap, ty = y0 + (box ? boxPad : 0);
-    auto line = [&](const std::string& str, float fs, ImU32 col, ImVec2 m) {
+    auto line = [&](const std::string& str, float fs, ImU32 col, ImVec2 m, ImFont* fnt) {
         if (str.empty()) return;
         float lx = (align == 0) ? tx0 : (align == 2) ? tx0 + blockW - m.x : tx0 + (blockW - m.x) * 0.5f;
-        dl->AddText(font, fs, ImVec2(lx, ty), mul_alpha(col, aF), str.c_str(), nullptr, wrap > 0 ? wrap : 0.0f);
+        dl->AddText(fnt, fs, ImVec2(lx, ty), mul_alpha(col, aF), str.c_str(), nullptr, wrap > 0 ? wrap : 0.0f);
         ty += m.y + gap;
     };
-    line(text, f1, textCol, m1);
-    line(sub, f2, subCol, m2);
-    line(gloss, f3, glossCol, m3);
+    line(text, f1, textCol, m1, labelFont);
+    line(sub, f2, subCol, m2, font);
+    line(gloss, f3, glossCol, m3, font);
     if (alpha > 24) g_frameTextBoxes.push_back(ImVec4(x0, y0, x0 + W, y0 + H));  // for now-playing chip avoidance
 }
 
@@ -5397,6 +5412,33 @@ static bool span_has_fullscreen_content(const Project& p, double t0, double t1) 
     return false;
 }
 
+// Is there an INSET media clip (layout inset / inset-left / inset-right — NOT inset-center, which owns the
+// frame SOLO with no host) under the span? A hosted inset means the host sits BESIDE a framed card; her wide
+// butterfly wings otherwise intrude into the card's near edge (owner: "the host appears halfway into the
+// image"). So she takes the SAME small-cornered treatment as over-footage — a compact commentator on her
+// side, clear of the card — instead of a big center-ish presenter.
+static bool span_has_inset_content(const Project& p, double t0, double t1) {
+    for (auto& tk : p.tracks) {
+        if (tk.kind != "video") continue;
+        for (auto& rid : tk.rows) {
+            if (rid == "r_bg") continue;
+            auto rit = p.rows.find(rid);
+            if (rit == p.rows.end()) continue;
+            const std::string& rt = rit->second.type;
+            if (rt != "image" && rt != "video") continue;
+            for (auto& cid : rit->second.clips) {
+                auto cit = p.clips.find(cid);
+                if (cit == p.clips.end()) continue;
+                const Clip& c = cit->second;
+                if (c.start + c.dur <= t0 || c.start >= t1) continue;
+                std::string lay = jstr(c.params, "layout");
+                if (lay.rfind("inset", 0) == 0 && lay != "inset-center") return true;
+            }
+        }
+    }
+    return false;
+}
+
 // The avatar AUTO-PLACEMENT signature over a clip's span — a project-space mirror of the
 // draw-time decisions (presenter side-step, over-footage shrink+corner, jp_lesson step-aside,
 // portrait solo sizing; see the avatar branch of the media draw). Folded into the pose-swap
@@ -5433,8 +5475,11 @@ static std::string avatar_place_sig(const Project& p, const Clip& c) {
         }
     }
     bool overFootage = faceShot && defPos && landscape &&
-                       span_has_fullscreen_content(p, c.start, c.start + c.dur);
-    float offX = (side != 0 && defPos && landscape) ? -side * 0.24f : 0.0f;   // fraction of fw
+                       (span_has_fullscreen_content(p, c.start, c.start + c.dur) ||
+                        span_has_inset_content(p, c.start, c.start + c.dur));
+    // over hero media (fullscreen OR a beside-inset) she corners HARDER (0.335 vs the 0.24 presenter step)
+    // so her wings clear the card; plain side-content keeps the gentle presenter step.
+    float offX = (side != 0 && defPos && landscape) ? -side * (overFootage ? 0.335f : 0.24f) : 0.0f;
     if (overFootage && offX == 0.0f) offX = -0.335f;
     if (offX == 0.0f && side == 0 && defPos && landscape)
         for (auto& kv : p.clips) {                 // the jp_lesson step-aside (host hard left)
@@ -6213,9 +6258,13 @@ static void composite_frame(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0, 
                     bool landscape = fw >= fh;
                     // FULLSCREEN media under this host beat: the footage is the shot — tuck her
                     // small into the lower-left instead of center-presenter (see avatar_fit).
+                    // FULLSCREEN media OR a beside-INSET card under this host beat: the media is the shot,
+                    // so she tucks small into the lower corner (see avatar_fit overFootage) — over a big
+                    // presenter her wide wings intrude into an inset's near edge (the owner's overlap).
                     bool overFootage = faceShot && avDefaultPos && landscape &&
-                                       span_has_fullscreen_content(p, c.start, c.start + c.dur);
-                    float autoOffX = (side != 0 && avDefaultPos && landscape) ? -side * fw * 0.24f : 0.0f;
+                                       (span_has_fullscreen_content(p, c.start, c.start + c.dur) ||
+                                        span_has_inset_content(p, c.start, c.start + c.dur));
+                    float autoOffX = (side != 0 && avDefaultPos && landscape) ? -side * fw * (overFootage ? 0.335f : 0.24f) : 0.0f;
                     if (overFootage && autoOffX == 0.0f) autoOffX = -fw * 0.335f;
                     // A centered jp_lesson plate IS the shot — the host steps well aside (hard left)
                     // instead of standing under it (distilled from the user's etymology-beat tweak).
@@ -11864,6 +11913,25 @@ int main(int argc, char** argv) {
         }
         if (chosen)
             g_captionFont = fio.Fonts->AddFontFromFileTTF(chosen, 48.0f, nullptr, jpRanges.Data);  // large captions / JP lessons (video, unchanged)
+        // Term/label PILL display faces — condensed all-caps grotesques (SIL OFL) that read far better on
+        // the uppercase pill labels than the CJK caption face. Latin + label punctuation (·—…), with the
+        // CJK face merged so a Japanese term still renders. draw_caption_clip picks one by meta.pill_font.
+        static ImVector<ImWchar> pillRanges;
+        { ImFontGlyphRangesBuilder pgb; pgb.AddRanges(fio.Fonts->GetGlyphRangesDefault());
+          pgb.AddText(reinterpret_cast<const char*>(u8"—–·…“”‘’→←×")); pgb.BuildRanges(&pillRanges); }
+        struct PillFace { ImFont** slot; const char* file; };
+        const PillFace pillFaces[] = {
+            {&g_pillFontAnton,   "/assets-src/fonts/Anton-Regular.ttf"},
+            {&g_pillFontBebas,   "/assets-src/fonts/BebasNeue-Regular.ttf"},
+            {&g_pillFontArchivo, "/assets-src/fonts/ArchivoBlack-Regular.ttf"},
+        };
+        for (const PillFace& pf : pillFaces) {
+            std::string pp = g_repoRoot + pf.file;
+            FILE* tf = fopen(pp.c_str(), "rb"); if (!tf) continue; fclose(tf);
+            *pf.slot = fio.Fonts->AddFontFromFileTTF(pp.c_str(), 48.0f, nullptr, pillRanges.Data);
+            if (chosen) { ImFontConfig mc; mc.MergeMode = true;
+                          fio.Fonts->AddFontFromFileTTF(chosen, 48.0f, &mc, jpRanges.Data); }
+        }
         // Monospace font for `code` clips (decompilation/source cards). Loaded at a large size so
         // AddText can scale it to any on-screen font_px crisply. Consolas → Lucida Console fallback.
         const char* mono[] = {"C:\\Windows\\Fonts\\consola.ttf", "C:\\Windows\\Fonts\\lucon.ttf", "C:\\Windows\\Fonts\\cour.ttf"};
