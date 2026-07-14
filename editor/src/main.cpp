@@ -3451,12 +3451,27 @@ static DWORD WINAPI health_worker(LPVOID) {
 // ─────────────────────────────── UI ───────────────────────────────────────
 struct UIState {
     double playhead = 0.0;
-    std::string selected;
+    std::string selected;                 // primary selection (drives the inspector, split, etc.)
+    std::set<std::string> sel;            // full multi-selection (marquee / additive click); `selected` ∈ sel when non-empty
     bool playing = false;     // transport running (playhead advances on the wall clock)
     bool scrubbed = false;    // playhead was dragged this frame (→ reseek audio while playing)
     double tlZoom = 0.0;      // timeline px/sec; 0 = auto-fit the whole project to the panel
     double tlScroll = 0.0;    // timeline horizontal scroll offset (seconds, left edge)
 };
+
+// selection helpers: keep `selected` (primary → inspector) and `sel` (multi → delete/regen/highlight) in sync.
+static void sel_set_one(UIState& st, const std::string& id) { st.selected = id; st.sel.clear(); if (!id.empty()) st.sel.insert(id); }
+static void sel_toggle(UIState& st, const std::string& id) {
+    if (id.empty()) return;
+    if (st.sel.erase(id)) { if (st.selected == id) st.selected = st.sel.empty() ? std::string() : *st.sel.begin(); }
+    else { st.sel.insert(id); st.selected = id; }
+}
+static void sel_clear(UIState& st) { st.selected.clear(); st.sel.clear(); }
+// The set to ACT on (delete/regen): the multi-selection, or just the primary when nothing multi is held.
+static std::set<std::string> action_selection(const UIState& st) {
+    if (!st.sel.empty()) return st.sel;
+    std::set<std::string> s; if (!st.selected.empty()) s.insert(st.selected); return s;
+}
 
 static float g_tlVScroll = -1.f;   // --tl-vscroll <px>: pin the timeline lane scroll (headless shots/verify)
 
@@ -6949,9 +6964,9 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
         ImGui::SetCursorScreenPos(bodyA);
         ImGui::InvisibleButton((c.id + "##clip").c_str(), ImVec2(std::max(bodyB.x - bodyA.x, 4.0f), bodyB.y - bodyA.y));
         if (ImGui::IsItemHovered()) hovered = true;
-        if (ImGui::IsItemClicked()) st.selected = c.id;
+        if (ImGui::IsItemClicked()) sel_set_one(st, c.id);   // plain click = single-select (marquee makes multi)
         if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-            st.selected = c.id;
+            if (!st.sel.count(c.id)) sel_set_one(st, c.id);   // dragging a non-selected clip selects it alone
             ImGuiIO& io = ImGui::GetIO();
             // Ctrl+drag = duplicate: spawn a copy at the clip's current spot ONCE, then drag the
             // original away (deferred so p isn't rebuilt mid-loop; the drag survives via the stable id).
@@ -6970,8 +6985,14 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
                 for (auto& kv2 : p.clips) { if (kv2.first == c.id) continue; double s = kv2.second.start;
                     if (before ? (s <= pivot + 1e-6) : (s >= pivot - 1e-6)) shiftClip(kv2.second, d); }
             } else {                                      // plain move (no ripple); keyframes follow the clip
+                bool multi = st.sel.size() > 1 && st.sel.count(c.id);   // drag the whole marquee selection rigidly
                 double eff = d; if (c.start + eff < 0) eff = -c.start;  // clamp at t=0
-                if (!io.KeyAlt) {                         // snap the START or END edge (whichever is closer) to a nearby clip edge
+                if (multi) {                              // clamp the EARLIEST selected clip at t=0 too
+                    double mn = c.start;
+                    for (auto& id : st.sel) { auto ci = p.clips.find(id); if (ci != p.clips.end()) mn = std::min(mn, ci->second.start); }
+                    if (mn + eff < 0) eff = -mn;
+                }
+                if (!io.KeyAlt && !multi) {               // snap the START or END edge (whichever is closer) to a nearby clip edge
                     double tol = SNAP_PX * dtPerPx;
                     std::set<std::string> sr = snapRowsFor(c.row);
                     double ns = snap_edge_time(p, c.id, c.start + eff, tol, st.playhead, sr);
@@ -6981,21 +7002,27 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
                     else if (ce != 0.0) { eff += ce; snapGuideT = ne; }
                 }
                 shiftClip(c, eff);
-                // vertical drag onto another lane of the SAME type → move the clip to that row
-                // (committed after the loop so we don't reshuffle membership mid-iteration).
-                float my = io.MousePos.y;
-                for (auto& pr : laneY)
-                    if (my >= pr.second && my < pr.second + ROWH) {
-                        auto tr = p.rows.find(pr.first);
-                        if (tr != p.rows.end() && pr.first != c.row && tr->second.type == c.type) {
-                            rowMoveClip = c.id; rowMoveTo = pr.first; rowMoveY = pr.second;
+                if (multi) {                              // move every OTHER selected clip by the same delta (no lane change)
+                    for (auto& id : st.sel) { if (id == c.id) continue; auto ci = p.clips.find(id); if (ci != p.clips.end()) shiftClip(ci->second, eff); }
+                } else {
+                    // vertical drag onto another lane of the SAME type → move the clip to that row
+                    // (committed after the loop so we don't reshuffle membership mid-iteration).
+                    float my = io.MousePos.y;
+                    for (auto& pr : laneY)
+                        if (my >= pr.second && my < pr.second + ROWH) {
+                            auto tr = p.rows.find(pr.first);
+                            if (tr != p.rows.end() && pr.first != c.row && tr->second.type == c.type) {
+                                rowMoveClip = c.id; rowMoveTo = pr.first; rowMoveY = pr.second;
+                            }
+                            break;
                         }
-                        break;
-                    }
+                }
             }
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
         }
-        ImU32 col = (st.selected == c.id) ? IM_COL32(255, 255, 255, 255) : type_color(c.type);
+        ImU32 col = (st.selected == c.id) ? IM_COL32(255, 255, 255, 255)                    // primary selection (white)
+                  : st.sel.count(c.id)    ? IM_COL32(0x7f, 0xd8, 0xa8, 255)                 // also in the marquee group (mint)
+                                          : type_color(c.type);
         dl->AddRectFilled(a, b, col, 4.0f);
         if (hovered) dl->AddRect(a, b, IM_COL32(255, 255, 255, 200), 4.0f, 0, 2.0f);
         if (wide && st.selected == c.id) {  // subtle grips on the selected clip's trim edges
@@ -7231,8 +7258,35 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
         }
     }
 
+    // Full-canvas background item: reserves the scroll extent AND (outside placement mode) drives the
+    // MARQUEE. Submitted AFTER the clips so a clip wins its own press (first-submitted wins) — the
+    // background only catches drags on EMPTY lane space. Also the Library drag-drop target (below).
     ImGui::SetCursorScreenPos(origin);
-    ImGui::Dummy(ImVec2(canvasW, vextH));   // reserve the FULL lane height so the child scrolls to every lane
+    ImGui::InvisibleButton("##lanes_bg", ImVec2(std::max(canvasW, 1.f), std::max(vextH, 1.f)));
+    if (g_placeType.empty()) {   // marquee (not while a placement tool is armed)
+        static ImVec2 marqA; static bool marqOn = false;
+        ImGuiIO& mio = ImGui::GetIO();
+        if (ImGui::IsItemActivated()) { marqA = mio.MousePos; marqOn = true; }
+        if (marqOn && (ImGui::IsItemActive() || ImGui::IsItemDeactivated())) {
+            ImVec2 m = mio.MousePos;
+            float x0 = std::min(marqA.x, m.x), x1 = std::max(marqA.x, m.x);
+            float y0 = std::min(marqA.y, m.y), y1 = std::max(marqA.y, m.y);
+            bool isDrag = (x1 - x0 > 3.f || y1 - y0 > 3.f);
+            if (isDrag) {                       // rubber-band + live hit set (clips whose band ∩ rect)
+                dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), IM_COL32(0x7f, 0xd8, 0xa8, 40));
+                dl->AddRect(ImVec2(x0, y0), ImVec2(x1, y1), IM_COL32(0x7f, 0xd8, 0xa8, 200));
+                double ta = st.tlScroll + (x0 - trackX) / pps, tb = st.tlScroll + (x1 - trackX) / pps;
+                std::set<std::string> hit;
+                for (auto& kv : p.clips) { const Clip& cc = kv.second;
+                    float ly = -1.f; for (auto& pr : laneY) if (pr.first == cc.row) { ly = pr.second; break; }
+                    if (ly < 0) continue;
+                    if (ly < y1 && ly + ROWH > y0 && cc.start < tb && cc.start + cc.dur > ta) hit.insert(kv.first);
+                }
+                st.sel = hit; st.selected = hit.empty() ? std::string() : *hit.begin();
+            }
+            if (ImGui::IsItemDeactivated()) { if (!isDrag) sel_clear(st); marqOn = false; }   // plain empty click → clear
+        }
+    }
 
     // drop a Library item onto the timeline → ARM the placement tool with that asset (user positions it
     // with the ghost + a fresh click; same as an OS drop). A rig def isn't click-placed — it goes to its
@@ -9394,6 +9448,7 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
 
     bool doSave = false, doUndo = false, doRedo = false;
     std::string splitReq, delReq, dupReq;   // deferred (split/delete/duplicate/undo/redo reassign p → run after the panels)
+    std::set<std::string> delSel, regenSel; // deferred multi-delete / multi-regen (act on the marquee selection)
     if (ImGui::BeginMenuBar()) {
         if (ImGui::BeginMenu("File")) {
             if (ImGui::MenuItem("Save project", "Ctrl+S")) doSave = true;
@@ -10354,8 +10409,10 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
         if (ImGui::IsKeyPressed(ImGuiKey_S) && !ImGui::GetIO().WantTextInput && !ImGui::GetIO().KeyCtrl && !st.selected.empty())
             splitReq = st.selected;   // S = split selected clip at playhead (Ctrl+S stays Save)
         if ((ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace)) &&
-            !ImGui::GetIO().WantTextInput && !st.selected.empty())
-            delReq = st.selected;     // Del / Backspace = delete the selected clip (never while typing in a field)
+            !ImGui::GetIO().WantTextInput)
+            delSel = action_selection(st);   // Del / Backspace = delete the whole selection (never while typing in a field)
+        if (ImGui::IsKeyPressed(ImGuiKey_R) && !ImGui::GetIO().WantTextInput && !ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyAlt)
+            regenSel = action_selection(st); // R = regenerate the selected clip(s) — fresh take (bumps seed below)
         if (ImGui::IsKeyPressed(ImGuiKey_Escape) && !g_placeType.empty()) { g_placeType.clear(); g_placeAsset.clear(); g_placeIgnoreUntilUp = false; }   // disarm the placement tool
         if (ImGui::IsKeyPressed(ImGuiKey_A) && !ImGui::GetIO().WantTextInput && !ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyAlt)
             g_placeType = (g_placeType == "__generic__") ? std::string() : std::string("__generic__");   // A = generic add mode
@@ -10419,7 +10476,20 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
     else if (!dupReq.empty())   { bool dragDup = g_dupAtStart > -1e17;      // Ctrl+drag keeps dragging the original; Ctrl+D selects the copy
                                   std::string nid = duplicate_clip(p, dupReq, g_dupAtStart); g_dupAtStart = -1e18;
                                   if (!nid.empty() && !dragDup) st.selected = nid; g_bufFor.clear(); g_undoDirty = true; }
-    else if (!delReq.empty())   { delete_clip(p, delReq); st.selected.clear(); g_bufFor.clear(); g_undoDirty = true; }
+    else if (!delReq.empty() || !delSel.empty()) {   // delete the whole selection (delReq = a single menu/inspector delete)
+        std::set<std::string> del = delSel; if (!delReq.empty()) del.insert(delReq);
+        for (auto& id : del) delete_clip(p, id);   // id-based; each call re-parses p (safe in a loop)
+        sel_clear(st); g_bufFor.clear(); g_undoDirty = true;
+    }
+    if (!regenSel.empty()) {     // R = regenerate the selected clip(s) — independent of the reassign chain above
+        for (auto& id : regenSel) {
+            auto gi = gen.find(id); if (gi != gen.end() && gi->second.state == 1) continue;   // already generating
+            auto ci = p.clips.find(id); if (ci == p.clips.end()) continue;
+            if (!ci->second.asset.empty()) ci->second.params["seed"] = (int)ci->second.params.value("seed", 0) + 1;  // fresh take
+            start_generate(p, id);
+        }
+        g_bufFor.clear(); g_undoDirty = true;
+    }
 
     lib_poll_gen_done();         // land finished library gens → invalidate caches + rescan
     rembg_poll_done();           // land a finished rembg cut-out → re-key the texture + reload sidecar
