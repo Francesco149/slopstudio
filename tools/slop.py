@@ -384,8 +384,7 @@ def _expand_laughs(beats):
     plate/etc. Non-line beats (sections/pauses) and whole-line laughs pass through untouched."""
     out = []
     for b in beats:
-        sl = (_split_laugh(b.get("line", "")) if (isinstance(b, dict) and b.get("laugh") is None
-                                                  and not b.get("solo")) else None)
+        sl = (_split_laugh(b.get("line", "")) if (isinstance(b, dict) and b.get("laugh") is None) else None)
         if not sl:
             out.append(b); continue
         laugh_txt, speech = sl
