@@ -52,6 +52,12 @@ in the same change that lands work, so a fresh session reorients in ~60s. Last u
 - **Filter strength/vignette independent + blur-aware-swap revert** (`414d2ac`, prior round).
 - **kirby-smoke re-authored** on all of it (projects `762e27a`): charts fullscreen-solo, checker insets, rotating
   host bg, corner term plate, noir look, 4 crossfades. Frames on the feed.
+- **Default RADIAL vignette + anchor-id fix** (`83ec512`): the scene vignette (meta.vignette) was 4 weak
+  edge-bands (invisible even at 0.26) → now a proper radial darkening (clear centre, dark corners, ~144
+  gradient quads, no readback). Default `meta.vignette` 0.26 → **0.10** (a subtle always-on 10% vignette over
+  everything); the noir look drops its own vignette so it isn't doubled + persists independent of the preset.
+  Also fixed the gradient inspector's `DragFloat2("anchor")` sharing an ImGui id with the transform anchor
+  ("2 items with conflicting id" on click) — renamed to "focus (0..1)##gradanchor".
 **STILL OPEN:** Phase 4a layout engine (deferred, "attempt last").
 
 **★ The mouse-driven-UX overhaul + the visual-variety stretch goal — most of it LANDED in an autonomous
