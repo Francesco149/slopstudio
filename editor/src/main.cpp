@@ -767,6 +767,18 @@ static VideoDecoder* get_decoder(const std::string& srcPath) {
     return d->ok ? d : nullptr;
 }
 
+// ── perf sub-timers (env SLOP_PERF=1): accumulate time in the two big per-frame composite costs —
+//    video decode + image reprocess — so a slow beat is attributable to the right one. Near-free when off.
+static bool   g_perfOn = false;
+static double g_perfDecodeMs = 0, g_perfProcMs = 0; static int g_perfDecodeN = 0, g_perfProcN = 0;
+static double g_perfCompMs = 0, g_perfTlMs = 0, g_perfMediaMs = 0;   // preview composite / timeline / media pane
+static double g_perfAudioMs = 0, g_perfInspMs = 0;                    // audio_pump / right inspector panel
+static double g_perfFreq = 1.0;
+struct PerfAcc { double* a; int* n; LARGE_INTEGER t0; bool on;
+    PerfAcc(double* acc, int* cnt): a(acc), n(cnt), on(g_perfOn) { if (on) QueryPerformanceCounter(&t0); }
+    ~PerfAcc() { if (!on) return; LARGE_INTEGER t1; QueryPerformanceCounter(&t1);
+                 *a += (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / g_perfFreq; if (n) ++*n; } };
+
 // Decode-backed analogue of get_frame_tex: the (src,idx) frame as a texture, via the SAME LRU
 // frame pool (distinct key namespace "<srcuri>#<idx>"). Decodes one frame on a miss.
 static FrameTex* get_decoded_frame_tex(const std::string& srcUri, int idx, VideoDecoder* d) {
@@ -774,6 +786,7 @@ static FrameTex* get_decoded_frame_tex(const std::string& srcUri, int idx, Video
     std::string key = srcUri + suf;
     auto it = g_frameCache.find(key);
     if (it != g_frameCache.end()) { it->second.lru = ++g_frameClock; return it->second.srv ? &it->second : nullptr; }
+    PerfAcc _pt(&g_perfDecodeMs, &g_perfDecodeN);   // time only the MISS (an actual decode/seek)
     evict_one_frame_if_full();
     FrameTex ft; ft.lru = ++g_frameClock;
     std::vector<unsigned char> rgba;
@@ -1492,6 +1505,7 @@ static ID3D11ShaderResourceView* get_processed_srv(const std::string& uri, float
     snprintf(key, sizeof key, "%s|b%d|s%d|c%d", uri.c_str(), doBlur ? bucket : 0, si, ci);
     auto it = g_blurCache.find(key);
     if (it != g_blurCache.end()) return it->second;   // hit (may be a negative-cached null)
+    PerfAcc _pt(&g_perfProcMs, &g_perfProcN);          // time only the MISS (a full blur/grade reprocess)
     g_blurCache[key] = nullptr;
     const SrcPix* sp = get_src_pixels(uri);
     if (!sp) return nullptr;
@@ -2036,7 +2050,17 @@ static void audio_reset_buffers() {
     for (int i = 0; i < AUD_NBUF; ++i) g_woFree[i] = true;
 }
 
-static void audio_start(double t0) { if (audio_open()) { audio_reset_buffers(); g_audioFillT = t0; g_audioActive = true; } }
+// ── mixer source cache ──────────────────────────────────────────────────────
+// collect_audio + collect_duck_windows walk EVERY clip (449 on the recettear cut) and were rebuilt
+// EVERY UI frame in audio_pump — ~44 ms/frame, the dominant playback cost (owner: "playback tanks to
+// 100ms+"). But the source list is a pure function of the project, which is STATIC during playback:
+// cache it and rebuild only when the project actually changes (an edit → g_undoDirty, a scrub, a
+// generation landing, or (re)start). Between rebuilds audio_pump just fills drained buffers from the
+// cached list. MixSrc holds Pcm* into g_pcmCache (stable — the pcm cache never evicts mid-session).
+static std::vector<MixSrc> g_mixSrcs; static std::vector<DuckWin> g_mixDucks; static bool g_mixValid = false;
+static void invalidate_mix() { g_mixValid = false; }   // force a rebuild on the next pump
+
+static void audio_start(double t0) { if (audio_open()) { audio_reset_buffers(); g_audioFillT = t0; g_audioActive = true; invalidate_mix(); } }
 static void audio_seek(double t)   { if (g_audioActive) { audio_reset_buffers(); g_audioFillT = t; } }
 static void audio_stop()           { g_audioActive = false; audio_reset_buffers(); }
 
@@ -2044,15 +2068,14 @@ static void audio_stop()           { g_audioActive = false; audio_reset_buffers(
 // AUD_NBUF buffers worth of audio queued ahead of the device's play cursor.
 static void audio_pump(Project& p) {
     if (!g_audioActive) return;
-    std::vector<MixSrc> srcs = collect_audio(p);
-    std::vector<DuckWin> ducks = collect_duck_windows(p);
-    float master = (float)std::pow(10.0, p.masterGainDb / 20.0);
+    if (!g_mixValid) { g_mixSrcs = collect_audio(p); g_mixDucks = collect_duck_windows(p); g_mixValid = true; }  // rebuild only on change
+    float master = (float)std::pow(10.0, p.masterGainDb / 20.0);   // master stays live (read every pump)
     for (int i = 0; i < AUD_NBUF; ++i) {
         if (!g_woFree[i]) {
             if (g_woHdr[i].dwFlags & WHDR_DONE) g_woFree[i] = true;  // device finished this one
             else continue;                                          // still playing/queued
         }
-        audio_fill(srcs, g_woBuf[i].data(), AUD_FRAMES, g_audioFillT, master, &ducks);
+        audio_fill(g_mixSrcs, g_woBuf[i].data(), AUD_FRAMES, g_audioFillT, master, &g_mixDucks);
         g_audioFillT += (double)AUD_FRAMES / AUD_RATE;
         g_woFree[i] = false;
         waveOutWrite(g_wo, &g_woHdr[i], sizeof(WAVEHDR));           // clears DONE, sets INQUEUE
@@ -2869,7 +2892,7 @@ static void lib_poll_gen_done() {
     g_libGenDirty = false;
     std::string last;
     EnterCriticalSection(&g_genCS); last = g_libGenLast; LeaveCriticalSection(&g_genCS);
-    if (!last.empty()) { invalidate_texture(last); g_pcmCache.erase(last); }
+    if (!last.empty()) { invalidate_texture(last); g_pcmCache.erase(last); invalidate_mix(); }  // a cached MixSrc may point here
     g_libraryDirty = true;
 }
 
@@ -3107,6 +3130,7 @@ static void apply_generations(Project& p, std::string& bufFor) {
     for (auto& id : done) g_gen.erase(id);  // asset now lands → clear the badge
     LeaveCriticalSection(&g_genCS);
     if (apps.empty()) return;
+    invalidate_mix();   // a landed gen changes a clip's asset/length → the mixer source list is stale
 
     sync_to_doc(p);   // fold unsaved arrangement edits into the doc before patching (no rollback)
     for (auto& a : apps) {
@@ -8996,7 +9020,7 @@ static void lib_restore_gen(const std::string& itemPath, int idx) {
     g_vRecipe = g_vSide["params"];
     CopyFileW(to_w(src).c_str(), to_w(itemPath).c_str(), FALSE);
     lib_save_sidecar(itemPath, g_vSide);
-    invalidate_texture(itemPath); g_pcmCache.erase(itemPath);
+    invalidate_texture(itemPath); g_pcmCache.erase(itemPath); invalidate_mix();  // a cached MixSrc may point here
     g_libraryDirty = true;
 }
 
@@ -9181,7 +9205,7 @@ static void draw_viewer_contents() {
     // a gen in flight / just-finished for THIS item → reload the sidecar when it lands
     LibGenState gs = libgen_get(key);
     if (gs.state == 2) { g_vSide = lib_load_sidecar(path); g_vRecipe = g_vSide.value("params", json::object());
-                         invalidate_texture(path); g_pcmCache.erase(path); libgen_set(key, 0, 0, ""); }
+                         invalidate_texture(path); g_pcmCache.erase(path); invalidate_mix(); libgen_set(key, 0, 0, ""); }  // a cached MixSrc may point here
 
     bool gen = lib_is_gen(g_vSide);
     ImGui::Text("%s", base.c_str());
@@ -10032,7 +10056,7 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
         ImGui::BeginChild("media_browser", ImVec2(g_leftW, 0), true);
         ImGui::TextUnformatted("Media");
         ImGui::Separator();
-        draw_library_contents(p, st);
+        { PerfAcc _pt(&g_perfMediaMs, nullptr); draw_library_contents(p, st); }
         ImGui::EndChild();
         ImGui::SameLine(0, 0);
         v_splitter("##splitLeft", &g_leftW, workspace.y, 200.f, leftMx, +1.0f);
@@ -10068,7 +10092,7 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
         if (g_pvBlurActive && g_pvBlurSrv)   // whole-frame blur transition: show the pre-blurred composite (covers every layer)
             dl->AddImage((ImTextureID)(intptr_t)g_pvBlurSrv, f0, ImVec2(f0.x + fw, f0.y + fh));
         else
-            composite_frame(p, st, dl, f0, fw, fh);
+            { PerfAcc _pt(&g_perfCompMs, nullptr); composite_frame(p, st, dl, f0, fw, fh); }
         char b[64]; snprintf(b, sizeof b, "t = %.2fs", st.playhead);
         dl->AddText(ImVec2(f0.x + 8, f0.y + 8), IM_COL32(180, 180, 190, 255), b);
         int nActive = 0;
@@ -10085,6 +10109,7 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
     v_splitter("##splitRight", &g_inspW, topH, 260.f, inspMx, -1.0f);
     ImGui::SameLine(0, 0);
     ImGui::BeginChild("properties", ImVec2(0, topH), true);
+    LARGE_INTEGER _pInsp0{}; if (g_perfOn) QueryPerformanceCounter(&_pInsp0);   // time the whole right inspector panel
     if (ImGui::BeginTabBar("right_panes")) {
         if (ImGui::BeginTabItem("Inspector")) {
         auto it = p.clips.find(st.selected);
@@ -10786,6 +10811,7 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
         }
         ImGui::EndTabBar();
     }
+    if (g_perfOn) { LARGE_INTEGER _pInsp1; QueryPerformanceCounter(&_pInsp1); g_perfInspMs += (double)(_pInsp1.QuadPart - _pInsp0.QuadPart) * 1000.0 / g_perfFreq; }
     ImGui::EndChild();
     h_splitter("##splitTop", &g_topH, ImGui::GetContentRegionAvail().x, 140.f, 1e5f);   // drag the preview/inspector ↕ timeline divider
 
@@ -10845,7 +10871,7 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
     }
 
     ImGui::BeginChild("timeline", ImVec2(0, 0), true, ImGuiWindowFlags_NoScrollWithMouse);  // wheel = zoom only; lanes scroll via scrollbar / Ctrl+wheel
-    DrawTimeline(p, st, gen);
+    { PerfAcc _pt(&g_perfTlMs, nullptr); DrawTimeline(p, st, gen); }
     ImGui::EndChild();
     ImGui::EndGroup();
 
@@ -11912,6 +11938,14 @@ int main(int argc, char** argv) {
         // whole-frame `filler` backdrop (PRE-PASS): render the foreground composite offscreen so any
         // filler samples the WHOLE frame (tracks motion, never a flat wash). Before the blur pre-pass so
         // a blur-over-filler still gets a proper fill; before the main NewFrame (it runs its own frame).
+        // ── perf timing (env SLOP_PERF=1): the two offscreen readback pre-passes (filler + blur/filter)
+        //    and DrawUI each do a full composite; the pre-pass Map(READ) is a GPU sync. Print avg ms every
+        //    60 playing frames so a slow beat's cost is attributable (owner: "playback tanks to 100ms+"). ──
+        static const bool g_perf = getenv("SLOP_PERF") != nullptr;
+        static bool g_perfInit = (g_perfOn = g_perf, g_perfFreq = (double)qpf.QuadPart, true); (void)g_perfInit;
+        auto QPCms = [&](LARGE_INTEGER a, LARGE_INTEGER b){ return (double)(b.QuadPart - a.QuadPart) * 1000.0 / (double)qpf.QuadPart; };
+        LARGE_INTEGER tP0{}, tP1{}, tUI0{}, tUI1{}, tA{}, tC{}; if (g_perf) QueryPerformanceCounter(&tP0);
+
         g_fillReady = false;
         {
             double fb = 0.0;
@@ -11927,16 +11961,19 @@ int main(int argc, char** argv) {
             if ((haveBlur || haveFilt) && proj.width > 0 && proj.height > 0)
                 g_pvBlurActive = render_preview_post(proj, st.playhead, haveBlur ? sig : 0.f, haveFilt ? &filt : nullptr, fstr);
         }
+        if (g_perf) { QueryPerformanceCounter(&tP1); QueryPerformanceCounter(&tUI0); }
 
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
+        if (g_perf) QueryPerformanceCounter(&tA);   // after NewFrame (font-atlas build lands here)
         bool reload = false;
         { static int rlCtr = 0;   // live-reload: auto-pick-up external/hand edits to the .slop.json
           if (++rlCtr >= 15) { rlCtr = 0; unsigned long long mt = file_mtime(projectPath.c_str());
               if (mt && g_projMtime && mt != g_projMtime) reload = true; } }
         std::map<std::string, GenLite> gen = gen_snapshot();
         DrawUI(proj, st, reload, gen);
+        LARGE_INTEGER tB{}; if (g_perf) QueryPerformanceCounter(&tB);   // after DrawUI (before gen-apply + audio + Render)
         if (reload) {   // a failed parse (e.g. a mid-save partial file) keeps the current proj + retries
             Project np = load_project(projectPath);
             if (np.ok) { proj = std::move(np); g_bufFor.clear(); g_projMtime = file_mtime(projectPath.c_str());
@@ -11949,17 +11986,35 @@ int main(int argc, char** argv) {
             if (st.playing && !wasPlaying)      audio_start(st.playhead);
             else if (!st.playing && wasPlaying) audio_stop();
             else if (st.playing && st.scrubbed) audio_seek(st.playhead);
-            if (st.playing) audio_pump(proj);
+            if (g_undoDirty) invalidate_mix();   // an edit this frame changed the timeline → rebuild the mixer source list
+            if (st.playing) { PerfAcc _pt(&g_perfAudioMs, nullptr); audio_pump(proj); }
             wasPlaying = st.playing;
         }
         st.scrubbed = false;
 
         ImGui::Render();
+        if (g_perf) QueryPerformanceCounter(&tC);   // after Render (draw-data built) → tC..tUI1 = RenderDrawData/upload
 
         const float clear[4] = { 0.06f, 0.06f, 0.07f, 1.0f };
         g_ctx->OMSetRenderTargets(1, &g_rtv, nullptr);
         g_ctx->ClearRenderTargetView(g_rtv, clear);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+
+        if (g_perf && st.playing) {   // attribute the frame cost (excludes the vsync Present wait below)
+            QueryPerformanceCounter(&tUI1);
+            static double accPre = 0, accUI = 0, maxPre = 0, maxUI = 0; static int nf = 0;
+            double preMs = QPCms(tP0, tP1), uiMs = QPCms(tUI0, tUI1);
+            accPre += preMs; accUI += uiMs; if (preMs > maxPre) maxPre = preMs; if (uiMs > maxUI) maxUI = uiMs;
+            static double accDraw = 0, accRender = 0;
+            accDraw += QPCms(tA, tB); accRender += QPCms(tB, tC);   // DrawUI  vs  (gen-apply + audio + ImGui::Render)
+            if (++nf >= 60) {
+                fprintf(stderr, "[perf] t=%.1fs ui+comp %.1f/max%.1f | DrawUI %.1f (insp %.1f comp %.1f tl %.1f media %.1f)  tail+Render %.1f (audio %.1f) ms/f (fill=%d)\n",
+                        st.playhead, accUI/nf, maxUI, accDraw/nf, g_perfInspMs/nf, g_perfCompMs/nf, g_perfTlMs/nf, g_perfMediaMs/nf,
+                        accRender/nf, g_perfAudioMs/nf, g_fillReady?1:0);
+                accPre = accUI = maxPre = maxUI = accDraw = accRender = 0; nf = 0;
+                g_perfDecodeMs = g_perfProcMs = g_perfCompMs = g_perfTlMs = g_perfMediaMs = g_perfAudioMs = g_perfInspMs = 0; g_perfDecodeN = g_perfProcN = 0;
+            }
+        }
 
         if (shot && ++frame >= shotFrames) {
             save_png_backbuffer(shotPath.c_str());
