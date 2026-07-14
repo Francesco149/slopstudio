@@ -4306,6 +4306,47 @@ static void draw_caption_clip(ImDrawList* dl, float cx, float cy, float s, Clip&
     ImFont* font = g_captionFont ? g_captionFont : ImGui::GetFont();
     float aF = alpha / 255.0f;
 
+    // ── quote / pull-quote card: a big CENTRED statement with a decorative mark, an accent rule and an
+    //    attribution — a full-screen TEXT CARD (not corner-placed) with a built-in settle entrance, meant
+    //    to sit on the checker bg between footage beats (the "quotes in the recettear videos" preset).
+    //    `text` = the quote · `sub` = the attribution. box=true adds a scrim for legibility over footage.
+    if (style == "quote") {
+        float scl  = (float)anim_xform(c, "transform.scale", 0, t, c.tx_scale[0]);
+        float qfs  = (float)anim_param(c, "font_px", t, 60.0) * scl * s;   // quote size
+        float afs  = qfs * 0.42f;                                          // attribution size
+        float mfs  = qfs * 2.3f;                                           // decorative quote-mark size
+        float wrapW = (float)P.value("wrap_px", (fw > 1 ? fw / s * 0.62 : 900.0)) * scl * s;
+        ImVec2 qm  = font->CalcTextSizeA(qfs, wrapW, wrapW, text.c_str());
+        std::string attr = sub.empty() ? "" : ("\xE2\x80\x94 " + sub);     // em dash + attribution
+        ImVec2 am  = attr.empty() ? ImVec2(0, 0) : font->CalcTextSizeA(afs, 1e30f, 0, attr.c_str());
+        float markH = mfs * 0.58f, ruleGap = qfs * 0.44f, attrGap = qfs * 0.34f;
+        float ruleW = std::min(qm.x * 0.42f, qfs * 3.0f);
+        float totalH = markH + qm.y + (attr.empty() ? 0.f : ruleGap + 3.f * s + attrGap + am.y);
+        double lt = t - c.start;                                           // settle entrance over the clip head (on top of the auto fade)
+        float e = (float)std::min(1.0, std::max(0.0, lt / 0.55)); e = e * e * (3 - 2 * e);
+        float rise = (1.0f - e) * qfs * 0.45f;
+        float bx = cx, top = cy - totalH * 0.5f + rise;
+        ImU32 acc  = parse_color(P.value("accent", json()), IM_COL32(200, 130, 225, 255));   // brand purple-pink
+        ImU32 tcol = parse_color(P.value("color",  json()), IM_COL32(245, 247, 252, 255));
+        if (P.value("box", false)) {
+            float pad = qfs * 0.72f;
+            dl->AddRectFilled(ImVec2(bx - qm.x * 0.5f - pad, top - pad), ImVec2(bx + qm.x * 0.5f + pad, top + totalH + pad),
+                              mul_alpha(parse_color(P.value("box_color", json()), IM_COL32(14, 14, 20, 205)), aF), qfs * 0.26f);
+        }
+        float me = 0.72f + 0.28f * e;                                      // the mark scales in
+        ImVec2 mm = font->CalcTextSizeA(mfs * me, 1e30f, 0, "\xE2\x80\x9C");
+        dl->AddText(font, mfs * me, ImVec2(bx - mm.x * 0.5f, top - markH * 0.14f), mul_alpha(acc, aF * 0.55f), "\xE2\x80\x9C");
+        float qy = top + markH;
+        dl->AddText(font, qfs, ImVec2(bx - qm.x * 0.5f, qy), mul_alpha(tcol, aF), text.c_str(), nullptr, wrapW);
+        if (!attr.empty()) {
+            float ry = qy + qm.y + ruleGap;
+            dl->AddRectFilled(ImVec2(bx - ruleW * 0.5f, ry), ImVec2(bx + ruleW * 0.5f, ry + 3.f * s), mul_alpha(acc, aF), 1.5f);
+            dl->AddText(font, afs, ImVec2(bx - am.x * 0.5f, ry + 3.f * s + attrGap), mul_alpha(acc, aF), attr.c_str());
+        }
+        if (alpha > 24) g_frameTextBoxes.push_back(ImVec4(bx - qm.x * 0.5f, top, bx + qm.x * 0.5f, top + totalH));
+        return;
+    }
+
     bool box = P.value("box", style != "plain");
     bool multi = !sub.empty() || !gloss.empty();
     float boxPad = (float)P.value("box_pad", term ? (multi ? 22.0 : 16.0) : 22.0) * scaleX * s;
@@ -7793,12 +7834,15 @@ static void draw_native_params(Project& p, Clip& c) {
         }
     } else if (c.type == "caption" || c.type == "text") {
         ImGui::SeparatorText("caption");
-        const char* STYLES[] = {"plain", "lower_third", "term", "jp_lesson"};
+        const char* STYLES[] = {"plain", "lower_third", "term", "jp_lesson", "quote"};
         std::string style = P.value("style", std::string("plain"));
         if (ImGui::BeginCombo("style", style.c_str())) {
             for (auto s2 : STYLES) { bool s = (style == s2); if (ImGui::Selectable(s2, s)) P["style"] = std::string(s2); }
             ImGui::EndCombo();
         }
+        if (style == "quote")
+            ImGui::TextDisabled("centred pull-quote card: text = the quote, sub = the attribution.\n"
+                                "Full-screen (place is ignored); box = add a scrim over footage.");
         // place: one-click pins. A plate often needs to hop out of the way of content — the four
         // corner pins do that instantly (pos then nudges FROM the pinned corner, no jump);
         // auto = least-busy corner over the clip's span · strap = the bottom lower-third band ·
