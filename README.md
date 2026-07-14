@@ -27,16 +27,14 @@ no cloud: it runs on your own hardware against your own models.
 </tr>
 <tr>
 <td><img src="docs/hero/diagram.png" alt="a labeled flow diagram with the host"></td>
-<td>
+<td><img src="docs/hero/footage.png" alt="the host presenting beside sourced game footage"></td>
+</tr>
+</table>
 
 **Every frame above is composited by the editor** from a single project file: a host sprite
 with viseme lip-sync, syntax-highlighted code that types itself in, labelled diagrams,
 sourced B-roll, and captions — each on its own timeline row, each a cached generation or a
 pure-GPU native clip.
-
-</td>
-</tr>
-</table>
 
 ## Why it's fast
 
