@@ -567,11 +567,13 @@ def cmd_skeleton(a):
                 prm=OD([("text",v["caption"]),("style",v.get("style","lower_third"))])
                 if "sub" in v: prm["sub"]=v["sub"]
                 if "accent" in v: prm["accent"]=v["accent"]
-                cid=new_clip(p,"caption","r_cap",at,vdur,prm,f"{pref}{sfx}_cap")
-                # placement is render-time: lower_third defaults to the bottom STRAP away from the
-                # host, jp_lesson to big-centered-low with the host stepping aside (both distilled
-                # from user tweaks); term plates pin to the least-busy TOP corner via place:auto.
+                # placement is render-time: lower_third → bottom STRAP away from the host; jp_lesson →
+                # big-centered-low with the host stepping aside; term plates (+ any other style) pin to the
+                # least-busy TOP corner via place:auto, CLEAR of the centred host. MUST be set BEFORE
+                # new_clip (which COPIES params) — the old post-new_clip assignment was silently dropped, so
+                # every term plate centred on her face (the owner's "MYTH on her forehead" bug).
                 if prm["style"] not in ("jp_lesson","lower_third"): prm["place"]="auto"
+                cid=new_clip(p,"caption","r_cap",at,vdur,prm,f"{pref}{sfx}_cap")
             elif "diagram" in v:
                 cid=new_clip(p,"diagram","r_diagram",at,vdur,OD(v["diagram"]),f"{pref}{sfx}_diag")
                 _set_xform(p["clips"][cid],S(0,-60))    # centered card (auto-fits width; host goes small)

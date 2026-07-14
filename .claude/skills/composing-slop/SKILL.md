@@ -14,11 +14,19 @@ session**). The reference cut + all conventions are in `docs/LLM_WORKFLOW.md`; f
 ## The gold path (do NOT skip steps)
 1. **Package first** → run the `packaging-first` skill: lock title + thumbnail + angle before scripting.
 2. **Beats** — write `<name>.skeleton.json` (`{line, emotion, visual}` beats). Visuals HOLD until changed.
-3. **Compile** — `slop.py skeleton <skel> --out <proj>` → a full project (insets get filler backdrops,
-   sections = blur-swaps, captions/code native).
+3. **Compile** — `slop.py skeleton <skel> --out <proj>` → a full project. DEFAULTS the compiler now applies
+   (owner-tuned, override per-beat): a whole-video **noir "basic look"** (`look:false` to drop it); **insets
+   sit on the bare checker** (`blur_fill:true` opts a nice photo into the blurred backdrop); a **fullscreen
+   video beat solos** (no host over wide footage — `host:true` forces her back); **host-only beats rotate a
+   room↔desk backdrop**; **quote/term/caption beats sit on the checker**; sections = blur-swaps; captions/code native.
 4. **VO** — `adopt` verbatim lines from an existing tuned cut where possible; `genvo` bulk-generates the
-   rest on lame; then `retime` time-warps the timeline onto the real audio durations (rate-aware for shorts).
-   Split every sentence into its own TTS clip; tune intonation per clip (see `gemma-voice-tts`).
+   rest on lame; then `retime` time-warps the timeline onto the real audio durations (rate-aware for shorts)
+   + adds a **scene crossfade** on full-frame cuts. Split every sentence into its own TTS clip; tune
+   intonation per clip (see `gemma-voice-tts`).
+   - **NEVER genvo a laugh/giggle.** The TTS can't say "fufu" and stumbles on "heh" — the signature giggle
+     is a RECORDED clip. ALWAYS reuse **`presets/voice-snips/gemma-heh.wav`** (the "Heh~" from luckymas3 b01)
+     as the intro/outro laugh — drop it on the VO/an overlay audio row (or a `sound` cue), never a genvo'd
+     "Fufu~"/"Heh~" line. Same for other stumble-prone vocalizations → grow `presets/voice-snips/`.
 5. **GATE — lint MUST pass before render.** `slop.py lint <proj>` flags black spans, no-visual narration,
    asset repeats, missing files, stale VO, stale caption overrides (a reworded line whose `params.transcript`
    kept the OLD wording), overlaps, negative starts, unknown emotions. Also run the
