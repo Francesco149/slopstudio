@@ -4405,7 +4405,7 @@ static void draw_caption_clip(ImDrawList* dl, float cx, float cy, float s, Clip&
     { std::string a = jstr(P, "align"); if (a == "left") align = 0; else if (a == "right") align = 2; else if (a == "center") align = 1; else if (lower) align = 0; }
 
     float wrap = (float)P.value("wrap_px", 0.0) * scaleX * s;
-    float f1 = screenFont, f2 = screenFont * 0.58f, f3 = screenFont * 0.46f, gap = screenFont * 0.16f;
+    float f1 = screenFont, f2 = screenFont * (term ? 0.50f : 0.58f), f3 = screenFont * 0.46f, gap = screenFont * 0.16f;   // term-pill sub is a touch smaller (drawn BOLD below)
     auto meas = [&](const std::string& str, float fs, ImFont* fnt) -> ImVec2 { return str.empty() ? ImVec2(0, 0) : fnt->CalcTextSizeA(fs, wrap > 0 ? wrap : 1e30f, wrap > 0 ? wrap : 0.0f, str.c_str()); };
     ImVec2 m1 = meas(text, f1, labelFont), m2 = meas(sub, f2, font), m3 = meas(gloss, f3, font);
     float blockW = std::max(std::max(m1.x, m2.x), m3.x);
@@ -4457,14 +4457,17 @@ static void draw_caption_clip(ImDrawList* dl, float cx, float cy, float s, Clip&
     if (stripeW > 0) dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x0 + stripeW, y0 + H), mul_alpha(accent, aF), rad, ImDrawFlags_RoundCornersLeft);
 
     float tx0 = x0 + (box ? boxPadX : 0) + stripeW + stripeGap, ty = y0 + (box ? boxPad : 0);
-    auto line = [&](const std::string& str, float fs, ImU32 col, ImVec2 m, ImFont* fnt) {
+    auto line = [&](const std::string& str, float fs, ImU32 col, ImVec2 m, ImFont* fnt, bool bold = false) {
         if (str.empty()) return;
         float lx = (align == 0) ? tx0 : (align == 2) ? tx0 + blockW - m.x : tx0 + (blockW - m.x) * 0.5f;
-        dl->AddText(fnt, fs, ImVec2(lx, ty), mul_alpha(col, aF), str.c_str(), nullptr, wrap > 0 ? wrap : 0.0f);
+        ImU32 cc = mul_alpha(col, aF);
+        // fake-bold (no bold face is loaded): a second pass offset a hair right thickens the strokes.
+        if (bold) dl->AddText(fnt, fs, ImVec2(lx + std::max(0.8f, fs * 0.035f), ty), cc, str.c_str(), nullptr, wrap > 0 ? wrap : 0.0f);
+        dl->AddText(fnt, fs, ImVec2(lx, ty), cc, str.c_str(), nullptr, wrap > 0 ? wrap : 0.0f);
         ty += m.y + gap;
     };
     line(text, f1, textCol, m1, labelFont);
-    line(sub, f2, subCol, m2, font);
+    line(sub, f2, subCol, m2, font, term);   // term-pill sub: smaller + BOLD (owner)
     line(gloss, f3, glossCol, m3, font);
     if (alpha > 24) g_frameTextBoxes.push_back(ImVec4(x0, y0, x0 + W, y0 + H));  // for now-playing chip avoidance
 }
