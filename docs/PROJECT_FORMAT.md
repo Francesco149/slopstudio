@@ -44,6 +44,8 @@ by `start`.
   "song_credits": true,
   "song_credit_corner": "tl",
   "song_credit_secs": 10,
+  "bg": "checker",
+  "letterbox": 0,
   "anchors": { "bust": [0, -104], "code_host": [660, 194], "tr_room": [0, -673] },
   "notes": "video essay; dense reaction pics; Gemma host"
 }
@@ -91,6 +93,12 @@ pacing in `slop.py skeleton`). Explicit keys always win over the format's defaul
   spring + motion-blur trail**, like the host pose-swap slide — deterministic in export. Per-song
   opt-out: the start clip's `params.credit: false`. Drawn in BOTH the live preview and the export.
   Backfill/edit the metadata with `slop.py musicmeta` (ID3 auto-detect) or the Inspector fields.
+- **`bg`** (default **`"checker"`**) — the frame background BEHIND content (the dead space behind an
+  inset / host / letterboxed media). `"checker"` = a subtle diagonal-scrolling soft checkerboard in the
+  brand purples (gives that space a branded texture, not a black void); `"black"`/`"none"` = the old flat
+  base. A cover backdrop or an explicit `filler` blur clip still hides it. (Project ▸ background.)
+- **`letterbox`** (default **0**) — cinematic black bars top+bottom, as a fraction of frame HEIGHT per
+  bar (~`0.11` ≈ 2.35:1). Composes with any clip's `filter`. (Project ▸ background ▸ letterbox bars.)
 
 ## §assets — the generation cache index
 One entry per generated asset, keyed by its content hash (see protocol §param-hash). The
@@ -232,13 +240,18 @@ The row `type` selects the renderer; the params live on the clip. Place/scale wi
 ```json
 "params": {
   "text": "らき☆マス", "sub": "Raki☆Masu", "gloss": "the 2007 desktop set",
-  "style": "jp_lesson",   // plain · lower_third · term (pill) · jp_lesson
+  "style": "jp_lesson",   // plain · lower_third · term (pill) · jp_lesson · quote
   "align": "center",       // left · center · right
   "font_px": 56, "box": true, "wrap_px": 0,
   "color": [245,247,252], "accent": [220,120,200],   // [r,g,b] or [r,g,b,a] 0..255
   "box_color": [16,16,22,214], "sub_color": [...], "gloss_color": [...]
 }
 ```
+- **`style: "quote"`** — a full-screen CENTRED pull-quote card (a decorative accent quote-mark, the
+  quote, an accent rule, the attribution) with a built-in settle entrance (a rise + the mark scales in
+  over the clip head, on top of the fade). `text` = the quote, `sub` = the attribution; `place` is
+  ignored (it centres); `box: true` adds a scrim for legibility over footage. Meant to sit on the checker
+  bg between footage beats — the "text card like the quotes in the recettear videos" preset.
 
 **`shape`** — a vector callout.
 ```json
@@ -282,6 +295,18 @@ auto-reloads** on external/LLM edits — and every numeric one is **keyframeable
   processed copy as `blur` — plus **`temperature`** (warm +/cool −) and **`tint`** (green −/magenta +),
   a cheap per-channel multiply at draw time. All keyframeable + live-reloaded; the lever for matching
   a background's tone to the host (the purple host pops on a brighter/warmer, less-saturated plate).
+- **cinematic `filter`** (image *and* video) — a named "look" = a grade + a post pass (edge vignette +
+  animated film grain): `cinematic` (warm filmic) · `noir` (high-contrast B&W — full desat on stills;
+  moving video keeps colour, since video skips the sat texture pass) · `vintage` (faded 70s) · `cyber`
+  (cold neon) · `dream` (bright airy). The grade values are DEFAULTS — an explicit `saturation`/`contrast`/
+  `temperature`/`tint`/`dim` still wins. Grain is deterministic per frame time. (Inspector Look ▸ *cinematic
+  filter*.) Scene-wide **`meta.letterbox`** (fraction of frame height per bar; ~0.11 ≈ 2.35:1) adds cinematic
+  bars top+bottom. Composes with everything below.
+- **`inset_style`** (image *and* video) — a fancy frame treatment for inset footage that composes with the
+  `filter` + `glow`: `device` (dark rounded bezel) · `polaroid` (thick photo border) · `card` (thin, round) ·
+  `clean` (the default pro border forced on). Each carries its drop shadow. (Inspector Look ▸ *inset style*.)
+  The base **`frame`** (bool / `{color,thickness,radius,shadow}`; default-ON for a non-fullscreen inset) and
+  **`glow`** (`{color,size,strength}`) knobs still apply — `inset_style` just names a common bundle.
 
 **`video` / footage-in-motion** — a B-roll clip backed by its **source mp4**, decoded **in-process** by
 libav. The compositor maps the playhead → the clip's local time → a frame index → a decoded texture

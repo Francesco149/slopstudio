@@ -9,23 +9,46 @@ come out well-formed by default** — and **no patchwork** (design coherently). 
 
 ---
 
-## STATUS (2026-07-14) — ⭐ AUTONOMOUS OVERNIGHT MANDATE ACTIVE
+## STATUS (2026-07-14 night) — ⭐ AUTONOMOUS OVERNIGHT SESSION RAN — most of the arc + the stretch goal LANDED
 
-**Owner (2026-07-14):** "finish the rest of the UX arc in an autonomous overnight session after the /clear."
-So a fresh post-`/clear` session should **read this file and keep building** — VO-editing cluster first,
-then Phase 4 → 5 → 6 — committing reviewable chunks. **Full self-contained brief: the next section
-(⭐ AUTONOMOUS OVERNIGHT SESSION) — read it before touching code.** The owner will live-test in the morning.
+**Owner (2026-07-14):** "finish the UX arc in an autonomous overnight session after the /clear … then update the
+hero pics … then (stretch) prototype preset clips + cinematic filters for visual variety." That session ran.
+**Everything below is committed + builds; the owner live-tests the interactive bits in the AM.** Line numbers
+drift — grep function names.
 
-**DONE + committed + owner-CONFIRMED working this session:** Phase 0 (data safety) · Phase 1 (timeline quick
-wins) · video-duck · Phase 2 (cosmic2d theme + review fixes) · Phase 3 add-tools · **gap-fill on click**
-(`b18bd6d` ✓) · **A-B video loop points** (`6853938` ✓ "feels good") · **drag-drop ARMS placement + portable
-uris** (`35b0d0b`+`6f9d796` ✓) · **marquee multi-select + act-on-selection + R=regen** (`6feff28`+`9f3525d` ✓
-"this works correctly"). Every item above is confirmed by the owner — a stable base.
+**DONE this autonomous session (committed):**
+- **TASK 1 — VO-clip editing cluster** (`4d7239f`): tts rows are variable-height — an inline editable spoken-text
+  box + a caption-override box (when the row has any `params.transcript`) stacked above a 2× waveform; **Enter in
+  the text box regens that line** (same voice, no seed bump). Threaded DrawTimeline off the fixed ROWH →
+  per-row height (`rowPx`/`rowH`/`rhOf` + a `curY` accumulator); every hit-test keys off the real height. Export
+  byte-identical (chrome-only; md5-verified). *Owner: test inline editing + Enter-regen live (regen needs lame).*
+- **Phase 4d — checkerboard bg** (`8940168`): the default background behind content is a soft diagonal-scrolling
+  brand-purple checkerboard (`draw_bg_checker`), not flat black. `meta.bg` = checker|black; Project ▸ background.
+  NOT byte-identical by design (dead space changes). Shot-frame verified.
+- **Phase 4b — spatial lint** (`c24a41c`): `slop.py lint` OFF-FRAME check. Quiet on the owner cuts, fires on an
+  injected off-frame clip. Fuller box-overlap lint needs a compositor `--dump-boxes` (deferred, noted).
+- **Hero pics refresh** (`41242d7`): README montage regenerated on the checker bg + a NEW footage.png (host +
+  game B-roll). `editor.png` still shows the pre-cosmic2d theme — **chrome can't be shot headlessly → needs an
+  OWNER re-capture.**
+- **⭐ STRETCH — the visual-variety kit** (all opt-in `params.*`, byte-identical when unused):
+  - **Cinematic filters** (`20b4b17`): `params.filter` = cinematic|noir|vintage|cyber|dream (grade fed as
+    DEFAULTS into the existing sat/contrast/temp/tint/dim pipeline + a post pass = edge vignette + animated film
+    grain; image+video). `meta.letterbox` = scene 2.35:1 bars. Inspector Look combo + Project slider.
+  - **Quote / pull-quote card** (`7401212`): caption `style:"quote"` — centred quote + decorative mark + accent
+    rule + attribution (`sub`) + settle entrance. The "recettear quotes" preset.
+  - **Fancy inset presets** (`2c1cc95`): `params.inset_style` = device|polaroid|card|clean (frame treatment via
+    `resolve_frame`, composes with the filter + glow).
+  - (Animated diagrams via `reveal` + typewriter code ALREADY existed. The kit rotates: gemma+backdrop · a
+    filtered fullscreen backdrop · a device/polaroid inset of footage · an animated diagram · a quote card —
+    docs/PROJECT_FORMAT §clip params carries all the knobs.)
 
-**IMMEDIATE NEXT (fully scoped below — do NOT re-discover): VO-clip editing cluster.** VO (tts) clips get
-extra timeline lane(s) ABOVE the clip body: an editable **TTS-text** box + a **caption-override** box (only if
-`params.transcript` present); **waveform 2× height**; **Enter in a box → regen** the clip. Needs a
-**variable-row-height** change (taller tts rows). Design + code anchors + step list in the brief below.
+**REMAINING in the arc (deferred — a fresh session or owner-in-loop picks up):**
+- **Phase 4c** — host-transition robustness (glide reads resolved on-screen pos; blur-aware avatar swaps;
+  revisit `ctol=0.35`). Deferred: it's polish that can shift owner-tuned renders → better with the owner eyeballing.
+- **Phase 4a** — the BIG layout-engine refactor (generalize `draw_diagram_clip` into a shared frame-region slot
+  solver). Explicitly "attempt last"; not started. A compositor `--dump-boxes` for real spatial lint falls out of it.
+- **Phase 5** (thumbtool tldraw-ish) + **Phase 6** (kirby smoke test, needs lame). Not started.
+- **hero editor.png** — owner screenshot with the cosmic2d theme.
 
 ---
 
@@ -274,14 +297,17 @@ the dropped asset; `portable_asset_uri` relativizes the stored uri (kirby missin
   (i) the hardcoded multi-image `CASCADE`/stack tables in `slop.py` (~`make_visual`), (ii) the inference-from-
   siblings host placement (`content_centroid_span`, `span_has_fullscreen_content`, `avatar_fit`, `autoOffX`),
   (iii) the per-clip `layout` enum. Per-clip pos/scale stays an override; roll out primitive-by-primitive.
-- **4b** Spatial linter in `slop.py cmd_lint`: host-over-footage / off-frame / overlap → fail in code.
+- **4b ✅ DONE** (`c24a41c`) — a SLICE: `slop.py lint` OFF-FRAME (manually-positioned visual whose centre leaves
+  the frame; anchor+pos, JSON-only, high-signal). host-over-footage / box-overlap need the compositor's RESOLVED
+  boxes (a future editor `--dump-boxes`) → deferred with 4a.
 - **4c** Host-transition robustness (falls out of consistent placement): "aligns to previous image" (the glide
   in `clip_transition`/`clip_trans_info` reads the neighbor's AUTHORED pos, not the resolved on-screen pos);
   "unwanted transition mid-blur" (avatar swaps fire on the avatar row's own seams independent of `blur` clips —
-  make swaps blur-aware). Revisit the `ctol=0.35` adjacency tolerance.
-- **4d** Diagonal scrolling soft-checkerboard background, **default ON** — a new background-style dispatch at
-  the base clear in `composite_frame` (procedural, no readback pre-pass, cheaper than the blur `filler`);
-  blur-fill becomes an opt-in style. Parse from `meta`, per-clip override.
+  make swaps blur-aware). Revisit the `ctol=0.35` adjacency tolerance. **Deferred** (polish that can shift
+  owner-tuned renders → do with the owner eyeballing).
+- **4d ✅ DONE** (`8940168`) — `draw_bg_checker`: soft diagonal-scrolling brand-purple checkerboard as the
+  default frame background (`meta.bg` = checker|black, Project ▸ background). Procedural, no readback; a cover
+  backdrop / `filler` blur still hides it. The blur `filler` stays an explicit clip.
 
 ### Phase 5 — tldraw-like visual composer
 - **5a** Upgrade `thumbtool/` (slopthumb) to tldraw-like direct manipulation — its model is already gizmo-ready

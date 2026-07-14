@@ -3,16 +3,15 @@
 Hand-maintained "what's true right now." **Read this first after `CLAUDE.md`** and update it
 in the same change that lands work, so a fresh session reorients in ~60s. Last updated:
 **2026-07-14**. For composing a video as an agent, **`docs/LLM_WORKFLOW.md`**.
-**★ A large mouse-driven-UX overhaul is IN PROGRESS — full plan + progress + resume instructions
-in `docs/UX_OVERHAUL.md` (READ IT to continue the arc).** ⭐ **2026-07-14: owner set an AUTONOMOUS OVERNIGHT
-MANDATE** — a fresh post-`/clear` session should keep building the arc (VO-editing cluster → Phase 4 → 5 → 6),
-committing reviewable chunks; owner live-tests in the AM. The **⭐ AUTONOMOUS OVERNIGHT SESSION brief** at the
-top of `UX_OVERHAUL.md` is fully self-contained (VO-cluster design + code anchors + verify protocol + ops facts).
-**Owner-CONFIRMED working:** Phase 0 (data safety) · Phase 1 · video-duck · Phase 2 (cosmic2d theme) · Phase 3
-add-tools · gap-fill-on-click (`b18bd6d`) · A-B video loop (`6853938`) · drag-drop ARMS placement + portable
-uris (`35b0d0b`+`6f9d796`) · marquee multi-select + act-on-selection + R=regen (`6feff28`+`9f3525d`).
-**IMMEDIATE NEXT (scoped, don't re-discover):** VO-clip editing cluster — editable TTS-text + caption-override
-lanes above VO clips, 2× waveform, Enter-regen; needs a variable-row-height (taller tts rows) change.
+**★ The mouse-driven-UX overhaul + the visual-variety stretch goal — most of it LANDED in an autonomous
+overnight session (2026-07-14 night). Full arc + what remains: `docs/UX_OVERHAUL.md` (top STATUS block).**
+Committed this session (owner live-tests the interactive bits in the AM): **VO-clip editing cluster** (`4d7239f`
+— variable-height tts rows: inline text + caption-override lanes, 2× waveform, Enter-regen) · **Phase 4d
+checkerboard bg** (`8940168`) · **Phase 4b OFF-FRAME lint** (`c24a41c`) · **hero-pics refresh** (`41242d7`) ·
+**⭐ visual-variety kit** — cinematic filters + `meta.letterbox` (`20b4b17`), quote card `style:"quote"`
+(`7401212`), fancy inset presets `params.inset_style` (`2c1cc95`). All kit knobs: `docs/PROJECT_FORMAT.md`.
+**REMAINING:** Phase 4c (host-transition polish — deferred, owner-in-loop) · Phase 4a (the big layout-engine
+refactor — "attempt last") · Phase 5/6 · hero `editor.png` needs an owner chrome re-capture (cosmic2d theme).
 
 > **★ NEWEST (2026-07-13/14): UX-OVERHAUL Phases 0–2 + add tools. Full handoff: `docs/UX_OVERHAUL.md`.**
 > Big low-friction-UX pass (owner: "make it low friction, mouse-driven, no patchwork"). **Phase 2** =
