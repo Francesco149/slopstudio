@@ -9,26 +9,145 @@ come out well-formed by default** — and **no patchwork** (design coherently). 
 
 ---
 
-## STATUS (2026-07-14)
+## STATUS (2026-07-14) — ⭐ AUTONOMOUS OVERNIGHT MANDATE ACTIVE
 
-**DONE + committed:** Phase 0 (data safety) · Phase 1 (timeline quick wins) · video-duck ·
-Phase 2 (cosmic2d theme + all owner review fixes) · Phase 3 add-tools (quick-add palette +
-click-to-place + generic add mode, overlap-aware) · **gap-fill on click** (`b18bd6d`, owner ✓) · **A-B
-video loop points** (`6853938`, owner ✓ "feels good") · **drag-drop → add-clip UX + portable uris**
-(`35b0d0b`, ⏳ awaiting owner test). Owner tests each chunk live and signs off before the next.
+**Owner (2026-07-14):** "finish the rest of the UX arc in an autonomous overnight session after the /clear."
+So a fresh post-`/clear` session should **read this file and keep building** — VO-editing cluster first,
+then Phase 4 → 5 → 6 — committing reviewable chunks. **Full self-contained brief: the next section
+(⭐ AUTONOMOUS OVERNIGHT SESSION) — read it before touching code.** The owner will live-test in the morning.
 
-**NEXT — new owner asks (Phase 3 core is now done):**
-1. **VO-clip editing cluster** (in progress) — VO (tts) clips get extra timeline lane(s) ABOVE the clip:
-   an editable **TTS-text** textbox + a **caption-override** textbox (only if `params.transcript` present);
-   **waveform 2× height**; **Enter in a textbox regens** the clip. Needs a **variable-row-height** change
-   (taller tts rows) — the delicate part (contentH / laneY / hit-testing / clip band / marquee all assume
-   uniform ROWH). Do it as its own chunk.
+**DONE + committed + owner-CONFIRMED working this session:** Phase 0 (data safety) · Phase 1 (timeline quick
+wins) · video-duck · Phase 2 (cosmic2d theme + review fixes) · Phase 3 add-tools · **gap-fill on click**
+(`b18bd6d` ✓) · **A-B video loop points** (`6853938` ✓ "feels good") · **drag-drop ARMS placement + portable
+uris** (`35b0d0b`+`6f9d796` ✓) · **marquee multi-select + act-on-selection + R=regen** (`6feff28`+`9f3525d` ✓
+"this works correctly"). Every item above is confirmed by the owner — a stable base.
 
-**Phase-3 core DONE** (`6feff28` + multi-drag fix `9f3525d`, ⏳ owner test): **marquee multi-select** (drag empty lane space → rubber-band;
-`##lanes_bg` catcher after the clips so a clip wins its own press; empty-click clears) + **act-on-selection**
-(Del deletes the group, drag moves the group rigidly, mint border on non-primary members) + **R = regen
-selected clip(s)** (fresh-take seed bump; `start_generate`; skips already-generating). `UIState.sel` +
-`sel_set_one`/`sel_toggle`/`action_selection`.
+**IMMEDIATE NEXT (fully scoped below — do NOT re-discover): VO-clip editing cluster.** VO (tts) clips get
+extra timeline lane(s) ABOVE the clip body: an editable **TTS-text** box + a **caption-override** box (only if
+`params.transcript` present); **waveform 2× height**; **Enter in a box → regen** the clip. Needs a
+**variable-row-height** change (taller tts rows). Design + code anchors + step list in the brief below.
+
+---
+
+## ⭐ AUTONOMOUS OVERNIGHT SESSION — full self-contained brief (read before coding)
+
+**Mission:** finish the UX arc without the owner in the loop. Work order: **(1) VO-clip editing cluster**
+(fully scoped below) → **(2) Phase 4** (layout engine, in sub-parts, see below) → **(3) Phase 5** (thumbtool
+tldraw-ish) → **(4) Phase 6** (kirby smoke test). Do as much as you can; commit each coherent chunk. Leave
+the tree building + committed so the owner can pull and test each in the morning.
+
+### How to work when you CANNOT test interactive UI (the core constraint)
+The compositor renders headlessly (`--shot-frame`) but **ImGui chrome / mouse interaction cannot be
+screenshotted or driven headlessly**. So for every interactive change:
+1. **Build clean** — `taskkill.exe /IM slopstudio.exe /F 2>/dev/null; nix develop --command make -C editor`
+   (warnings about misleading-indentation are pre-existing; look for `error:`/`built`).
+2. **Reason through the gesture logic** carefully (ImGui rule in THIS codebase: **first-submitted wins** an
+   overlapping press — edge-trim handles, the `##place` catcher, and the marquee `##lanes_bg` all rely on it).
+3. **Regression-render** an existing project and confirm **byte-identical** output (chrome/selection changes
+   must not alter the video): `build/slopstudio.exe ../slopstudio-projects/recettear/recettear.slop.json
+   --shot-frame /tmp/x.png --time 46 --cache cache` then `md5sum` vs a baseline. Compositor changes (waveform
+   height is chrome, but the VO layout may shift the *timeline* only, not the export — verify).
+4. **Commit with an honest message** noting "interactive … = owner-tested live." The owner confirms in the AM.
+5. Env vars to the Windows PE need `WSLENV=NAME NAME=1 build/slopstudio.exe …` (WSLInterop won't pass a bare
+   env var). Handy for a temporary debug `fprintf(stderr,…)` gated on `getenv("NAME")` — REMOVE before commit.
+
+### Operational facts (learned this session — don't rediscover)
+- **Editor = one file** `editor/src/main.cpp` (~11.3k lines). Compositor = ImGui `ImDrawList` + stb_truetype,
+  no shaders. Master fn `composite_frame`; export via `render_export_frame`.
+- **Regen a clip:** `start_generate(p, clipId)` (safe on any type — non-regenerable sets an error status).
+  The inspector "Regenerate (fresh)" bumps `params.seed` then calls it; gates on `gen[id].state==1` (in-flight).
+  `R` key already does fresh-regen of the selection (`regenSel` in DrawUI). Regen needs a **provider on lame**
+  (TTS) → **wake lame**: `ssh root@code "cold-unlock --host lame --stay"` (only needed to actually RUN a gen;
+  code builds/commits without it). Providers are config-driven (`config.toml`).
+- **Deferred structural ops:** anything calling `p = parse_project_json(...)` (split/dup/delete/undo) invalidates
+  all `Clip&`/`Row&` → defer via request vars in DrawUI (`splitReq/delReq/dupReq/delSel/regenSel`), applied after
+  the panels. `add_*`/`place_*` mutate in place (safe mid-frame).
+- **Undo** is automatic at gesture settle (`undo_checkpoint`, last each frame). Edits ending outside an ImGui
+  active item set `g_undoDirty=true`. No manual push_undo.
+- **`sync_to_doc(p)`** copies parsed `Clip.params` wholesale into `p.doc` before save/undo/split — so inspector
+  edits that mutate `c.params` (incl. `.erase(key)`) persist. This is why the A-B `loop_out` erase works.
+- **Pre-existing quirk (do NOT chase):** the video decoder can return ±1 source frame for the *same* index
+  depending on decode history — sub-frame, invisible in motion, orthogonal to A-B loop (which computes the
+  right index; verified via a decoder-boundary trace).
+- **Commit discipline:** logical units as you go; build first; trailer
+  `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`; **do NOT push**; no `git add -A`.
+  Editor/tooling → THIS repo; project files/assets → `../slopstudio-projects`. Update STATUS + this file in the
+  same change. Doc commits reference the code commit's hash → commit code first, then docs (separate commit).
+
+### TASK 1 — VO-clip editing cluster (DO THIS FIRST) — full design
+**Goal:** on the timeline, a VO (`tts`) clip shows, stacked ABOVE its body: an editable **TTS-text** textbox and
+(only if `params.transcript` is set) an editable **caption-override** textbox; a **2× taller waveform** in the
+body; **Enter in a box regens** that clip. (Owner: "the transcript can be just a textbox I can edit, it doesn't
+need to fit the whole text on screen. and pressing enter in the textbox should also regen.")
+
+**The hard part = variable row height.** `DrawTimeline` (editor/src/main.cpp, starts ~`static void DrawTimeline`)
+assumes a uniform `const float ROWH = 30.0f` in ~a dozen spots. Introduce a per-row height and thread it through.
+Concrete anchors (grep these; line numbers drift):
+- Add a lambda near the top of DrawTimeline: `auto rowPx = [&](const std::string& rid)->float { … }` returning
+  `ROWH` for non-tts, and for `tts`: `ROWH*1.8f` (body w/ 2× waveform) `+ VO_TEXT_H` (text lane) `+ (rowHasOverride ? VO_TEXT_H : 0)`
+  where `VO_TEXT_H≈22f` and `rowHasOverride` = any clip in the row has `params.transcript`. Define `VO_TEXT_H` as a const.
+- `int nLanes … contentH = RULER + nLanes*ROWH;` → `contentH = RULER + Σ rowPx(rid)`.
+- The track loop `for (auto& tk : p.tracks)`: `float trackTop = laneTop + lane*ROWH;` and `trackH = trackRowN*ROWH`
+  → convert to a running **`float curY = laneTop;`** accumulator; `trackTop = curY`; precompute `trackH = Σ rowPx`
+  over the track's rows (before the `##th` InvisibleButton that uses trackH).
+- The row loop `for (auto& rid : tk.rows)`: `float ly = laneTop + lane*ROWH;` → `float ly = curY; float rh = rowPx(rid);`
+  … then `curY += rh; lane++;` (keep `lane` int ONLY for the `(lane%2)` row-stripe color). Row bg rects use `ly+rh-2`.
+- Store heights for hit-testing: alongside `laneY.push_back({rid, ly});` add `rowH[rid] = rh;` (a
+  `std::map<std::string,float> rowH;`). Then EVERY `pr.second + ROWH` / `+ ROWH` hit-test becomes `+ rowH[pr.first]`:
+  the armed-placement `rowAt` lambda, the vertical-drag-onto-lane test, the **marquee** `ly + ROWH > y0`
+  (grep `##lanes_bg`), and the OS-drop + LIB-drop row detection (`dy >= pr.second && dy < pr.second+ROWH`).
+- **Clip band:** the clip rect is `ImVec2 a(x0+1, ly+2), b(…, ly+ROWH-4);`. For a `tts` clip, push the body to the
+  BOTTOM of the tall band: `float topLanes = VO_TEXT_H + (clipHasOverride?VO_TEXT_H:0); a.y = ly + topLanes + 2;
+  b.y = ly + rh - 4;`. Non-tts unchanged. The body button / trim handles / label / waveform all key off `a`,`b`.
+- **2× waveform:** the waveform is drawn in the clip body (grep `get_wave` inside the clip loop; amplitude was
+  `~0.45*ROWH`). With the taller tts body just draw at `~0.9*bodyH` (bodyH = b.y-a.y) → naturally ~2×.
+- **The text lanes (editable):** for each tts clip, above the body, submit ImGui InputTexts spanning the clip's
+  x-range: `SetCursorScreenPos(ImVec2(x0, ly + (clipHasOverride?VO_TEXT_H:0)))` for the **text** box (params.text)
+  and `SetCursorScreenPos(ImVec2(x0, ly))` for the **override** box (params.transcript, only if present).
+  `imgui_stdlib` is linked → `ImGui::InputText(id, &stdstring, flags)`. **Persistent buffer per clip** (the
+  classic sync trap): keep `static std::map<std::string,std::string> g_voEdit;` keyed `c.id+"|text"` /
+  `c.id+"|ovr"`, and an `static std::set<std::string> g_voEditActive;`. Each frame: `if (!g_voEditActive.count(key))
+  buf = jstr(c.params, field);` (sync from source only when NOT being edited, else typing is wiped). On
+  `IsItemActivated()` insert key; on `IsItemDeactivated()` erase key + commit `c.params[field]=buf` + `g_undoDirty=true`.
+  Use `ImGuiInputTextFlags_EnterReturnsTrue` → on true: commit + **request a regen** of this clip.
+- **Enter-regen wiring:** add a `std::string voRegenReq;` local in DrawUI (thread it out of DrawTimeline via a
+  global like the others, e.g. `g_voRegenReq`), and in the deferred block do `start_generate(p, id)` WITHOUT a
+  seed bump (the text change drives the new gen; keep the same voice). NB caption-override edits don't change the
+  audio — Enter there is a cheap cache-hit regen (harmless) OR just commit; owner said "the textbox should also
+  regen" → wire Enter on the TEXT box to regen for sure; override-box Enter can just commit (note it in the msg).
+- **Gotchas:** (a) the tts row is now tall (~76–98px) — make sure the `laneY`/`rowH` maps are used everywhere a
+  hit-test assumed ROWH or clips land on the wrong lane. (b) InputTexts submitted at scrolled y positions get
+  clipped by the timeline child's clip-rect — fine. (c) The InputText hit-boxes sit ABOVE the clip body button
+  (different y bands) so they don't fight. (d) Editing `params.text` should mark the caption STALE the same way
+  the inspector does (there's a STALE-CAPTION note in the tts inspector — grep `captions display the override`).
+  (e) Keep `g_captionFont`/`g_monoFont` for the VIDEO; the UI/InputText uses the default Inter font — fine.
+- **Verify:** build clean; render an existing tts-bearing project (`../slopstudio-projects/luckymas/luckymas3.slop.json`
+  or `recettear.slop.json`) at a few times and confirm the EXPORT frame is byte-identical (the VO lanes are
+  timeline chrome, not composited into the video). Commit. Owner tests the inline editing + Enter-regen live
+  (regen itself needs lame up).
+
+### TASK 2 — Phase 4 (layout engine) — see the "Phase 4" section below for the full spec
+The owner previously flagged "checkpoint before Phase 4"; the overnight mandate relaxes that, BUT 4a is a big
+architectural refactor — do the **low-risk sub-parts first** and keep each independently revertable:
+- **4d first** (cheapest, self-contained, high visual value): diagonal-scrolling soft-checkerboard background,
+  **default ON**, as a new bg dispatch at the base clear in `composite_frame` (procedural, no readback). Blur-fill
+  becomes opt-in. Parse from `meta`, per-clip override. This one is compositor → **you CAN `--shot-frame` verify it.**
+- **4b** spatial linter in `slop.py cmd_lint` (host-over-footage / off-frame / overlap → warn). Pure Python, testable.
+- **4c** host-transition robustness (glide reads resolved on-screen pos; blur-aware avatar swaps). Compositor-ish.
+- **4a** the big one (generalize `draw_diagram_clip`'s two-pass measure/pack into a shared frame-region slot solver)
+  — attempt LAST, in a branch of thought; if it balloons, land a smaller slice + document the rest. Don't break
+  existing cuts: every current `.slop.json` must still render byte-identical unless a clip opts into the new layout.
+
+### TASK 3/4 — Phase 5 (thumbtool tldraw-ish) + Phase 6 (kirby smoke test)
+See their sections below. Phase 6 needs lame for TTS. Phase 5 is in `thumbtool/` (separate app, `engine.h` has
+per-layer AABBs already). Lower priority than 1/2 — only if 1/2 land cleanly with time to spare.
+
+### If blocked / risky
+Prefer landing a smaller, correct, committed slice over a big untested change. If something needs the owner
+(a genuine design fork, or lame is down and a task strictly needs a gen), STOP that task, commit what's safe,
+write a clear note here + in STATUS, and move to the next independent task. Never push. Never `git add -A`.
+
+---
 
 **Just landed (⏳ owner to test): drag-drop ARMS the placement tool + portable asset uris** (`35b0d0b`, `6f9d796`).
 Owner: "drag-drop should trigger the same add-clip UX, forced to the asset dropped in" → then "it just places

@@ -4,13 +4,15 @@ Hand-maintained "what's true right now." **Read this first after `CLAUDE.md`** a
 in the same change that lands work, so a fresh session reorients in ~60s. Last updated:
 **2026-07-14**. For composing a video as an agent, **`docs/LLM_WORKFLOW.md`**.
 **★ A large mouse-driven-UX overhaul is IN PROGRESS — full plan + progress + resume instructions
-in `docs/UX_OVERHAUL.md` (READ IT to continue the arc).** Landed: Phase 0 (data safety) · Phase 1
-(timeline quick wins) · video-duck · Phase 2 (cosmic2d theme + owner review fixes) · Phase 3 add
-tools (quick-add palette + click-to-place + generic add mode, overlap-aware) + gap-fill-on-click
-(`b18bd6d`, ✓) + A-B video loop points (`6853938`, ✓) + drag-drop ARMS the placement tool & portable
-asset uris (`35b0d0b`+`6f9d796`, ⏳ owner test) + marquee multi-select & R=regen (`6feff28`, ⏳ owner test).
-Phase-3 core done. New owner asks: VO-clip editing cluster (extra text/override lanes above VO clips,
-2× waveform, Enter-regen — needs a taller-tts-row change, IN PROGRESS) → then Phase 4 layout engine (checkpoint first).
+in `docs/UX_OVERHAUL.md` (READ IT to continue the arc).** ⭐ **2026-07-14: owner set an AUTONOMOUS OVERNIGHT
+MANDATE** — a fresh post-`/clear` session should keep building the arc (VO-editing cluster → Phase 4 → 5 → 6),
+committing reviewable chunks; owner live-tests in the AM. The **⭐ AUTONOMOUS OVERNIGHT SESSION brief** at the
+top of `UX_OVERHAUL.md` is fully self-contained (VO-cluster design + code anchors + verify protocol + ops facts).
+**Owner-CONFIRMED working:** Phase 0 (data safety) · Phase 1 · video-duck · Phase 2 (cosmic2d theme) · Phase 3
+add-tools · gap-fill-on-click (`b18bd6d`) · A-B video loop (`6853938`) · drag-drop ARMS placement + portable
+uris (`35b0d0b`+`6f9d796`) · marquee multi-select + act-on-selection + R=regen (`6feff28`+`9f3525d`).
+**IMMEDIATE NEXT (scoped, don't re-discover):** VO-clip editing cluster — editable TTS-text + caption-override
+lanes above VO clips, 2× waveform, Enter-regen; needs a variable-row-height (taller tts rows) change.
 
 > **★ NEWEST (2026-07-13/14): UX-OVERHAUL Phases 0–2 + add tools. Full handoff: `docs/UX_OVERHAUL.md`.**
 > Big low-friction-UX pass (owner: "make it low friction, mouse-driven, no patchwork"). **Phase 2** =
