@@ -5435,7 +5435,31 @@ static bool span_has_inset_content(const Project& p, double t0, double t1) {
                 const Clip& c = cit->second;
                 if (c.start + c.dur <= t0 || c.start >= t1) continue;
                 std::string lay = jstr(c.params, "layout");
-                if (lay.rfind("inset", 0) == 0 && lay != "inset-center") return true;
+                // inset-center normally OWNS the frame solo (no host) — but this fn is ONLY consulted while
+                // PLACING a host, so an active inset-center here means the card is HELD under a host beat
+                // (the owner's "host pops over the still-centered chip"): treat it as a hosted inset too, so
+                // she corners small BESIDE it (the image itself steps aside — see the inset render + span_has_host).
+                if (lay.rfind("inset", 0) == 0) return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Is a HOST (avatar) clip active anywhere over [t0,t1)? An inset-center image that is HELD across a host
+// beat must step aside to a beside-host inset (shrink + shift) instead of staying centered under her.
+static bool span_has_host(const Project& p, double t0, double t1) {
+    for (auto& tk : p.tracks) {
+        if (tk.kind != "video") continue;
+        for (auto& rid : tk.rows) {
+            auto rit = p.rows.find(rid);
+            if (rit == p.rows.end() || rit->second.type != "avatar") continue;
+            for (auto& cid : rit->second.clips) {
+                auto cit = p.clips.find(cid);
+                if (cit == p.clips.end()) continue;
+                const Clip& c = cit->second;
+                if (c.start + c.dur <= t0 || c.start >= t1) continue;
+                return true;
             }
         }
     }
@@ -5998,7 +6022,10 @@ static void composite_frame(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0, 
                             // presenting BIG from below; landscape: ~half-frame beside the host.
                             // "inset-center" = a framed card that OWNS the frame (no host) — bigger
                             // (~72% wide) and centered, for a solo screenshot sitting on the checker.
-                            bool ctr = (lay == "inset-center");
+                            // UNLESS a host is held over this image's span (owner: "host pops over the
+                            // still-centered chip"): then it steps aside to a beside-host inset (shrinks to
+                            // 55% + shifts right) so she corners clear of it instead of overlapping it.
+                            bool ctr = (lay == "inset-center") && !span_has_host(p, c.start, c.start + c.dur);
                             float wfrac = ctr ? 0.72f : 0.55f;
                             float L = porFrame ? std::min(0.86f * FW / nw, 0.42f * FH / nh)
                                                : std::min(wfrac * FW / nw, (ctr ? 0.82f : 0.72f) * FH / nh);
