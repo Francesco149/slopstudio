@@ -7,9 +7,9 @@ in the same change that lands work, so a fresh session reorients in ~60s. Last u
 in `docs/UX_OVERHAUL.md` (READ IT to continue the arc).** Landed: Phase 0 (data safety) · Phase 1
 (timeline quick wins) · video-duck · Phase 2 (cosmic2d theme + owner review fixes) · Phase 3 add
 tools (quick-add palette + click-to-place + generic add mode, overlap-aware) + gap-fill-on-click
-(`b18bd6d`, ✓) + A-B video loop points (`6853938`, ✓) + drag-drop→add-clip-UX & portable asset uris
-(`35b0d0b`, ⏳ owner test). Next: Phase 3 remainder (marquee multi-select — last item) → Phase 4
-layout engine (checkpoint first).
+(`b18bd6d`, ✓) + A-B video loop points (`6853938`, ✓) + drag-drop ARMS the placement tool & portable
+asset uris (`35b0d0b`+`6f9d796`, ⏳ owner test). Next: Phase 3 remainder (marquee multi-select — last
+item) → Phase 4 layout engine (checkpoint first).
 
 > **★ NEWEST (2026-07-13/14): UX-OVERHAUL Phases 0–2 + add tools. Full handoff: `docs/UX_OVERHAUL.md`.**
 > Big low-friction-UX pass (owner: "make it low friction, mouse-driven, no patchwork"). **Phase 2** =

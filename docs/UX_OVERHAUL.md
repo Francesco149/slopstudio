@@ -20,14 +20,15 @@ video loop points** (`6853938`, owner ✓ "feels good") · **drag-drop → add-c
 **NEXT (Phase 3 remainder):**
 1. **Marquee multi-select** + act-on-selection — the last Phase-3 item.
 
-**Just landed (⏳ owner to test): drag-drop routes through the add-clip UX + portable asset uris** (`35b0d0b`).
-Owner: "drag-n-drop should trigger the same add-clip UX we already have, just forced to the asset dropped in."
-(1) `add_asset_clip_placed(path,t,clickedRow)` = the same overlap-aware placement as the palette (clicked
-lane > free lane of type > new track, never overlapping, natural length via `asset_natural_dur`); the OS
-file-drop, Media-pane drag, AND double-click all route through it (was 3 copies of "first row of type").
+**Just landed (⏳ owner to test): drag-drop ARMS the placement tool + portable asset uris** (`35b0d0b`, `6f9d796`).
+Owner: "drag-drop should trigger the same add-clip UX, forced to the asset dropped in" → then "it just places
+immediately, doesn't trigger the add mode; likely taking the click-release from the drop." Both fixed:
+(1) A timeline drop now ARMS the placement tool loaded with the asset (`g_placeType="__asset__"` + `g_placeAsset`)
+— live ghost preview, click fresh to position, overlap-aware (clicked > free lane > new track), natural length
+(`asset_natural_dur`). `g_placeIgnoreUntilUp` swallows the drop's OWN release so it can't instant-commit.
+OS file-drop + Media-pane drag arm (media); a rig / double-click still add immediately (`add_asset_clip_placed`).
 (2) `portable_asset_uri` relativizes an imported path to `assets/…`/`library/…` before it becomes a clip uri
-(applied in add_image/audio/video_clip_at) — fixes the kirby missing-images bug class (drops stored the
-ABSOLUTE managed path). Verified: build clean, kirby+recettear render, boundary cases pass.
+(in add_image/audio/video_clip_at) — fixes the kirby missing-images bug class. Verified: build clean, renders, boundary cases pass.
 
 **Owner-approved earlier this session:**
 - **gap-fill on a plain placement click** (`b18bd6d`, ✓). Click with a type armed fills the gap to the next
@@ -44,7 +45,7 @@ Phase 5 (tldraw-like visual composer), Phase 6 (kirby smoke test). Details below
 `e915be8`+`bfab33d` video-duck (+silent-RMS fix) · `c95f2a2` STATUS · `36ed3e5` cosmic2d theme+Inter ·
 `8d10d3c` track-buttons+resizable-panels+draggable-tracks · `e0d3ddb` mid-mouse-vpan+timeline/preview-divider ·
 `6c90431` quick-add+click-to-place · `352c129` overlap-aware placement · `1382ef0` generic-add(A) · `8220ac4` add-mode-polish ·
-`b18bd6d` gap-fill-on-click · `0b0b488` docs · `6853938` A-B-video-loop · `befb3c2` docs · `35b0d0b` drag-drop-add-UX+portable-uris.
+`b18bd6d` gap-fill-on-click · `0b0b488` docs · `6853938` A-B-video-loop · `befb3c2` docs · `35b0d0b` drag-drop-add-UX+portable-uris · `6f9d796` drag-drop-ARMS-placement.
 **slopstudio-projects** (2): `3eb0dd6` kirby music reconstruction · `f5d804f` kirby Pictures copy+repoint.
 
 ---
@@ -172,10 +173,11 @@ Owner dragged `F:\Pictures` images expecting a copy into the project + repointed
 (caused the kirby missing-images). The OS-drop already imported via `library_import` (copies into
 `g_projLibDir`), but the returned path was ABSOLUTE → stored as the clip uri. Fixed with `portable_asset_uri`
 (relativizes to `assets/…`/`library/…` in `add_image/audio/video_clip_at`; `resolve_asset` reverses it).
-Plus (owner's follow-up ask) the drop now routes through `add_asset_clip_placed` = the same overlap-aware
-add-clip placement as the palette tools, forced to the dropped asset (OS drop + Media-pane drag + double-click
-all share it). `asset_natural_dur` = the fit probe (image default / real audio / real video, never truncated);
-`rig_name_from_path` handles a dropped rig def. Interactive drop = owner-tested live.
+Plus (owner's follow-up asks) the drop ARMS the placement tool (`__asset__` mode, `6f9d796`) rather than
+instant-placing — live ghost + a fresh click position it, same as the palette; `g_placeIgnoreUntilUp` swallows
+the drop's own release so it can't self-commit. Commit routes through `add_asset_clip_placed` = the overlap-aware
+placement forced to the asset. `asset_natural_dur` = the fit probe (image default / real audio / real video,
+never truncated); `rig_name_from_path` handles a rig def (added immediately, not click-placed). Owner-tested live.
 
 ---
 
