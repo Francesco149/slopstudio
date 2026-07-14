@@ -4857,6 +4857,7 @@ static void content_centroid_span(const Project& p, double t0, double t1,
 static bool span_has_content(const Project& p, double t0, double t1);
 static bool span_has_fullscreen_content(const Project& p, double t0, double t1);
 static std::string avatar_place_sig(const Project& p, const Clip& c);
+static float frame_blur_strength(Project& p, double t, float& sigmaOut);   // whole-frame `blur` strength at t (for blur-aware host swaps)
 
 // The DECISION half of clip_transition — which transition fires on each edge, edge contiguity,
 // and the avatar pose-swap/glide detection — pulled out so the built-in SFX scheduler can ask
@@ -4951,10 +4952,21 @@ static TransInfo clip_trans_info(Project& p, Clip& c) {
         };
         if (ti.inType  == "swap" || forcesSwap(ti.nbIn,  "out")) ti.swapIn  = true;
         if (ti.outType == "swap" || forcesSwap(ti.nbOut, "in"))  ti.swapOut = true;
-        // SAME sprite, DIFFERENT spot → glide (see clip_transition)
+        // BLUR-AWARE: a whole-frame `blur` clip covering the seam already hides the cut, so the pose-swap
+        // slide would play UNDER the blur (invisible) and can leave the host mid-slide when it sharpens back
+        // — the owner's "unwanted transition mid-blur". If the blur is meaningfully up at the seam, drop the
+        // slide (hard-cut under the blur; the sprite/placement still change, just without the wasted glide).
+        { float sg; if (ti.swapIn  && frame_blur_strength(p, c.start,          sg) > 0.35f) ti.swapIn  = false;
+                    if (ti.swapOut && frame_blur_strength(p, c.start + c.dur,  sg) > 0.35f) ti.swapOut = false; }
+        // SAME sprite, DIFFERENT spot → glide (see clip_transition). The glide delta is the RESOLVED
+        // on-screen delta: when glideIn fires the placement sig matches (side/over-footage/offX/solo all
+        // equal → those offsets cancel), so the true delta is (anchor + tx_pos) — include the ANCHOR the
+        // old delta dropped, so a host that changes anchor category between same-pose beats glides from
+        // where it actually WAS on screen instead of teleporting ("aligns to previous image").
         if (ti.nbIn && !ti.swapIn) {
-            double gdx = (double)ti.nbIn->tx_pos[0] - c.tx_pos[0];
-            double gdy = (double)ti.nbIn->tx_pos[1] - c.tx_pos[1];
+            ImVec2 aC = anchor_off(p, c), aN = anchor_off(p, *ti.nbIn);
+            double gdx = (aN.x + ti.nbIn->tx_pos[0]) - (aC.x + c.tx_pos[0]);
+            double gdy = (aN.y + ti.nbIn->tx_pos[1]) - (aC.y + c.tx_pos[1]);
             ti.glideIn = std::fabs(gdx) + std::fabs(gdy) > 2.0;
         }
     }
@@ -5011,8 +5023,9 @@ static TransFx clip_transition(Project& p, Clip& c, double T) {
         // wrong) but a hard position teleport reads worse — GLIDE from the neighbour's spot into
         // ours instead (decelerating, motion-blurred like the slide).
         if (ti.glideIn && tin < AV_GLIDE) {
-            double gdx = (double)ti.nbIn->tx_pos[0] - c.tx_pos[0];
-            double gdy = (double)ti.nbIn->tx_pos[1] - c.tx_pos[1];
+            ImVec2 aC = anchor_off(p, c), aN = anchor_off(p, *ti.nbIn);   // resolved delta (anchor + tx_pos; placement cancels)
+            double gdx = (aN.x + ti.nbIn->tx_pos[0]) - (aC.x + c.tx_pos[0]);
+            double gdy = (aN.y + ti.nbIn->tx_pos[1]) - (aC.y + c.tx_pos[1]);
             double u = 1.0 - tin / AV_GLIDE;
             fx.dx += (float)(gdx * u * u);                fx.dy += (float)(gdy * u * u);
             fx.vx -= (float)(gdx * 2.0 * u / AV_GLIDE);   fx.vy -= (float)(gdy * 2.0 * u / AV_GLIDE);
