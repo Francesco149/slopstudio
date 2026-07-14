@@ -3362,6 +3362,7 @@ static void split_clip(Project& p, const std::string& clipId, double t) {
 // Ctrl+drag-to-duplicate state: the clip a copy was already spawned for THIS drag (so it fires once),
 // and where to place that copy — the original's start, so the copy stays put while the original drags
 // off (its InvisibleButton id is stable, so ImGui keeps the drag alive across the p rebuild).
+static bool g_clipPressMoved = false;    // did the current clip-body press turn into a drag? (release-w/o-drag collapses a group)
 static std::string g_ctrlDupDragId;      // clip a Ctrl+drag copy was already spawned for (fires once/drag)
 static std::string g_dragDupReq;         // DrawTimeline → DrawUI: request a duplicate (deferred; p rebuild)
 static double g_dupAtStart = -1e18;      // where to place the pending copy (-1e18 = default: right after)
@@ -6964,9 +6965,13 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
         ImGui::SetCursorScreenPos(bodyA);
         ImGui::InvisibleButton((c.id + "##clip").c_str(), ImVec2(std::max(bodyB.x - bodyA.x, 4.0f), bodyB.y - bodyA.y));
         if (ImGui::IsItemHovered()) hovered = true;
-        if (ImGui::IsItemClicked()) sel_set_one(st, c.id);   // plain click = single-select (marquee makes multi)
+        if (ImGui::IsItemActivated()) {   // mouse-DOWN: primary = this clip, but KEEP an existing group so a drag can move it
+            g_clipPressMoved = false;
+            if (st.sel.count(c.id)) st.selected = c.id;   // pressing a group member keeps the whole group selected
+            else sel_set_one(st, c.id);                    // pressing a non-member selects it alone
+        }
         if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-            if (!st.sel.count(c.id)) sel_set_one(st, c.id);   // dragging a non-selected clip selects it alone
+            g_clipPressMoved = true;
             ImGuiIO& io = ImGui::GetIO();
             // Ctrl+drag = duplicate: spawn a copy at the clip's current spot ONCE, then drag the
             // original away (deferred so p isn't rebuilt mid-loop; the drag survives via the stable id).
@@ -7020,6 +7025,8 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
             }
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
         }
+        if (ImGui::IsItemDeactivated() && !g_clipPressMoved && st.sel.size() > 1 && st.sel.count(c.id))
+            sel_set_one(st, c.id);   // released a group member WITHOUT dragging → collapse to just this clip
         ImU32 col = (st.selected == c.id) ? IM_COL32(255, 255, 255, 255)                    // primary selection (white)
                   : st.sel.count(c.id)    ? IM_COL32(0x7f, 0xd8, 0xa8, 255)                 // also in the marquee group (mint)
                                           : type_color(c.type);
