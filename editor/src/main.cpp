@@ -992,6 +992,23 @@ static std::string library_import(const std::string& srcPath) {
     g_libraryDirty = true;
     return dst;
 }
+// Make a managed absolute path portable BEFORE it becomes a clip uri: relative to the project dir
+// (assets/…) or the code repo (library/…, cache/…) so the clip survives a project move or a different
+// launch CWD — the recurring "dragged-in file kept an absolute path → missing on reload" bug (kirby
+// images). resolve_asset reverses it (project-relative, then repo-relative). Truly external → absolute.
+static std::string portable_asset_uri(const std::string& path) {
+    auto under = [&](const std::string& root) -> std::string {
+        if (root.empty() || root == ".") return "";
+        std::string r = root; while (!r.empty() && (r.back() == '/' || r.back() == '\\')) r.pop_back();
+        if (path.size() > r.size() + 1 && path.compare(0, r.size(), r) == 0 &&
+            (path[r.size()] == '/' || path[r.size()] == '\\'))
+            return path.substr(r.size() + 1);
+        return "";
+    };
+    std::string rel = under(g_projDir); if (!rel.empty()) return rel;   // assets/<stem>/…  (portable project asset)
+    rel = under(g_repoRoot);            if (!rel.empty()) return rel;   // library/…, cache/…  (repo asset)
+    return path;                                                        // outside both → keep absolute
+}
 static void library_rename(const LibItem& it, const std::string& newBase) {
     if (newBase.empty()) return;
     size_t dot = it.name.find_last_of('.');
@@ -6182,12 +6199,13 @@ static void composite_frame(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0, 
 static std::string g_dropPath; static POINT g_dropPt{}; static bool g_hasDrop = false;  // pending drag-and-drop file
 // Add an image clip referencing an external file at (row, t) — model + doc, so it renders + saves.
 static std::string add_image_clip_at(Project& p, const std::string& row, double t, const std::string& path, double dur = 4.0) {
+    std::string uri = portable_asset_uri(path);   // store a project/repo-relative uri (portable across moves / CWD)
     std::string akey; int n = 1; while (p.asset_uri.count(akey = "ext_img" + std::to_string(n))) n++;
-    p.asset_uri[akey] = path;
+    p.asset_uri[akey] = uri;
     if (p.doc.contains("assets") && p.doc["assets"].is_object())
-        p.doc["assets"][akey] = json{{"provider", "external"}, {"type", "image"}, {"status", "ready"}, {"uri", path}, {"meta", json::object()}};
+        p.doc["assets"][akey] = json{{"provider", "external"}, {"type", "image"}, {"status", "ready"}, {"uri", uri}, {"meta", json::object()}};
     std::string id; int m = 1; while (p.clips.count(id = "c_drop" + std::to_string(m))) m++;
-    std::string fn = path; size_t sl = fn.find_last_of("/\\"); if (sl != std::string::npos) fn = fn.substr(sl + 1);
+    std::string fn = uri; size_t sl = fn.find_last_of("/\\"); if (sl != std::string::npos) fn = fn.substr(sl + 1);
     Clip c; c.id = id; c.row = row; c.type = "image"; c.start = t; c.dur = dur; c.asset = akey; c.label = fn;
     // Content-inset default = the render-time `layout` primitive (was a baked transform distilled
     // from the hand-tuned beats — now computed live in composite_frame, so an asset swap or a
@@ -6256,18 +6274,19 @@ static json audio_meta_from_tags(const std::string& path) {
 // Drop an external audio file (library sound / SFX / music bed) onto an audio row → a clip at its
 // real length (WAV decoded; mp3 → default, trim to taste). Mixed by the same recipe as gen audio.
 static std::string add_audio_clip_at(Project& p, const std::string& row, double t, const std::string& path) {
+    std::string uri = portable_asset_uri(path);   // store a project/repo-relative uri (portable across moves / CWD)
     std::string akey; int n = 1; while (p.asset_uri.count(akey = "ext_aud" + std::to_string(n))) n++;
-    p.asset_uri[akey] = path;
+    p.asset_uri[akey] = uri;
     std::string rtype = p.rows.count(row) ? p.rows[row].type : "music";
     // a dragged-in SONG auto-fills its title/artist/credit from the file's ID3 tags (the credit
     // then drives the export description + the on-screen now-playing chip). Editable in the Inspector.
-    json ameta = (rtype == "music") ? audio_meta_from_tags(path) : json::object();
+    json ameta = (rtype == "music") ? audio_meta_from_tags(uri) : json::object();
     if (p.doc.contains("assets") && p.doc["assets"].is_object())
         p.doc["assets"][akey] = json{{"provider", "external"}, {"type", rtype == "tts" ? "speech" : "music"},
-                                     {"status", "ready"}, {"uri", path}, {"meta", ameta}};
-    Pcm* pc = get_pcm(path); double dur = (pc && pc->dur > 0.05) ? pc->dur : 4.0;   // real WAV length, else default
+                                     {"status", "ready"}, {"uri", uri}, {"meta", ameta}};
+    Pcm* pc = get_pcm(uri); double dur = (pc && pc->dur > 0.05) ? pc->dur : 4.0;   // real WAV length, else default
     std::string id; int m = 1; while (p.clips.count(id = "c_aud" + std::to_string(m))) m++;
-    std::string fn = path; size_t sl = fn.find_last_of("/\\"); if (sl != std::string::npos) fn = fn.substr(sl + 1);
+    std::string fn = uri; size_t sl = fn.find_last_of("/\\"); if (sl != std::string::npos) fn = fn.substr(sl + 1);
     Clip c; c.id = id; c.row = row; c.type = rtype; c.start = t; c.dur = dur; c.asset = akey; c.label = fn; c.params = json::object();
     p.clips[id] = c;
     if (p.rows.count(row)) p.rows[row].clips.push_back(id);
@@ -6285,21 +6304,22 @@ static std::string add_track(Project& p, const std::string& type, const std::str
 // asset is just {type:video, uri}; the libav decoder fills fps/frames/dims (and we probe them here
 // to set the clip's real length). The clip type comes from its row, so this needs a `video` row.
 static std::string add_video_clip_at(Project& p, const std::string& row, double t, const std::string& path) {
+    std::string uri = portable_asset_uri(path);   // store a project/repo-relative uri (portable across moves / CWD)
     std::string akey; int n = 1; while (p.asset_uri.count(akey = "ext_vid" + std::to_string(n))) n++;
-    p.asset_uri[akey] = path;
-    VideoMeta vm; vm.src = path;
+    p.asset_uri[akey] = uri;
+    VideoMeta vm; vm.src = uri;
     double dur = 6.0;
 #ifdef SLOP_LIBAV
-    if (VideoDecoder* d = get_decoder(resolve_asset(path))) {
+    if (VideoDecoder* d = get_decoder(resolve_asset(uri))) {
         vm.fps = d->fps; vm.frames = d->frames; vm.w = d->w; vm.h = d->h;
         if (d->fps > 0 && d->frames > 0) dur = d->frames / d->fps;     // real source length
     }
 #endif
     p.asset_video[akey] = vm;
     if (p.doc.contains("assets") && p.doc["assets"].is_object())
-        p.doc["assets"][akey] = json{{"provider", "external"}, {"type", "video"}, {"status", "ready"}, {"uri", path}, {"meta", json::object()}};
+        p.doc["assets"][akey] = json{{"provider", "external"}, {"type", "video"}, {"status", "ready"}, {"uri", uri}, {"meta", json::object()}};
     std::string id; int m = 1; while (p.clips.count(id = "c_vid" + std::to_string(m))) m++;
-    std::string fn = path; size_t sl = fn.find_last_of("/\\"); if (sl != std::string::npos) fn = fn.substr(sl + 1);
+    std::string fn = uri; size_t sl = fn.find_last_of("/\\"); if (sl != std::string::npos) fn = fn.substr(sl + 1);
     json params = json{{"in", 0.0}, {"speed", 1.0}, {"loop", true}, {"video_volume", 0.12},
                        {"motion", "zoom_in"}, {"auto_grade", false}, {"layout", "inset"},
                        {"glow", json{{"enabled", true}, {"size", 24.0}, {"strength", 0.55}}},
@@ -6578,6 +6598,47 @@ static std::string choose_row_of_type(Project& p, const std::string& want, const
 static double place_default_dur(const std::string& kind);   // placement-tool helpers (defined with add_quick_clip)
 static double place_fill_to_next(Project& p, const std::string& row, double t, double def);  // gap-fill a plain click
 static std::string generic_ref_clip(Project& p, const std::string& row, double t);           // generic-add reference clip
+
+// The asset's natural clip length (source seconds) — image default, real audio, real video. Used as the
+// overlap-aware placement probe so a dropped clip lands where its WHOLE length fits (never truncated).
+static double asset_natural_dur(const std::string& uri, LibType lt) {
+    if (lt == LIB_AUDIO) { Pcm* pc = get_pcm(uri); return (pc && pc->dur > 0.05) ? pc->dur : 4.0; }
+#ifdef SLOP_LIBAV
+    if (lt == LIB_VIDEO) { if (VideoDecoder* d = get_decoder(resolve_asset(uri))) if (d->fps > 0 && d->frames > 0) return d->frames / d->fps; }
+#endif
+    if (lt == LIB_VIDEO) return 6.0;
+    return 4.0;   // image (matches add_image_clip_at's default)
+}
+// Extract a rig name from a dropped/library path: "<dir>/<name>.avatar.json" or ".../<name>/manifest.json".
+static std::string rig_name_from_path(const std::string& path) {
+    size_t ael = path.size(), rel = strlen(AVATAR_RIG_EXT);
+    std::string rig;
+    if (ael > rel && path.compare(ael - rel, rel, AVATAR_RIG_EXT) == 0)        rig = path.substr(0, ael - rel);
+    else if (ael > 14 && path.compare(ael - 14, 14, "/manifest.json") == 0)    rig = path.substr(0, ael - 14);
+    if (!rig.empty()) { size_t sl = rig.find_last_of("/\\"); if (sl != std::string::npos) rig = rig.substr(sl + 1); }
+    return rig;
+}
+// Place an imported/library asset with the SAME overlap-aware placement as the add-clip tools — forced
+// to THIS asset (owner: "trigger the same add-clip UX, just forced to the asset dropped in"): the clicked
+// lane (if the right type and the asset fits) > any free lane of that type > a new track, never
+// overlapping, at the asset's natural length. An avatar rig routes to add_avatar_clip_at. "" = can't place.
+static std::string add_asset_clip_placed(Project& p, const std::string& path, double t, const std::string& clickedRow) {
+    if (t < 0) t = 0;
+    std::string rig = rig_name_from_path(path);
+    if (!rig.empty()) return add_avatar_clip_at(p, rig, t);
+    std::string e = ext_lower(path);
+    if (!has_media_ext(e)) return "";                                  // not a media file → nothing to place
+    LibType lt = lib_type_of(e);
+    std::string rowType = (lt == LIB_VIDEO) ? "video" : (lt == LIB_AUDIO) ? "music" : "image";
+    double nd = asset_natural_dur(path, lt);
+    std::string row = choose_row_of_type(p, rowType, clickedRow, t, nd);  // clicked > free lane of type > "" (new)
+    if (row.empty()) row = (lt == LIB_VIDEO) ? find_or_create_video_row(p)
+                                             : add_track(p, rowType, rowType == "music" ? "Music" : "Footage");
+    if (row.empty()) return "";
+    if (lt == LIB_VIDEO) return add_video_clip_at(p, row, t, path);
+    if (lt == LIB_AUDIO) return add_audio_clip_at(p, row, t, path);
+    return add_image_clip_at(p, row, t, path);
+}
 
 static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, GenLite>& gen) {
     const float GUT = 156.0f, RULER = 22.0f, ROWH = 30.0f;
@@ -7089,31 +7150,21 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
         dl->AddText(ImVec2(origin.x + GUT + 6, origin.y + canvasH - 16), IM_COL32(150, 150, 160, 255), ov);
     }
 
-    // consume a dropped image file: drop it onto an image lane → add an image clip at that time
+    // consume an OS file drop: import into the project library (portable managed copy), then place it
+    // with the SAME overlap-aware add-clip placement as the palette tools — forced to the dropped asset
+    // (owner: "trigger the same add-clip UX, just forced to the asset dropped in").
     if (g_hasDrop && !g_dropPath.empty()) {
         float dx = (float)g_dropPt.x, dy = (float)g_dropPt.y;
         if (dx >= trackX && dx <= origin.x + canvasW && dy >= laneTop && dy <= yBot) {
             double t = std::max(0.0, st.tlScroll + (dx - trackX) / pps);
             std::string row;
             for (auto& pr : laneY) if (dy >= pr.second && dy < pr.second + ROWH) { row = pr.first; break; }
-            // A timeline drop IMPORTS into the project library first (same as the Media pane's
-            // "Add files...") and the clip references the managed copy — an external original at
-            // F:\wherever never enters the project file, and the asset shows up in the library
-            // (it used to bypass the library entirely: "dragged it in, it's not in the Media pane").
+            // Import first (same as the Media pane's "Add files...") so the clip references the managed
+            // copy under the project — an external original at F:\wherever never enters the project file,
+            // and add_asset_clip_placed → add_*_clip_at store a project-relative (portable) uri.
             if (std::string imp = library_import(g_dropPath); !imp.empty()) g_dropPath = imp;
-            LibType dt = lib_type_of(ext_lower(g_dropPath));          // route by the dropped file's kind
-            if (dt == LIB_VIDEO) {                                    // mp4/mov/… → in-process decode (no proxy)
-                if (row.empty() || p.rows[row].type != "video") row = find_or_create_video_row(p);
-                if (!row.empty() && p.rows[row].type == "video") st.selected = add_video_clip_at(p, row, t, g_dropPath);
-            } else if (dt == LIB_AUDIO) {
-                if (row.empty() || p.rows[row].type != "music")
-                    for (auto& kv : p.rows) if (kv.second.type == "music") { row = kv.first; break; }
-                if (!row.empty() && p.rows[row].type == "music") st.selected = add_audio_clip_at(p, row, t, g_dropPath);
-            } else {
-                if (row.empty() || p.rows[row].type != "image")      // not an image lane → use the first image row
-                    for (auto& kv : p.rows) if (kv.second.type == "image") { row = kv.first; break; }
-                if (!row.empty() && p.rows[row].type == "image") st.selected = add_image_clip_at(p, row, t, g_dropPath);
-            }
+            std::string nid = add_asset_clip_placed(p, g_dropPath, t, row);   // clicked lane > free lane > new track
+            if (!nid.empty()) st.selected = nid;
         } else
             library_import(g_dropPath);   // dropped outside the timeline (Media pane etc.) → import-only
         g_hasDrop = false;   // consume the drop
@@ -7174,7 +7225,8 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
     ImGui::SetCursorScreenPos(origin);
     ImGui::Dummy(ImVec2(canvasW, vextH));   // reserve the FULL lane height so the child scrolls to every lane
 
-    // drop a Library item onto a lane → add a clip at that time (image now; audio/video in L3)
+    // drop a Library item onto a lane → place it with the same overlap-aware add-clip placement
+    // (clicked lane > free lane of the type > new track; a rig def → an avatar clip).
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("LIB_ITEM")) {
             std::string path((const char*)pl->Data);
@@ -7182,29 +7234,8 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
             double t = std::max(0.0, st.tlScroll + (m.x - trackX) / pps);
             std::string row;
             for (auto& pr : laneY) if (m.y >= pr.second && m.y < pr.second + ROWH) { row = pr.first; break; }
-            size_t ael = path.size(), rel = strlen(AVATAR_RIG_EXT);
-            std::string rigNm;                                              // a rig def → place an avatar clip
-            if (ael > rel && path.compare(ael - rel, rel, AVATAR_RIG_EXT) == 0) {            // …/<name>.avatar.json
-                rigNm = path.substr(0, ael - rel);
-            } else if (ael > 14 && path.compare(ael - 14, 14, "/manifest.json") == 0) {      // presets/avatars/<name>/manifest.json
-                rigNm = path.substr(0, ael - 14);
-            }
-            if (!rigNm.empty()) { size_t sl = rigNm.find_last_of("/\\"); if (sl != std::string::npos) rigNm = rigNm.substr(sl + 1); }
-            LibType lt = lib_type_of(ext_lower(path));
-            if (!rigNm.empty()) {
-                st.selected = add_avatar_clip_at(p, rigNm, t);
-            } else if (lt == LIB_IMAGE) {
-                if (row.empty() || p.rows[row].type != "image")
-                    for (auto& kv : p.rows) if (kv.second.type == "image") { row = kv.first; break; }
-                if (!row.empty() && p.rows[row].type == "image") st.selected = add_image_clip_at(p, row, t, path);
-            } else if (lt == LIB_AUDIO) {
-                if (row.empty() || p.rows[row].type != "music")
-                    for (auto& kv : p.rows) if (kv.second.type == "music") { row = kv.first; break; }
-                if (!row.empty() && p.rows[row].type == "music") st.selected = add_audio_clip_at(p, row, t, path);
-            } else if (lt == LIB_VIDEO) {  // in-process decode → drop just works (no proxy)
-                if (row.empty() || p.rows[row].type != "video") row = find_or_create_video_row(p);
-                if (!row.empty() && p.rows[row].type == "video") st.selected = add_video_clip_at(p, row, t, path);
-            }
+            std::string nid = add_asset_clip_placed(p, path, t, row);
+            if (!nid.empty()) st.selected = nid;
         }
         ImGui::EndDragDropTarget();
     }
@@ -8223,22 +8254,11 @@ static bool g_openLibRename = false;
 static char g_libRenameBuf[128] = "";
 
 static void library_add_to_timeline(Project& p, UIState& st, const LibItem& it) {
-    if (it.type == LIB_IMAGE) {
-        std::string row;
-        for (auto& kv : p.rows) if (kv.second.type == "image") { row = kv.first; break; }
-        if (row.empty()) { add_track(p, "image", "Footage"); for (auto& kv : p.rows) if (kv.second.type == "image") { row = kv.first; break; } }
-        if (!row.empty()) st.selected = add_image_clip_at(p, row, st.playhead, it.path);
-    } else if (it.type == LIB_AUDIO) {
-        std::string row;
-        for (auto& kv : p.rows) if (kv.second.type == "music") { row = kv.first; break; }
-        if (row.empty()) { add_track(p, "music", "Music"); for (auto& kv : p.rows) if (kv.second.type == "music") { row = kv.first; break; } }
-        if (!row.empty()) st.selected = add_audio_clip_at(p, row, st.playhead, it.path);
-    } else if (it.type == LIB_VIDEO) {  // in-process libav decode → no proxy step needed
-        std::string row = find_or_create_video_row(p);
-        if (!row.empty()) st.selected = add_video_clip_at(p, row, st.playhead, it.path);
-    } else if (it.type == LIB_AVATAR) {  // a rig def → an avatar clip from scratch (it.name = the rig name)
-        st.selected = add_avatar_clip_at(p, it.name, st.playhead);
-    }
+    // double-click / "Add to timeline" → same overlap-aware placement at the playhead as a drag-drop;
+    // an avatar item uses its authoritative rig name (it.name), everything else routes by file type.
+    std::string nid = (it.type == LIB_AVATAR) ? add_avatar_clip_at(p, it.name, st.playhead)
+                                              : add_asset_clip_placed(p, it.path, st.playhead, "");
+    if (!nid.empty()) st.selected = nid;
 }
 
 // ── "Add gen item" (L4 entry point): modals to create a NEW generatable library entry via a
