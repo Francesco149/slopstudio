@@ -3374,6 +3374,16 @@ static bool g_placeIgnoreUntilUp = false;// after a drop arms the tool, ignore p
 static std::string g_placeReq;           // DrawTimeline → DrawUI: a placement to commit (deferred)
 static std::string g_placeReqRow;        // the lane the cursor was over (row-selection prefers it)
 static double g_placeReqT = 0, g_placeReqDur = -1;
+static std::string g_voRegenReq;         // DrawTimeline → DrawUI: an inline VO text edit hit Enter → regen (keep voice/seed)
+// Inline VO-clip text editors (the tall tts rows): a per-box persistent buffer keyed `id+"|text"` /
+// `id+"|ovr"`. Synced FROM the clip params each frame EXCEPT while that box is being edited (else typing
+// is clobbered) — the classic ImGui persistent-buffer trap. Active-set tracks which boxes are live.
+static std::map<std::string, std::string> g_voEdit;
+static std::set<std::string> g_voEditActive;
+// Editable-param buffers for the selected clip (refreshed when the selection or the underlying asset
+// changes; also cleared by apply_generations after reload). Declared here so DrawTimeline's inline VO
+// editors can invalidate it on commit (it feeds the Inspector's own text buffer for the same clip).
+static std::string g_bufFor;
 
 static std::string duplicate_clip(Project& p, const std::string& clipId, double atStart = -1e18) {
     auto it = p.clips.find(clipId);
@@ -6661,6 +6671,21 @@ static std::string add_asset_clip_placed(Project& p, const std::string& path, do
 
 static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, GenLite>& gen) {
     const float GUT = 156.0f, RULER = 22.0f, ROWH = 30.0f;
+    const float VO_TEXT_H = 22.0f;   // height of one inline VO edit lane (tts rows stack text + optional override above a 1.8x body)
+    // Variable row height: tts rows are TALLER (an editable spoken-text lane + a caption-override lane + a
+    // 2x-tall waveform body); every other row stays ROWH. Precompute which tts rows carry an override so the
+    // height is stable within the frame (rowPx is O(1); rowH[] is filled in the row loop for hit-tests).
+    std::set<std::string> rowHasOvr;
+    for (auto& kv : p.clips) if (jstr(kv.second.params, "transcript").size()) rowHasOvr.insert(kv.second.row);
+    auto rowIsTts = [&](const std::string& rid) -> bool {
+        auto it = p.rows.find(rid); return it != p.rows.end() && it->second.type == "tts";
+    };
+    auto rowPx = [&](const std::string& rid) -> float {
+        if (!rowIsTts(rid)) return ROWH;
+        return ROWH * 1.8f + VO_TEXT_H + (rowHasOvr.count(rid) ? VO_TEXT_H : 0.f);
+    };
+    std::map<std::string, float> rowH;   // filled in the row loop below; used by every post-loop hit-test
+    auto rhOf = [&](const std::string& rid) -> float { auto it = rowH.find(rid); return it != rowH.end() ? it->second : ROWH; };
     if (g_tlVScroll >= 0.f) ImGui::SetScrollY(g_tlVScroll);   // headless: pin the lane scroll for shots
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 origin = ImGui::GetCursorScreenPos();
@@ -6692,9 +6717,9 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
     // you scroll to, not just the visible viewport. (The child scrolls vertically; sizing the
     // clip clip-rect/gridlines/playhead to the viewport height anchored at the scrolled origin
     // cut off the bottom lanes' clips by the scroll amount → they rendered empty.)
-    int nLanes = 0;
-    for (auto& tk : p.tracks) for (auto& rid : tk.rows) if (p.rows.count(rid)) nLanes++;
-    float contentH = RULER + nLanes * ROWH;
+    float lanesH = 0.f;
+    for (auto& tk : p.tracks) for (auto& rid : tk.rows) if (p.rows.count(rid)) lanesH += rowPx(rid);
+    float contentH = RULER + lanesH;
     float vextH = std::max(canvasH, contentH);   // draw + scroll extent (≥ viewport)
     float yBot = origin.y + vextH;               // bottom of all vertical spans
 
@@ -6743,6 +6768,7 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
     float laneTop = origin.y + RULER;
     double snapGuideT = -1e30; const double SNAP_PX = 8.0;   // edge-snap while dragging (Alt bypasses); guide line
     int lane = 0;
+    float curY = laneTop;   // running y-accumulator (rows now have variable height; `lane` stays only for the (lane%2) stripe)
     std::vector<std::pair<std::string, float>> laneY;
     std::map<std::string, bool> rowAudio;
     std::string moveTrack; int moveDir = 0;   // deferred track reorder (changes draw/z-order)
@@ -6752,9 +6778,9 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
     std::vector<TrackRange> trackRanges;
     for (auto& tk : p.tracks) {
         bool firstRow = true;
-        float trackTop = laneTop + lane * ROWH;
-        int trackRowN = 0; for (auto& rid : tk.rows) if (p.rows.count(rid)) trackRowN++;
-        float trackH = std::max(1, trackRowN) * ROWH;
+        float trackTop = curY;
+        float trackH = 0.f; for (auto& rid : tk.rows) if (p.rows.count(rid)) trackH += rowPx(rid);
+        if (trackH < 1.f) trackH = ROWH;   // an empty track still shows a gutter row
         bool handleHot = false;
         {   // DRAG the track's gutter (left of the reorder buttons) up/down to reorder it live
             ImGui::PushID(("thandle" + tk.id).c_str());
@@ -6768,10 +6794,11 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
         for (auto& rid : tk.rows) {
             auto it = p.rows.find(rid);
             if (it == p.rows.end()) continue;
-            float ly = laneTop + lane * ROWH;
-            dl->AddRectFilled(ImVec2(origin.x, ly), ImVec2(origin.x + canvasW, ly + ROWH - 2),
+            float ly = curY, rh = rowPx(rid);
+            rowH[rid] = rh;
+            dl->AddRectFilled(ImVec2(origin.x, ly), ImVec2(origin.x + canvasW, ly + rh - 2),
                               (lane % 2) ? IM_COL32(30, 30, 36, 255) : IM_COL32(34, 34, 40, 255));
-            dl->AddRectFilled(ImVec2(origin.x, ly), ImVec2(trackX - 2, ly + ROWH - 2), IM_COL32(42, 42, 50, 255));
+            dl->AddRectFilled(ImVec2(origin.x, ly), ImVec2(trackX - 2, ly + rh - 2), IM_COL32(42, 42, 50, 255));
             std::string lab = it->second.name + "  [" + it->second.type + "]";
             dl->AddText(ImVec2(origin.x + 6, ly + 7), IM_COL32(212, 212, 222, 255), lab.c_str());
             if (firstRow) {   // ▲▼ reorder (higher = drawn on top) · ✕ delete the whole track
@@ -6799,7 +6826,7 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
             }
             laneY.push_back({rid, ly});
             rowAudio[rid] = (tk.kind == "audio");
-            lane++;
+            curY += rh; lane++;
         }
         if (handleHot)   // drag tint OVER the gutter (after the row bg/labels so it reads)
             dl->AddRectFilled(ImVec2(origin.x, trackTop), ImVec2(trackX - 2, trackTop + trackH - 2), IM_COL32(0x88, 0x78, 0xd0, 45));
@@ -6850,14 +6877,53 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
         float ly = -1;
         for (auto& pr : laneY) if (pr.first == c.row) { ly = pr.second; break; }
         if (ly < 0) continue;
+        float rh = rhOf(c.row);
         float x0 = T2X(c.start), x1 = T2X(c.start + c.dur);
         if (x1 < trackX - 2 || x0 > origin.x + canvasW + 2) continue;   // fully off-screen (zoom/scroll) → cull
-        ImVec2 a(x0 + 1, ly + 2), b(std::max(x1 - 1, x0 + 4), ly + ROWH - 4);
+        // tts clips reserve stacked edit lanes ABOVE the body: a spoken-text box, plus a caption-override
+        // box when the row carries any override. The body (waveform) drops to the bottom of the tall band;
+        // topLanes uses rowOvr (not clipOvr) so every clip's body TOP aligns across the row.
+        bool isTts   = (c.type == "tts");
+        bool rowOvr  = rowHasOvr.count(c.row) > 0;
+        bool clipOvr = isTts && !jstr(c.params, "transcript").empty();
+        float topLanes = isTts ? (VO_TEXT_H + (rowOvr ? VO_TEXT_H : 0.f)) : 0.f;
+        ImVec2 a(x0 + 1, ly + topLanes + 2), b(std::max(x1 - 1, x0 + 4), ly + rh - 4);
         const float HANDLE = 6.0f;
         const double dtPerPx = 1.0 / pps;
         const double MINDUR = 0.05;
         bool wide = (b.x - a.x) > HANDLE * 3;   // room for edge trim handles?
         bool hovered = false;
+
+        // ── inline VO editors: a spoken-text box (Enter = regen this line, keeping the voice) and, when the
+        //    row shows overrides, a caption-override box (Enter just commits — captions re-chunk on `transcript`
+        //    regen). Submitted before the body/handles; they sit in the top lanes so there's no press conflict.
+        //    Persistent per-box buffer synced from params EXCEPT while being edited (else typing is clobbered).
+        if (isTts && (x1 - x0) >= 24.f) {   // too-narrow clips (zoomed out) edit via the inspector instead
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 2));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f);
+            float boxW = x1 - x0;
+            auto voBox = [&](const char* field, const char* suffix, float yTop, bool regenOnEnter, bool tint) {
+                std::string key = c.id + "|" + suffix;
+                if (!g_voEditActive.count(key)) g_voEdit[key] = jstr(c.params, field);
+                ImGui::SetCursorScreenPos(ImVec2(x0, yTop));
+                ImGui::SetNextItemWidth(boxW);
+                if (tint) ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(58, 50, 24, 255));  // viewer-facing caption = yellow-ish
+                bool ent = ImGui::InputText(("##vo" + std::string(suffix) + c.id).c_str(), &g_voEdit[key], ImGuiInputTextFlags_EnterReturnsTrue);
+                bool act = ImGui::IsItemActivated(), deact = ImGui::IsItemDeactivated();
+                if (tint) ImGui::PopStyleColor();
+                if (act) g_voEditActive.insert(key);
+                if (deact) {   // commit on defocus (covers Enter, click-away, Tab)
+                    g_voEditActive.erase(key);
+                    c.params[field] = g_voEdit[key];
+                    if (std::string(field) == "text") c.label = snippet(g_voEdit[key]);
+                    g_undoDirty = true; g_bufFor.clear();
+                }
+                if (ent && regenOnEnter) g_voRegenReq = c.id;
+            };
+            if (clipOvr) voBox("transcript", "ovr", ly, false, true);            // top lane (only if this clip has one)
+            voBox("text", "text", ly + (rowOvr ? VO_TEXT_H : 0.f), true, false); // spoken text lane
+            ImGui::PopStyleVar(2);
+        }
 
         // volume-envelope breakpoint handles — submitted BEFORE the edge/body buttons so a press GRABS the
         // point, not the clip/trim (ImGui 1.91 gives an overlapping press to the first-submitted item).
@@ -7014,7 +7080,7 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
                     // (committed after the loop so we don't reshuffle membership mid-iteration).
                     float my = io.MousePos.y;
                     for (auto& pr : laneY)
-                        if (my >= pr.second && my < pr.second + ROWH) {
+                        if (my >= pr.second && my < pr.second + rhOf(pr.first)) {
                             auto tr = p.rows.find(pr.first);
                             if (tr != p.rows.end() && pr.first != c.row && tr->second.type == c.type) {
                                 rowMoveClip = c.id; rowMoveTo = pr.first; rowMoveY = pr.second;
@@ -7108,7 +7174,7 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
         }
     }
     if (!rowMoveClip.empty()) {                  // dragging onto a new same-type lane: highlight it + commit
-        dl->AddRect(ImVec2(trackX, rowMoveY + 1), ImVec2(origin.x + canvasW, rowMoveY + ROWH - 3),
+        dl->AddRect(ImVec2(trackX, rowMoveY + 1), ImVec2(origin.x + canvasW, rowMoveY + rhOf(rowMoveTo) - 3),
                     IM_COL32(120, 220, 160, 230), 4.0f, 0, 2.5f);
         if (move_clip_to_row(p, rowMoveClip, rowMoveTo)) g_undoDirty = true;
     }
@@ -7207,7 +7273,7 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
     if (!g_placeType.empty()) {
         ImGuiIO& pio = ImGui::GetIO();
         auto tAt   = [&](float x) { double t = st.tlScroll + (x - trackX) / pps; return t < 0 ? 0.0 : t; };
-        auto rowAt = [&](float y) -> std::string { for (auto& pr : laneY) if (y >= pr.second && y < pr.second + ROWH) return pr.first; return ""; };
+        auto rowAt = [&](float y) -> std::string { for (auto& pr : laneY) if (y >= pr.second && y < pr.second + rhOf(pr.first)) return pr.first; return ""; };
         auto rowY  = [&](const std::string& r) -> float { for (auto& pr : laneY) if (pr.first == r) return pr.second; return -1.f; };
         static double placeT0 = -1e30; static std::string placeRow;
         bool active = placeActive;               // captured from the pre-clip catcher above
@@ -7245,12 +7311,13 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
                 }
                 float py = rowY(tgt);
                 if (py < 0) { py = rowY(clk); if (py < 0 && !laneY.empty()) py = laneY.back().second; }   // new lane rides the cursor lane
+                float ph = newLane ? ROWH : rhOf(tgt);   // ghost fills the target row (tall for a tts lane)
                 float x0 = T2X(a), x1 = T2X(std::max(a + durP, a + 0.02));
                 ImU32 fill = newLane ? IM_COL32(0x8a, 0x84, 0xb0, 70) : IM_COL32(0x7f, 0xd8, 0xa8, 70);
                 ImU32 line = newLane ? IM_COL32(0x8a, 0x84, 0xb0, 235) : IM_COL32(0x7f, 0xd8, 0xa8, 235);
                 if (py >= 0) {
-                    dl->AddRectFilled(ImVec2(x0, py + 2), ImVec2(x1, py + ROWH - 3), fill, 4.f);
-                    dl->AddRect(ImVec2(x0, py + 2), ImVec2(x1, py + ROWH - 3), line, 4.f, 0, 1.5f);
+                    dl->AddRectFilled(ImVec2(x0, py + 2), ImVec2(x1, py + ph - 3), fill, 4.f);
+                    dl->AddRect(ImVec2(x0, py + 2), ImVec2(x1, py + ph - 3), line, 4.f, 0, 1.5f);
                     if (newLane) dl->AddText(ImVec2(x0 + 5, py + 6), IM_COL32(0xe8, 0xe4, 0xff, 255), "+ new track");
                 }
             }
@@ -7287,7 +7354,7 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
                 for (auto& kv : p.clips) { const Clip& cc = kv.second;
                     float ly = -1.f; for (auto& pr : laneY) if (pr.first == cc.row) { ly = pr.second; break; }
                     if (ly < 0) continue;
-                    if (ly < y1 && ly + ROWH > y0 && cc.start < tb && cc.start + cc.dur > ta) hit.insert(kv.first);
+                    if (ly < y1 && ly + rhOf(cc.row) > y0 && cc.start < tb && cc.start + cc.dur > ta) hit.insert(kv.first);
                 }
                 st.sel = hit; st.selected = hit.empty() ? std::string() : *hit.begin();
             }
@@ -7316,9 +7383,7 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
     if (!deleteTrack.empty()) { delete_track(p, deleteTrack); st.selected.clear(); g_undoDirty = true; }
 }
 
-// Editable-param buffers for the selected clip (refreshed when the selection or the
-// underlying asset changes; g_bufFor is also cleared by apply_generations after reload).
-static std::string g_bufFor;
+// (g_bufFor declared above, before DrawTimeline — the inline VO editors clear it on commit.)
 
 // Transform clipboard (Clip menu / Ctrl+Shift+C/V): carries one clip's static transform to
 // another. In-memory only — placement, not content; keyframes stay with their clip.
@@ -10496,6 +10561,11 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
             start_generate(p, id);
         }
         g_bufFor.clear(); g_undoDirty = true;
+    }
+    if (!g_voRegenReq.empty()) {  // inline VO spoken-text edit hit Enter → regen THIS line (no seed bump: the
+        auto gi = gen.find(g_voRegenReq);                          // reworded text drives a fresh gen; the voice stays put)
+        if (gi == gen.end() || gi->second.state != 1) start_generate(p, g_voRegenReq);
+        g_voRegenReq.clear(); g_bufFor.clear(); g_undoDirty = true;
     }
 
     lib_poll_gen_done();         // land finished library gens → invalidate caches + rescan
