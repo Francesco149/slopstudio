@@ -39,8 +39,20 @@ in the same change that lands work, so a fresh session reorients in ~60s. Last u
 - **Scene crossfade by default** (`1b81c60`): `retime` now overlaps a contiguous FULL-FRAME scene cut by 0.4s
   so it cross-dissolves (editor fades the same-row overlap) instead of hard-snapping (owner's 392s note).
   Same-row only for now; cross-row image→video scene changes are a noted follow-up.
-**STILL OPEN:** Phase 4a layout engine (deferred, "attempt last"; the kirby test showed the current
-inference-based placement composes well) · scene crossfade for CROSS-ROW cuts (image-row → video-row).
+**Owner feedback round 2 — DEFAULT-COMPOSITION tuning (all landed, from the kirby-smoke review):**
+- **`slop.py skeleton` defaults** (`c5f6ab7`): a whole-video **noir "basic look"** (strength 0.25 / vignette
+  0.10; `look:false` off); **insets sit on the bare CHECKER** (`blur_fill:true` opts a nice photo into the
+  blur backdrop); a **fullscreen VIDEO beat solos** (no host over wide footage; `host:true` overrides);
+  **host-only beats rotate a room↔desk backdrop** (materialised by default); caption/quote/term beats → checker.
+- **TERM-PLATE-ON-FACE bug fixed** (`b34ca13`): `place:"auto"` was set AFTER new_clip() copied params → dropped,
+  so every term plate centred over the host. Now corners clear of her. Also: `gemma-heh.wav` reuse for laughs
+  is now an explicit skill rule (never genvo a "fufu"/"heh").
+- **Cross-row scene crossfade** (`2d22a4e`): the retime crossfade now fades BOTH sides (outgoing out + incoming
+  in) so an image-row→video-row cut dissolves regardless of z-order, not just same-row.
+- **Filter strength/vignette independent + blur-aware-swap revert** (`414d2ac`, prior round).
+- **kirby-smoke re-authored** on all of it (projects `762e27a`): charts fullscreen-solo, checker insets, rotating
+  host bg, corner term plate, noir look, 4 crossfades. Frames on the feed.
+**STILL OPEN:** Phase 4a layout engine (deferred, "attempt last").
 
 **★ The mouse-driven-UX overhaul + the visual-variety stretch goal — most of it LANDED in an autonomous
 overnight session (2026-07-14 night). Full arc + what remains: `docs/UX_OVERHAUL.md` (top STATUS block).**
