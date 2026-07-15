@@ -177,15 +177,20 @@ widgets = {}
 function widgets.quote(t, d)
   d = d or {}
   local e = anim.rise(t, 0.5)
-  return center(col{
-    ax = "c", gap = 20, pw = 0.66,
-    kids = {
-      text("\u{201C}",                 { size = 128, col = theme.accent(0.20 + 0.45 * e), ta = "c" }),
-      text(d.text or "",               { size = 54,  col = theme.fg,        ta = "c", wrap = "words" }),
-      rule{ w = 120 },
-      text("\u{2014} " .. (d.cite or ""), { size = 30, col = theme.accent(1), ta = "c" }),
-    }
-  })
+  local kids = {
+    text("\u{201C}",                 { size = 128, col = theme.accent(0.20 + 0.45 * e), ta = "c" }),
+    text(d.text or "",               { size = 54,  col = theme.fg,        ta = "c", wrap = "words" }),
+    rule{ w = 120 },
+    text("\u{2014} " .. (d.cite or ""), { size = 30, col = theme.accent(1), ta = "c" }),
+  }
+  -- optional corrective SUBTEXT (d.wrong = red → "the source is mistaken"), fades in after the quote
+  if d.sub and d.sub ~= "" then
+    local se = anim.rise(t - 0.4, 0.5)
+    kids[#kids + 1] = spacer(8)
+    kids[#kids + 1] = text(d.sub, { size = 36, ta = "c", wrap = "words",
+      col = theme.fade(d.wrong and { 236, 98, 112 } or theme.dim, se) })
+  end
+  return center(col{ ax = "c", gap = 20, pw = 0.7, kids = kids })
 end
 
 -- a big animated number + label (the count-up "receipt")
