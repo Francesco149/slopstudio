@@ -236,6 +236,40 @@ function widgets.cardflip(t, d)
   return center(image{ asset = face, pw = d.size or 0.5, aspect = true, scx = sx, glow = d.glow or 0 })
 end
 
+-- DRAG — a card "grabbed" and dragged along a cursor path, lagging behind with a velocity spring
+-- (the Balatro dangle): it leans into the motion (rot ∝ horizontal velocity) and settles when the
+-- cursor stops. Deterministic: re-integrates the spring from t=0 each frame (O(t·60), fine here).
+-- data: { image, path={ {t=sec,x=0..1,y=0..1}, ... }, stiffness, damping, lean=deg-per-(frac/s),
+--         size=0..1(pw), glow=0..1 }
+function widgets.drag(t, d)
+  d = d or {}
+  local path = d.path or { { t = 0, x = 0.5, y = 0.5 } }
+  local function target(tt)                                  -- piecewise-linear cursor position at tt
+    if tt <= path[1].t then return path[1].x, path[1].y end
+    for i = 2, #path do
+      if tt <= path[i].t then
+        local a, b = path[i - 1], path[i]
+        local f = (tt - a.t) / math.max(1e-4, b.t - a.t)
+        return a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f
+      end
+    end
+    return path[#path].x, path[#path].y
+  end
+  local dt = 1 / 60
+  local px, py = target(0)
+  local vx, vy = 0, 0
+  local st, dm = d.stiffness or 90, d.damping or 12
+  for i = 1, math.floor(t / dt) do
+    local tx, ty = target(i * dt)
+    px, vx = anim.spring_step(px, vx, tx, dt, st, dm)
+    py, vy = anim.spring_step(py, vy, ty, dt, st, dm)
+  end
+  local W, H = (frame and frame.w) or 1920, (frame and frame.h) or 1080
+  local rot = anim.clamp(vx * (d.lean or 26), -16, 16)       -- lean into the horizontal velocity
+  return center(image{ asset = d.image, pw = d.size or 0.28, aspect = true,
+    tx = (px - 0.5) * W, ty = (py - 0.5) * H, rot = rot, glow = d.glow or 0 })
+end
+
 -- COMPARISON — N cells (image + caption) side by side, staggered in. data:
 --   { title="...", items = { { image=uri, label="..." }, ... } }
 function widgets.comparison(t, d)

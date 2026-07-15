@@ -12,7 +12,7 @@
     { "id": "tk_v", "name": "Video", "kind": "video", "rows": ["r_scene"] }
   ],
   "rows": {
-    "r_scene": { "type": "scene", "name": "Scene", "params": {}, "clips": ["sc_reveal", "sc_flip", "sc_spin"] }
+    "r_scene": { "type": "scene", "name": "Scene", "params": {}, "clips": ["sc_reveal", "sc_flip", "sc_spin", "sc_drag"] }
   },
   "clips": {
     "sc_reveal": {
@@ -38,6 +38,30 @@
       "params": {
         "script": "local t, d = ...\nlocal e = anim.rise(t, 0.6)\nreturn center(image{ asset = d.image, pw = 0.5, aspect = true, rot = -6 + 12 * anim.io_cubic((t % 3) / 3), glow = 0.6 + 0.4 * e, radius = 18 })",
         "data": { "image": "docs/hero/editor.png" }
+      },
+      "transform": { "pos": [0, 0], "scale": [1, 1], "rot": 0, "opacity": 1, "anchor": [0.5, 0.5] },
+      "keyframes": {}
+    },
+    "sc_drag": {
+      "row": "r_scene", "start": 12.0, "dur": 6.0,
+      "params": {
+        "script": "local t, d = ...\nreturn widgets.drag(t, d)",
+        "data": {
+          "image": "docs/hero/code-card.png",
+          "glow": 0.35,
+          "path": [
+            { "t": 0.0, "x": 0.5, "y": 0.5 },
+            { "t": 0.8, "x": 0.5, "y": 0.5 },
+            { "t": 1.3, "x": 0.24, "y": 0.42 },
+            { "t": 1.9, "x": 0.24, "y": 0.42 },
+            { "t": 2.5, "x": 0.76, "y": 0.6 },
+            { "t": 3.1, "x": 0.76, "y": 0.6 },
+            { "t": 3.7, "x": 0.5, "y": 0.28 },
+            { "t": 4.3, "x": 0.5, "y": 0.28 },
+            { "t": 5.0, "x": 0.5, "y": 0.5 },
+            { "t": 6.0, "x": 0.5, "y": 0.5 }
+          ]
+        }
       },
       "transform": { "pos": [0, 0], "scale": [1, 1], "rot": 0, "opacity": 1, "anchor": [0.5, 0.5] },
       "keyframes": {}
