@@ -44,13 +44,14 @@ function box(o) return node("box", o) end
 function row(o) return node("row", o) end
 function col(o) return node("col", o) end
 function text(s, o) o = o or {}; o.k = "text"; o.s = tostring(s == nil and "" or s); return o end
+function image(o) o = o or {}; o.k = "image"; return o end   -- { asset=uri, crop={x,y,w,h}(0..1), fit, tint, radius, grow/w/h }
 function rule(o) o = o or {}; return box{ h = o.h or 3, w = o.w, growx = (o.w == nil) or nil, bg = o.col or theme.accent(1) } end
 function spacer(px, horizontal) if horizontal then return box{ w = px } else return box{ h = px } end end
 -- fill the frame and center a single child in it
 function center(child) return box{ growx = true, growy = true, ax = "c", ay = "c", kids = { child } } end
 
 layout = { box = box, row = row, col = col, center = center }
-nodes  = { text = text, rule = rule, spacer = spacer }
+nodes  = { text = text, image = image, rule = rule, spacer = spacer }
 
 -- widgets — composed from the above; copy + fork inline whenever you need custom ---
 widgets = {}
@@ -81,4 +82,44 @@ function widgets.stat(t, d)
       text(d.label or "",                 { size = 34,  col = theme.dim, ta = "c" }),
     }
   })
+end
+
+-- the DOCUMENT widget — pan/zoom a high-DPI screenshot between excerpts, each with a
+-- translation card, plus a persistent source-URL chip. The interview case. data:
+--   { image=uri, source="url",
+--     excerpts = { { rect={x,y,w,h}(0..1 of source), hold=sec, tr="translation" }, ... },
+--     trans=sec (pan duration), from={x,y,w,h} (opening crop, default whole page) }
+function widgets.document(t, d)
+  d = d or {}
+  local ex = d.excerpts or {}
+  local trans = d.trans or 0.9
+  local function rectof(i) local e = ex[i]; return (e and e.rect) or { 0, 0, 1, 1 } end
+  -- which excerpt are we in? accumulate (trans + hold) per excerpt; hold on the last.
+  local idx, tprev, acc = 1, 0, 0
+  for i = 1, #ex do
+    local seg = trans + (ex[i].hold or 2.5)
+    if t < acc + seg or i == #ex then idx = i; tprev = acc; break end
+    acc = acc + seg
+  end
+  local lt = t - tprev
+  local from = (idx > 1) and rectof(idx - 1) or (d.from or { 0, 0, 1, 1 })
+  local to = rectof(idx)
+  local e = anim.rise(lt, trans)                              -- 0..1 pan/zoom progress
+  local crop = { from[1] + (to[1] - from[1]) * e, from[2] + (to[2] - from[2]) * e,
+                 from[3] + (to[3] - from[3]) * e, from[4] + (to[4] - from[4]) * e }
+  local cur = ex[idx] or {}
+  local shown = anim.clamp((lt - trans * 0.55) / 0.4, 0, 1)   -- translation fades in as the pan settles
+  local W = (frame and frame.w) or 1920
+  local kids = { image{ asset = d.image, grow = true, crop = crop } }
+  if cur.tr and cur.tr ~= "" then
+    kids[#kids + 1] = box{ float = "bc", fy = -70, w = math.floor(W * 0.84), pad = 24, radius = 14,
+      bg = theme.fade(theme.bg, 0.92 * shown),
+      kids = { text(cur.tr, { size = 40, col = theme.fade(theme.fg, shown), ta = "c", wrap = "words" }) } }
+  end
+  if d.source and d.source ~= "" then
+    kids[#kids + 1] = box{ float = "tr", fx = -28, fy = 28, pad = 12, radius = 10,
+      bg = theme.fade(theme.bg, 0.85),
+      kids = { text(d.source, { size = 24, col = theme.accent(1) }) } }
+  end
+  return box{ growx = true, growy = true, kids = kids }
 end

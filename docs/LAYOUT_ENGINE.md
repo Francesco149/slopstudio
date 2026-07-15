@@ -6,7 +6,8 @@ composed visual can be authored natively — transparent, **reflowable**, adjust
 **minimal layout baking**, instead of hand-cut opaque PNGs per situation. Build spans
 several sessions (owner: "take the time to design this properly"). It lives in **one
 self-contained clip type**; if it ever misbehaves, a beat falls back to a plain `image`
-clip with zero blast radius. **P1 (the kernel) is built + proven** — see §11; `examples/scene-demo.slop.json`.
+clip with zero blast radius. **P1 (kernel) + P2a (in-editor Lua editing · image/pan-zoom · the `document`
+widget) are built + proven** — see §11; `examples/scene-demo.slop.json`.
 
 The one-liner: **ImGui to draw · Clay to lay out · Lua to script.**
 
@@ -257,13 +258,20 @@ Built as stdlib Lua on top of the kernel. Each is transparent, reflowable, and d
 - ✓ **Spikes confirmed:** Clay drives fine imperatively from a tree-walk; Lua 5.4 cross-compiles
   into the PE clean (all 33 core objects). Node schema + stdlib API: this doc §6–§7 + std.lua.
 
-**P2 — widgets + the interview case + tooling.**
-- `widgets`: `quote`(parity), `stat`, `callout`, `split`, `comparison`, `lineage`, and the
-  **`document`** pan/zoom-excerpt widget.
-- `slop.py scene`/`doc` verbs + `scene-check` headless lint; inspector Lua editor + hot-reload.
-- **Proof:** replace 2–3 kirby thumb-tool PNGs (lineage, a comparison board) + one interview
-  screenshot (trains/takoyaki/chicken-race) with scenes. This is what actually unblocks the
-  kirby "solid rectangles" fix.
+**P2 — widgets + the interview case + tooling. (partly done 2026-07-15.)**
+- ✓ **In-editor Lua editing** — the scene inspector has a `script` editor + a `data` (JSON) editor
+  (persistent buffer, applies on valid parse), a **reload std.lua** button (tears down the VM →
+  stdlib + scripts recompile), and inline compile/runtime errors. Script edits recompile by hash.
+- ✓ **IMAGE render commands** — an `image` node (asset uri → `get_texture` → SRV) with a `crop`
+  (0..1 pan/zoom window) + tint + radius; **floating** overlays (`float="tl|tr|bl|br|bc|…"` + fx/fy,
+  attach to root) for cards/chips over an image. Frame size exposed to the stdlib as a global `frame`.
+- ✓ **`widgets.document`** — the interview case: pan/zoom a screenshot between `excerpts` (each an
+  animated crop + a translation strap that fades in on settle) + a persistent source-URL chip.
+  Proof: `examples/scene-demo.slop.json` (the `sc_doc` clip pans across `docs/hero/editor.png`; feed).
+- **REMAINING P2:** more widgets (`callout`/`split`/`comparison`/`lineage`); CUSTOM vector-shape
+  render commands (arrows/lines); `slop.py scene`/`doc` verbs + `scene-check` headless lint; std.lua
+  auto-reload on mtime. **Then** swap 2–3 kirby thumb-tool PNGs + an interview screenshot to scenes —
+  what actually unblocks the kirby "solid rectangles" fix.
 
 **P3 — parity + migration + polish.**
 - `widgets.diagram`/`widgets.chart` at parity → retire the C++ `diagram`/`plot` draw paths (or

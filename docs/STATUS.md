@@ -23,12 +23,19 @@ ImGui `CalcTextSizeA`) and draws the render commands with `ImDrawList` — trans
 Forkable stdlib at **`presets/lua/std.lua`** (anim/layout/theme + `widgets.quote`/`widgets.stat`). **Proof:**
 `examples/scene-demo.slop.json` renders a centered quote card + a count-up stat on the bare checker (feed montage),
 both time-driven (`anim.rise`/`anim.count`). Clay's C++20 header floor relaxed to C++17 (local patch, noted in
-the header — we use its imperative API, not the macros). **REMAINING P2** (image + custom-shape render commands;
-the `document` pan/zoom-excerpt widget = the interview case; `slop.py scene`/`scene-check` headless lint;
-in-editor Lua editor + hot-reload; then swap kirby's thumb-tool PNGs → scenes) **→ P3** (diagram/chart parity;
-crisp large text — ImGui 1.91.4 bakes 48px so big text is soft, size-ladder/1.92 fix). Self-contained clip →
-PNG fallback always. **KIRBY:** the quote-clip reuse (tilt-sensor/MBC7 → `style:"quote"`) is engine-independent,
-do anytime; the diagram/card-PNG→transparent-scene swaps wait on P2.
+the header — we use its imperative API, not the macros).
+**★ P2a SHIPPED (2026-07-15, same session):** (1) **in-editor Lua editing** — the scene inspector has a
+`script` editor + a `data` (JSON) editor + a `reload std.lua` button + inline errors (script edits recompile
+by hash); (2) **IMAGE render commands** — an `image` node (uri→`get_texture`→SRV) with a `crop` (0..1 pan/zoom
+window) + tint/radius, plus **floating** overlays (`float="bc"/"tr"/…`+fx/fy, attach to root) for cards/chips;
+(3) **`widgets.document`** — the interview case: pan/zoom a screenshot between `excerpts` (animated crop) with a
+translation strap that fades in on settle + a persistent source-URL chip (proof: `sc_doc` in
+`examples/scene-demo.slop.json` pans across `docs/hero/editor.png`; feed montage). **REMAINING P2:** more widgets
+(`callout`/`split`/`comparison`/`lineage`); CUSTOM vector-shape commands (arrows/lines); `slop.py scene`/`scene-check`
+headless lint; std.lua auto-reload on mtime; then swap kirby's thumb-tool diagram PNGs → scenes. **→ P3**
+(diagram/chart parity; crisp large text — ImGui 1.91.4 bakes 48px so big text is soft, size-ladder/1.92 fix).
+Self-contained clip → PNG fallback always. **KIRBY:** the quote-clip reuse (tilt-sensor/MBC7 → `style:"quote"`)
+is engine-independent, do anytime; the diagram/card-PNG→transparent-scene swaps come after the remaining P2 widgets.
 **★★ OWNER LIVE-TEST SESSION (2026-07-14 pm) — 5 fixes, all owner-confirmed:**
 - **Playback perf FIXED** (`d8fd36d`): recettear playback tanked to ~100 ms/frame. Profiled via a new
   **`SLOP_PERF=1` frame profiler** (kept, gated) → the cost was `audio_pump` rebuilding the whole mixer

@@ -5045,6 +5045,10 @@ static bool                 g_clayInit   = false;
 static std::vector<char>    g_clayMem;                   // Clay arena backing store
 static std::map<size_t,int> g_sceneChunks;               // script-hash -> compiled-chunk ref
 static std::string          g_sceneErr;                  // last error (drawn as a card)
+// image nodes resolve a texture (srv + crop uv + tint) into this per-frame pool; Clay carries the
+// pointer through to the IMAGE render command. A std::deque keeps element addresses stable on push.
+struct SceneImg { ID3D11ShaderResourceView* srv; float u0, v0, u1, v1; Clay_Color tint; float radius; };
+static std::deque<SceneImg>  g_sceneImgs;
 
 // Clay measures text in PROJECT px; ImGui scales the 48px atlas (soft at extremes — see doc §9).
 static Clay_Dimensions scene_measure(Clay_StringSlice text, Clay_TextElementConfig* cfg, void* ud) {
@@ -5133,6 +5137,10 @@ static int scene_get_chunk(lua_State* L, const std::string& src) {
     size_t h = std::hash<std::string>{}(src);
     auto it = g_sceneChunks.find(h);
     if (it != g_sceneChunks.end()) return it->second;
+    if (g_sceneChunks.size() > 64) {   // live editing churns a fresh hash per keystroke → bound it
+        for (auto& kv : g_sceneChunks) if (kv.second != LUA_NOREF) luaL_unref(L, LUA_REGISTRYINDEX, kv.second);
+        g_sceneChunks.clear();
+    }
     if (luaL_loadbuffer(L, src.data(), src.size(), "@scene") != LUA_OK) {
         g_sceneErr = std::string("compile: ") + lua_tostring(L, -1); lua_pop(L, 1);
         g_sceneChunks[h] = LUA_NOREF; return LUA_NOREF;
@@ -5169,9 +5177,66 @@ static void scene_sizing(Clay_SizingAxis* ax, double fixed, double pct, bool gro
     else { ax->type = CLAY__SIZING_TYPE_FIT; ax->size.minMax.min = 0; ax->size.minMax.max = 1e30f; }
 }
 
+// A node may `float` over the layout: attach its corner to the same corner of the root, offset by
+// fx/fy (px). Lets a widget drop a translation card / URL chip on top of a full-frame image.
+static void scene_apply_float(lua_State* L, int idx, Clay_ElementDeclaration* d) {
+    lua_getfield(L, idx, "float");
+    bool has = !lua_isnil(L, -1);
+    std::string c = lua_isstring(L, -1) ? lua_tostring(L, -1) : "";
+    lua_pop(L, 1);
+    if (!has) return;
+    auto ap = [](const std::string& s) -> Clay_FloatingAttachPointType {
+        if (s == "tr") return CLAY_ATTACH_POINT_RIGHT_TOP;
+        if (s == "bl") return CLAY_ATTACH_POINT_LEFT_BOTTOM;
+        if (s == "br") return CLAY_ATTACH_POINT_RIGHT_BOTTOM;
+        if (s == "tc" || s == "t") return CLAY_ATTACH_POINT_CENTER_TOP;
+        if (s == "bc" || s == "b") return CLAY_ATTACH_POINT_CENTER_BOTTOM;
+        if (s == "cl" || s == "l") return CLAY_ATTACH_POINT_LEFT_CENTER;
+        if (s == "cr" || s == "r") return CLAY_ATTACH_POINT_RIGHT_CENTER;
+        if (s == "c") return CLAY_ATTACH_POINT_CENTER_CENTER;
+        return CLAY_ATTACH_POINT_LEFT_TOP;   // "tl" default
+    };
+    d->floating.attachTo = CLAY_ATTACH_TO_ROOT;
+    d->floating.attachPoints.element = ap(c);
+    d->floating.attachPoints.parent = ap(c);
+    d->floating.offset.x = (float)lf_num(L, idx, "fx", 0);
+    d->floating.offset.y = (float)lf_num(L, idx, "fy", 0);
+    d->floating.zIndex = (int16_t)lf_num(L, idx, "z", 1);
+    d->floating.pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH;
+}
+
 // Recursively drive Clay from the node table at absolute index `idx` (stack-balanced).
 static void scene_walk(lua_State* L, int idx) {
     std::string k = lf_str(L, idx, "k", "box");
+    if (k == "image") {
+        std::string uri = lf_str(L, idx, "asset", "");
+        if (uri.empty()) uri = lf_str(L, idx, "uri", "");
+        Tex* tex = uri.empty() ? nullptr : get_texture(uri);
+        SceneImg si; si.srv = tex ? tex->srv : nullptr; si.u0 = 0; si.v0 = 0; si.u1 = 1; si.v1 = 1;
+        lua_getfield(L, idx, "crop");   // {x,y,w,h} as fractions 0..1 of the source → the pan/zoom window
+        if (lua_istable(L, -1)) {
+            lua_geti(L, -1, 1); float cx = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+            lua_geti(L, -1, 2); float cy = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+            lua_geti(L, -1, 3); float cw = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+            lua_geti(L, -1, 4); float ch = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+            si.u0 = cx; si.v0 = cy; si.u1 = cx + cw; si.v1 = cy + ch;
+        }
+        lua_pop(L, 1);
+        Clay_Color tint{ 255, 255, 255, 255 }; lf_color(L, idx, "tint", &tint); si.tint = tint;
+        si.radius = (float)lf_num(L, idx, "radius", 0);
+        g_sceneImgs.push_back(si);
+        Clay_ElementDeclaration d; memset(&d, 0, sizeof d);
+        bool grow = lf_bool(L, idx, "grow", false);
+        scene_sizing(&d.layout.sizing.width,  lf_num(L, idx, "w", -1), lf_num(L, idx, "pw", -1), grow || lf_bool(L, idx, "growx", false));
+        scene_sizing(&d.layout.sizing.height, lf_num(L, idx, "h", -1), lf_num(L, idx, "ph", -1), grow || lf_bool(L, idx, "growy", false));
+        if (tex && tex->h > 0 && lf_bool(L, idx, "aspect", false)) d.aspectRatio.aspectRatio = (float)tex->w / (float)tex->h;
+        d.image.imageData = &g_sceneImgs.back();
+        d.backgroundColor = tint;
+        d.cornerRadius.topLeft = d.cornerRadius.topRight = d.cornerRadius.bottomLeft = d.cornerRadius.bottomRight = si.radius;
+        scene_apply_float(L, idx, &d);
+        Clay__OpenElement(); Clay__ConfigureOpenElement(d); Clay__CloseElement();
+        return;
+    }
     if (k == "text") {
         Clay_TextElementConfig tc; memset(&tc, 0, sizeof tc);
         Clay_Color col{ 238, 240, 248, 255 }; lf_color(L, idx, "col", &col); tc.textColor = col;
@@ -5207,6 +5272,7 @@ static void scene_walk(lua_State* L, int idx) {
     if (bw > 0) { Clay_Color bc{ 255, 255, 255, 255 }; lf_color(L, idx, "bc", &bc); d.border.color = bc;
         d.border.width.left = d.border.width.right = d.border.width.top = d.border.width.bottom = (uint16_t)bw; }
     if (lf_bool(L, idx, "clip", false)) { d.clip.horizontal = true; d.clip.vertical = true; }
+    scene_apply_float(L, idx, &d);
     Clay__OpenElement();
     Clay__ConfigureOpenElement(d);
     lua_getfield(L, idx, "kids");
@@ -5236,9 +5302,17 @@ static void scene_draw_cmds(ImDrawList* dl, Clay_RenderCommandArray cmds, ImVec2
                 dl->AddRect(p0, p1, C(br.color), br.cornerRadius.topLeft * s, 0, (w > 0 ? w : 1) * s); } break;
             case CLAY_RENDER_COMMAND_TYPE_TEXT: { auto& tx = cmd->renderData.text;
                 dl->AddText(font, tx.fontSize * s, p0, C(tx.textColor), tx.stringContents.chars, tx.stringContents.chars + tx.stringContents.length); } break;
+            case CLAY_RENDER_COMMAND_TYPE_IMAGE: { auto& im = cmd->renderData.image;
+                SceneImg* si = (SceneImg*)im.imageData;
+                if (si && si->srv) {
+                    ImU32 tint = C(si->tint); ImVec2 uv0(si->u0, si->v0), uv1(si->u1, si->v1);
+                    if (si->radius > 0) dl->AddImageRounded((ImTextureID)(intptr_t)si->srv, p0, p1, uv0, uv1, tint, si->radius * s);
+                    else dl->AddImage((ImTextureID)(intptr_t)si->srv, p0, p1, uv0, uv1, tint);
+                } else dl->AddRectFilled(p0, p1, IM_COL32(38, 40, 52, (int)(120 * glob)), 6 * s);   // missing-asset placeholder
+            } break;
             case CLAY_RENDER_COMMAND_TYPE_SCISSOR_START: dl->PushClipRect(p0, p1, true); break;
             case CLAY_RENDER_COMMAND_TYPE_SCISSOR_END:   dl->PopClipRect(); break;
-            default: break;   // IMAGE + CUSTOM (shapes): P2
+            default: break;   // CUSTOM (vector shapes): later in P2
         }
     }
 }
@@ -5263,6 +5337,7 @@ static void draw_scene_clip(ImDrawList* dl, float cx, float cy, float s, Clip& c
     if (src.empty()) { draw_scene_error(dl, f0, fw, fh, s, "empty (set params.script)"); return; }
     lua_State* L = g_sceneL;
     g_sceneErr.clear();
+    g_sceneImgs.clear();   // per-frame image-handle pool (Clay carries pointers into it → draw)
     int ref = scene_get_chunk(L, src);
     if (ref == LUA_NOREF) { draw_scene_error(dl, f0, fw, fh, s, g_sceneErr); return; }
     lua_rawgeti(L, LUA_REGISTRYINDEX, ref);            // push chunk
@@ -5274,6 +5349,16 @@ static void draw_scene_clip(ImDrawList* dl, float cx, float cy, float s, Clip& c
     lua_pushnumber(L, fw / s);  lua_setfield(L, -2, "w");
     lua_pushnumber(L, fh / s);  lua_setfield(L, -2, "h");
     lua_pushnumber(L, tl);      lua_setfield(L, -2, "t");
+    // Expose the frame size to the stdlib as a global `frame` {w,h}: floating overlays need a
+    // concrete width (Clay's PERCENT sizing doesn't resolve against the root for a floating box).
+    if (g_sandboxRef != LUA_NOREF) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, g_sandboxRef);
+        lua_createtable(L, 0, 2);
+        lua_pushnumber(L, fw / s); lua_setfield(L, -2, "w");
+        lua_pushnumber(L, fh / s); lua_setfield(L, -2, "h");
+        lua_setfield(L, -2, "frame");
+        lua_pop(L, 1);
+    }
     lua_sethook(L, scene_hook, LUA_MASKCOUNT, 4000000);
     int rc = lua_pcall(L, 3, 1, 0);
     lua_sethook(L, nullptr, 0, 0);
@@ -5289,12 +5374,21 @@ static void draw_scene_clip(ImDrawList* dl, float cx, float cy, float s, Clip& c
     lua_pop(L, 1);   // pop root AFTER drawing (its strings back the TEXT commands)
     if (!g_sceneErr.empty()) draw_scene_error(dl, f0, fw, fh, s, g_sceneErr);
 }
+// Dev helpers (in-editor): tear down the VM so presets/lua/std.lua AND every script recompile
+// fresh on the next draw — the stdlib hot-reload. + expose the last render error to the inspector.
+static void scene_request_reload() {
+    if (g_sceneL) { lua_close(g_sceneL); g_sceneL = nullptr; }
+    g_sceneTried = false; g_sandboxRef = LUA_NOREF; g_sceneChunks.clear(); g_sceneErr.clear();
+}
+static std::string scene_last_error() { return g_sceneErr; }
 #else
 static void draw_scene_clip(ImDrawList* dl, float cx, float cy, float s, Clip& c, int alpha, double t, ImVec2 f0, float fw, float fh) {
     (void)cx; (void)cy; (void)c; (void)alpha; (void)t; (void)fh;
     ImFont* font = g_captionFont ? g_captionFont : ImGui::GetFont();
     dl->AddText(font, 24 * s, ImVec2(f0.x + 40 * s, f0.y + 40 * s), IM_COL32(210, 210, 220, 255), "scene: built without Lua (set $LUA_SRC)");
 }
+static void scene_request_reload() {}
+static std::string scene_last_error() { return std::string(); }
 #endif
 
 // Composite the frame at the playhead into the preview rect [f0, f0+(fw,fh)].
@@ -8788,6 +8882,30 @@ static void draw_native_params(Project& p, Clip& c) {
             n++;
         }
         ImGui::Text("%d caption clip(s) in range", n);
+    } else if (c.type == "scene") {
+        ImGui::SeparatorText("scene (Lua layout engine)");
+        ImGui::TextDisabled("script: `scene(t, data)` returns a node tree — widgets.quote/stat,\n"
+                            "or box/row/col/text (see presets/lua/std.lua). `data` (JSON below) is\n"
+                            "passed in. Edits apply live. docs/LAYOUT_ENGINE.md");
+        // script: stored verbatim on every edit (any text is storable); it recompiles by hash on
+        // the next draw, and a compile/runtime error draws a card + shows below — no revert needed.
+        ImGui::TextDisabled("script (Lua)");
+        std::string script = P.value("script", std::string());
+        if (ImGui::InputTextMultiline("##scenescript", &script, ImVec2(-1, 240), ImGuiInputTextFlags_AllowTabInput))
+            P["script"] = script;
+        // data: a JSON body → mid-typing is invalid JSON, so hold a persistent buffer (refreshed on
+        // selection change) and only write P["data"] when it parses, so partial edits aren't clobbered.
+        static std::string g_sceneDataBuf, g_sceneDataFor; static bool g_sceneDataErr = false;
+        if (g_sceneDataFor != c.id) { g_sceneDataBuf = P.contains("data") ? P["data"].dump(2) : std::string("{}"); g_sceneDataFor = c.id; g_sceneDataErr = false; }
+        ImGui::TextDisabled("data (JSON)");
+        if (ImGui::InputTextMultiline("##scenedata", &g_sceneDataBuf, ImVec2(-1, 120), ImGuiInputTextFlags_AllowTabInput)) {
+            try { P["data"] = json::parse(g_sceneDataBuf); g_sceneDataErr = false; } catch (...) { g_sceneDataErr = true; }
+        }
+        if (g_sceneDataErr) ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "invalid JSON — not applied");
+        if (ImGui::Button("reload std.lua")) scene_request_reload();
+        ImGui::SameLine(); ImGui::TextDisabled("(reloads the stdlib + recompiles every scene)");
+        std::string serr = scene_last_error();
+        if (!serr.empty()) { ImGui::Spacing(); ImGui::TextColored(ImVec4(1, 0.55f, 0.55f, 1), "last scene error:"); ImGui::TextWrapped("%s", serr.c_str()); }
     }
 }
 

@@ -12,7 +12,7 @@
     { "id": "tk_v", "name": "Video", "kind": "video", "rows": ["r_scene"] }
   ],
   "rows": {
-    "r_scene": { "type": "scene", "name": "Scene", "params": {}, "clips": ["sc_quote", "sc_stat"] }
+    "r_scene": { "type": "scene", "name": "Scene", "params": {}, "clips": ["sc_quote", "sc_stat", "sc_doc"] }
   },
   "clips": {
     "sc_quote": {
@@ -32,6 +32,24 @@
       "params": {
         "script": "local t, d = ...\nreturn widgets.stat(t, { to = d.to, label = d.label, dur = 1.4 })",
         "data": { "to": 100, "label": "percent native — no baked PNG" }
+      },
+      "transform": { "pos": [0, 0], "scale": [1, 1], "rot": 0, "opacity": 1, "anchor": [0.5, 0.5] },
+      "keyframes": {}
+    },
+    "sc_doc": {
+      "row": "r_scene", "start": 8.0, "dur": 9.5,
+      "params": {
+        "script": "local t, d = ...\nreturn widgets.document(t, d)",
+        "data": {
+          "image": "docs/hero/editor.png",
+          "source": "docs/hero/editor.png",
+          "trans": 0.9,
+          "excerpts": [
+            { "rect": [0.01, 0.02, 0.30, 0.30], "hold": 2.2, "tr": "The Media browser — every generated asset and bed, one drag onto the timeline." },
+            { "rect": [0.36, 0.10, 0.42, 0.42], "hold": 2.2, "tr": "The live preview: the compositor draws the frame at the playhead, instantly." },
+            { "rect": [0.20, 0.58, 0.42, 0.42], "hold": 2.4, "tr": "The timeline — each row is one generation pipeline." }
+          ]
+        }
       },
       "transform": { "pos": [0, 0], "scale": [1, 1], "rot": 0, "opacity": 1, "anchor": [0.5, 0.5] },
       "keyframes": {}
