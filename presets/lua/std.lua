@@ -472,8 +472,13 @@ function widgets.code(t, d)
     local titleH = size * 1.85
     local cardH = titleH + size * 1.4 + #toklines * size * 1.05 + (#toklines - 1) * size * 0.24
     local cardLeft, cardTop = (W - cardW) * 0.5, (H - cardH) * 0.5
-    root[#root + 1] = image{ asset = d.cursor_img, w = d.cursor_size or 46, aspect = true, float = "tl",
-      fx = cardLeft + cardW * (d.cursor_x or 0.66) + slideX, fy = cardTop + titleH * (d.cursor_y or 0.42) }
+    local cx = cardLeft + cardW * (d.cursor_x or 0.66) + slideX
+    local cy = cardTop + titleH * (d.cursor_y or 0.42)
+    -- after landing the window it PAUSES on the title bar, then accelerates off-screen (bottom-right)
+    local ex = anim.tween(t - (d.cursor_exit or 1.5), d.cursor_exit_dur or 0.55, "in_cubic")
+    cx = cx + ex * (W - cx + 140)
+    cy = cy + ex * 180
+    root[#root + 1] = image{ asset = d.cursor_img, w = d.cursor_size or 46, aspect = true, float = "tl", fx = cx, fy = cy }
   end
   return box{ growx = true, growy = true, kids = root }
 end
@@ -599,18 +604,23 @@ end
 --   { title="...", items = { { image=uri, label="..." }, ... } }
 function widgets.comparison(t, d)
   d = d or {}
+  local H = (frame and frame.h) or 1080           -- (comparison is defined before the _fh helper)
+  local imgH = (d.img_h or 0.66) * H              -- big + HEIGHT-MATCHED: every image is this tall
   local cells = {}
   for i, it in ipairs(d.items or {}) do
     local r = anim.rise(t - (i - 1) * 0.12, 0.4)
     local ck = {}
-    if it.image then ck[#ck + 1] = image{ asset = it.image, growx = true, aspect = true, radius = 10, tint = theme.fade({ 255, 255, 255 }, r) } end
-    if it.label then ck[#ck + 1] = text(it.label, { size = 30, col = theme.fade(theme.dim, r), ta = "c" }) end
-    cells[#cells + 1] = col{ growx = true, gap = 12, ax = "c", kids = ck }
+    if it.image then                              -- contain in a fixed-height box → height-matched, widths natural
+      ck[#ck + 1] = box{ growx = true, h = imgH, ax = "c", ay = "c",
+        kids = { image{ asset = it.image, grow = true, fit = "contain", radius = 10, tint = theme.fade({ 255, 255, 255 }, r) } } }
+    end
+    if it.label then ck[#ck + 1] = text(it.label, { size = 34, col = theme.fade(theme.dim, r), ta = "c" }) end
+    cells[#cells + 1] = col{ growx = true, gap = 16, ax = "c", ay = "c", kids = ck }
   end
   local outer = {}
-  if d.title then outer[#outer + 1] = text(d.title, { size = 48, col = theme.fg, ta = "c" }) end
-  outer[#outer + 1] = row{ gap = 32, ay = "t", growx = true, kids = cells }
-  return center(col{ gap = 28, ax = "c", pw = 0.92, kids = outer })
+  if d.title then outer[#outer + 1] = text(d.title, { size = 52, col = theme.fg, ta = "c" }) end
+  outer[#outer + 1] = row{ gap = d.gap or 44, ay = "c", growx = true, kids = cells }
+  return center(col{ gap = 26, ax = "c", ay = "c", pw = d.pw or 0.94, kids = outer })  -- centred vertically
 end
 
 -- LINEAGE — a horizontal chain of labeled boxes joined by → glyphs, drawn in order. data:
@@ -768,15 +778,23 @@ end
 -- data: { image, from={x,y,w,h}(0..1 of the image), to={x,y,w,h}, dur, ease, fit, glow, hold }
 function widgets.zoomout(t, d)
   d = d or {}
-  local dur = d.dur or 1.7
-  local e = anim.tween(t, dur, d.ease or "out_expo")
-  local f = d.from or { 0.40, 0.15, 0.30, 0.30 }
-  local to = d.to or { 0, 0, 1, 1 }
-  local crop = {}; for i = 1, 4 do crop[i] = f[i] + (to[i] - f[i]) * e end
-  local bx, by = anim.bob(t, 6, 0.5)                                 -- a hair of life once settled
-  local glow = (d.glow or 0) * anim.rise(t, dur * 0.7) * (1 - anim.clamp((t - dur * 0.9) / 0.6, 0, 1))
+  local dur = d.dur or 4.2
+  local wsz = d.win or 0.34                        -- crop window (16:9 fraction; w==h for a 16:9 image)
+  local panT = dur * (d.pan_frac or 0.62)          -- phase 1: pan; phase 2: zoom out
+  local x0, y0 = d.start_x or (1 - wsz), d.start_y or (1 - wsz)   -- open on the BOTTOM-RIGHT corner
+  local xL = d.end_x or 0.0                         -- pan leftward to here
+  local crop
+  if t < panT then                                 -- PHASE 1: pan left, ACCELERATING (slow start, fast finish)
+    local e = anim.tween(t, panT, "in_cubic")
+    crop = { x0 + (xL - x0) * e, y0, wsz, wsz }
+  else                                             -- PHASE 2: zoom out from that window to the whole sheet
+    local e = anim.tween(t - panT, dur - panT, "io_cubic")
+    local from = { xL, y0, wsz, wsz }; local to = { 0, 0, 1, 1 }
+    crop = {}; for i = 1, 4 do crop[i] = from[i] + (to[i] - from[i]) * e end
+  end
+  local glow = (d.glow or 0) * anim.rise(t, 0.5) * (1 - anim.clamp((t - dur * 0.85) / 0.6, 0, 1))
   return center(image{ asset = d.image, grow = true, crop = crop, fit = d.fit or "contain",
-    tx = bx * e, ty = by * e, glow = glow, glow_col = d.glow_col })
+    glow = glow, glow_col = d.glow_col })
 end
 
 -- FILMSTRIP — highlight each panel of a baked sequence strip in turn (a slow "watch it advance"
@@ -1131,5 +1149,44 @@ function widgets.octant(t, d)
   if d.footer then kids[#kids + 1] = pxtext(d.footer, 0.5 * W, cyp + r + 0.03 * H, 34, co.acc, 0.5, 0) end
   if d.note then kids[#kids + 1] = pxtext(d.note, 0.5 * W, cyp + r + 0.03 * H + 44, 26, co.sub, 0.5, 0) end
   if d.source then kids[#kids + 1] = pxtext(d.source, 0.945 * W, 0.945 * H, 24, { 150, 140, 172, 200 }, 1, 0) end
+  return box{ growx = true, growy = true, t_op = anim.rise(t, 0.3), kids = kids }
+end
+
+-- TABLE — a native data table (header + a header rule + staggered rows), for the emulator-comparison
+-- board. Transparent, reflowable. data: { title, sub, cols={"a","b",...}, col_w={rel widths},
+--   rows={ { cell, cell, ... } } where a cell is a string OR {s=text, col=colour}; footer, source }.
+function widgets.table(t, d)
+  d = d or {}
+  local W, H, co = _fw(), _fh(), FIG
+  local kids = {}
+  local cx0, cy0 = 0.05 * W, 0.10 * H
+  local cx1, cy1 = 0.95 * W, 0.92 * H
+  local fp = d.font_px or 32
+  local pad = fp * 0.8
+  kids[#kids + 1] = pxrect(cx0 - pad, cy0 - pad, (cx1 - cx0) + 2 * pad, (cy1 - cy0) + 2 * pad, co.card, fp * 0.4, 1.2, co.cardb)
+  if d.title then kids[#kids + 1] = pxtext(d.title, cx0, cy0 - fp * 0.1, fp * 1.35, co.txt, 0, 0) end
+  if d.sub then kids[#kids + 1] = pxtext(d.sub, cx0, cy0 + fp * 1.6, fp * 0.72, co.acc, 0, 0) end
+  local cols = d.cols or {}; local cw = d.col_w or {}
+  local tx0, tx1 = cx0 + fp * 0.4, cx1 - fp * 0.4
+  local ty0 = cy0 + fp * 3.5
+  local tot = 0; for i = 1, #cols do tot = tot + (cw[i] or 1) end
+  local colx = {}; local acc = tx0
+  for i = 1, #cols do colx[i] = acc; acc = acc + (tx1 - tx0) * ((cw[i] or 1) / math.max(1, tot)) end
+  for i, c in ipairs(cols) do kids[#kids + 1] = pxtext(c, colx[i], ty0, fp * 0.86, co.txt, 0, 0) end
+  kids[#kids + 1] = pxline(tx0, ty0 + fp * 1.5, tx1, ty0 + fp * 1.5, co.acc, 2)
+  local rows = d.rows or {}
+  local rtop = ty0 + fp * 1.9
+  local rowh = math.min(fp * 2.5, (cy1 - fp * 1.2 - rtop) / math.max(1, #rows))
+  for ri, row in ipairs(rows) do
+    local e = anim.rise(t - (ri - 1) * 0.12, 0.42)
+    local ry = rtop + (ri - 0.5) * rowh
+    for ci, cell in ipairs(row) do
+      local s, col = cell, co.txt
+      if type(cell) == "table" then s = cell.s or ""; col = cell.col or co.fg end
+      kids[#kids + 1] = pxtext(s, colx[ci], ry, fp * 0.82, theme.fade(_col(col), e), 0, 0.5)
+    end
+  end
+  if d.footer then kids[#kids + 1] = pxtext(d.footer, cx0, cy1 - fp * 0.85, fp * 0.66, co.sub, 0, 0) end
+  if d.source then kids[#kids + 1] = pxtext(d.source, cx1, cy1 - fp * 0.85, fp * 0.56, { 150, 140, 172, 200 }, 1, 0) end
   return box{ growx = true, growy = true, t_op = anim.rise(t, 0.3), kids = kids }
 end
