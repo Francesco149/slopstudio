@@ -452,6 +452,38 @@ function widgets.rays(t, d)
            color = { col[1], col[2], col[3], (col[4] or 210) * env } } } }
 end
 
+-- WAVES — concentric rings that expand and fade OUTWARD from a point, like the ripples off a water
+-- drop. Put the subject (`image`) on top so the waves radiate from behind it. data:
+--   { at={x,y}(0..1 frame origin), image=uri, size=0..1(pw of the subject), count=rings,
+--     period=sec(between births), maxr=0..1(reach, frame-width fraction), color, thick=px, glow }
+function widgets.waves(t, d)
+  d = d or {}
+  local W, H = (frame and frame.w) or 1920, (frame and frame.h) or 1080
+  local at = d.at or { 0.5, 0.5 }
+  local n = d.count or 4
+  local period = d.period or 1.3
+  local maxr = (d.maxr or 0.42) * W
+  local minr = (d.minr or 0.08) * W                    -- rings are born at the subject's edge, not a point
+  local col = d.color or theme.acc
+  local kids = {}
+  for i = 1, n do
+    local phase = ((t / period) - (i - 1) / n)
+    phase = phase - math.floor(phase)                  -- 0..1 ring life (staggered)
+    local r = minr + phase * (maxr - minr)             -- expands outward
+    local a = (1 - phase) ^ 1.6                         -- fades as it grows
+    if a > 0.01 then
+      kids[#kids + 1] = shape{ float = "tl", fx = at[1] * W - r, fy = at[2] * H - r, w = 2 * r, h = 2 * r,
+        shape = "ellipse", color = theme.fade(col, a), thickness = (d.thick or 6) * (1 - phase * 0.6) }
+    end
+  end
+  if d.image then
+    local pop = anim.tween(t, 0.5, "out_back")
+    kids[#kids + 1] = image{ asset = d.image, w = math.floor((d.size or 0.5) * W), aspect = true, float = "c",
+      sc = 0.85 + 0.15 * pop, glow = d.glow or 0 }
+  end
+  return box{ growx = true, growy = true, kids = kids }
+end
+
 -- format a like count YouTube-style: 1200 -> "1.2K", 3400000 -> "3.4M"
 local function fmtk(n)
   n = n or 0
