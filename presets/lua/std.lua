@@ -706,3 +706,386 @@ function widgets.callout(t, d)
          kids = { text(d.text or "", { size = d.size or 34, col = theme.fade(theme.fg, e) }) } },
   } }
 end
+
+-- ── NATIVE FIGURE PRIMITIVES (charts / diagrams) ────────────────────────────
+-- Faithful, transparent, reflowable replacements for the baked figure PNGs (the kirby charts,
+-- the DCM square-wave, the octant dial). Everything is drawn in FRAME-FRACTION space onto full-
+-- frame floating shapes (like widgets.timeline), so it overlays the checker with no baked bg.
+-- Built on the `polyline` shape primitive (a list of points, optional closed + fill = a pie wedge).
+local function _fw() return (frame and frame.w) or 1920 end
+local function _fh() return (frame and frame.h) or 1080 end
+-- accept a colour as {r,g,b,a} OR a "#RRGGBB"/"#RRGGBBAA" hex string (the scene shape reader only
+-- takes tables, so normalise hex → rgb here — lets figure data use either form).
+local function _col(c)
+  if type(c) == "string" then
+    local h = c:gsub("#", "")
+    return { tonumber(h:sub(1, 2), 16) or 255, tonumber(h:sub(3, 4), 16) or 255,
+             tonumber(h:sub(5, 6), 16) or 255, (#h >= 8 and tonumber(h:sub(7, 8), 16)) or 255 }
+  end
+  return c
+end
+-- palette shared by the figures (matches the native draw_plot_clip look)
+local FIG = { acc = { 120, 205, 235, 255 }, axis = { 150, 162, 186, 255 }, grid = { 72, 80, 102, 110 },
+  txt = { 238, 244, 252, 255 }, sub = { 162, 174, 198, 255 }, card = { 15, 17, 26, 232 },
+  cardb = { 88, 96, 120, 140 }, yellow = { 255, 213, 74, 255 }, pill = { 18, 20, 30, 240 } }
+-- a straight line between two PX points (converted to fractions of a full-frame float box)
+local function pxline(x0, y0, x1, y1, col, th)
+  local W, H = _fw(), _fh()
+  return shape{ float = "tl", fx = 0, fy = 0, w = W, h = H, shape = "line",
+    from = { x0 / W, y0 / H }, to = { x1 / W, y1 / H }, color = _col(col), thickness = th or 2 }
+end
+local function pxarrow(x0, y0, x1, y1, col, th)
+  local W, H = _fw(), _fh()
+  return shape{ float = "tl", fx = 0, fy = 0, w = W, h = H, shape = "arrow",
+    from = { x0 / W, y0 / H }, to = { x1 / W, y1 / H }, color = _col(col), thickness = th or 4 }
+end
+-- a polyline through PX points; closed+fill => a filled polygon (pie wedge / area)
+local function pxpoly(pts, col, th, closed, fill)
+  local W, H = _fw(), _fh(); local fp = {}
+  for i, p in ipairs(pts) do fp[i] = { p[1] / W, p[2] / H } end
+  return shape{ float = "tl", fx = 0, fy = 0, w = W, h = H, shape = "polyline",
+    points = fp, color = _col(col), thickness = th or 2, closed = closed or false, fill = _col(fill) }
+end
+-- a circle centred at PX (x,y), radius r px. fill=nil => outline only (color=line).
+local function pxdot(x, y, r, fill, line, th)
+  return shape{ float = "tl", fx = x - r, fy = y - r, w = 2 * r, h = 2 * r, shape = "ellipse",
+    fill = _col(fill), color = _col(line or fill) or { 0, 0, 0, 0 }, thickness = th or 2 }
+end
+local function pxrect(x, y, w, h, bg, rad, bw, bc)
+  return box{ float = "tl", fx = x, fy = y, w = w, h = h, bg = _col(bg), radius = rad, bw = bw, bc = _col(bc) }
+end
+-- a text label whose (ax,ay) anchor (0=left/top .5=centre 1=right/bottom) sits at PX (x,y)
+local function pxtext(s, x, y, size, col, ax, ay, mono)
+  ax = ax or 0; ay = ay or 0
+  local tw, th = measure_text(s, size, 0, mono or false)
+  return box{ float = "tl", fx = x - ax * tw, fy = y - ay * th,
+    kids = { text(s, { size = size, col = _col(col), font = mono and "mono" or nil }) } }
+end
+
+-- CHART — line/step/scatter/bar with axes, ticks (int|hex|f1|f2|pct), gridlines, shaded regions,
+-- dashed vlines, annotated markers (dot + callout pill), arrow callouts, legend, title/subtitle,
+-- and a left-to-right `reveal`. Parity with the native `plot` clip, now a forkable scene widget.
+-- data: { title, sub, series=[{points=[[x,y]], kind="line|step|scatter|bar", color, width, dots}],
+--   x/y={min,max,label,ticks,fmt}, regions=[{x0,x1|y0,y1,color,label}], vlines=[{x,color,label}],
+--   markers=[{x,y,label,sub,color,dy}], callouts=[{x,y,text,from={xf,yf},color}], legend, reveal,
+--   source, top,bottom,x0,x1 (card bounds as frame fractions), font_px }
+function widgets.chart(t, d)
+  d = d or {}
+  local W, H, co = _fw(), _fh(), FIG
+  local kids = {}
+  local cx0, cy0 = (d.x0 or 0.045) * W, (d.top or 0.115) * H
+  local cx1, cy1 = (d.x1 or 0.955) * W, (d.bottom or 0.915) * H
+  local title, sub = d.title, d.sub
+  local fp = d.font_px or 30
+  local mL = fp * (d.mL or 4.4); local mR = fp * (d.mR or 1.2)
+  local mT = (title and fp * 2.1 or fp * 0.5) + (sub and fp * 1.7 or 0)
+  local mB = fp * (d.mB or 3.0)
+  local pX0, pY0 = cx0 + mL, cy0 + mT
+  local pX1, pY1 = cx1 - mR, cy1 - mB
+  -- data ranges (auto unless x/y.min/max given)
+  local xmin, xmax, ymin, ymax = 1e300, -1e300, 1e300, -1e300
+  for _, sr in ipairs(d.series or {}) do for _, p in ipairs(sr.points or {}) do
+    xmin = math.min(xmin, p[1]); xmax = math.max(xmax, p[1])
+    ymin = math.min(ymin, p[2]); ymax = math.max(ymax, p[2])
+  end end
+  local function rng(ax, lo, hi) local a = d[ax]
+    if a then if a.min then lo = a.min end; if a.max then hi = a.max end end; return lo, hi end
+  xmin, xmax = rng("x", xmin, xmax); ymin, ymax = rng("y", ymin, ymax)
+  if xmax - xmin < 1e-9 then xmax = xmin + 1 end
+  if ymax - ymin < 1e-9 then ymax = ymin + 1 end
+  local function sx(x) return pX0 + (x - xmin) / (xmax - xmin) * (pX1 - pX0) end
+  local function sy(y) return pY1 - (y - ymin) / (ymax - ymin) * (pY1 - pY0) end
+  local function fmt(v, f)
+    if f == "hex" then return string.format("0x%X", math.floor(v + 0.5))
+    elseif f == "f1" then return string.format("%.1f", v)
+    elseif f == "f2" then return string.format("%.2f", v)
+    elseif f == "pct" then return string.format("%d%%", math.floor(v + 0.5))
+    else return string.format("%d", math.floor(v + 0.5)) end
+  end
+  local function ticks(ax, lo, hi) local a = d[ax]
+    if a and a.ticks then return a.ticks end
+    local tk = {}; for i = 0, 4 do tk[#tk + 1] = lo + (hi - lo) * i / 4 end; return tk end
+  -- CARD (behind everything)
+  local pad = fp * 0.7
+  kids[#kids + 1] = pxrect(cx0 - pad, cy0 - pad, (cx1 - cx0) + 2 * pad, (cy1 - cy0) + 2 * pad,
+    co.card, fp * 0.4, 1.2, co.cardb)
+  if title then kids[#kids + 1] = pxtext(title, (cx0 + cx1) / 2, cy0 + fp * 0.05, fp * 1.15, d.title_col or co.txt, 0.5, 0) end
+  if sub then kids[#kids + 1] = pxtext(sub, (cx0 + cx1) / 2, cy0 + fp * 1.5, fp * 0.72, d.sub_col or co.acc, 0.5, 0) end
+  -- shaded regions
+  for _, r in ipairs(d.regions or {}) do
+    local rc = r.color or { 210, 90, 90, 40 }
+    if r.x0 then local a, b = sx(r.x0), sx(r.x1)
+      kids[#kids + 1] = pxrect(math.min(a, b), pY0, math.abs(b - a), pY1 - pY0, rc, 0)
+      if r.label then kids[#kids + 1] = pxtext(r.label, math.min(a, b) + 7, pY0 + 4, fp * 0.62, co.sub, 0, 0) end
+    else local a, b = sy(r.y1 or ymax), sy(r.y0 or ymin)
+      kids[#kids + 1] = pxrect(pX0, math.min(a, b), pX1 - pX0, math.abs(b - a), rc, 0)
+      if r.label then kids[#kids + 1] = pxtext(r.label, pX0 + 7, math.min(a, b) + 4, fp * 0.62, co.sub, 0, 0) end
+    end
+  end
+  -- grid + tick labels
+  for _, gx in ipairs(ticks("x", xmin, xmax)) do local X = sx(gx)
+    if d.grid ~= false then kids[#kids + 1] = pxline(X, pY0, X, pY1, co.grid, 1) end
+    kids[#kids + 1] = pxtext(fmt(gx, d.x and d.x.fmt or "int"), X, pY1 + fp * 0.35, fp * 0.6, co.sub, 0.5, 0)
+  end
+  for _, gy in ipairs(ticks("y", ymin, ymax)) do local Y = sy(gy)
+    if d.grid ~= false then kids[#kids + 1] = pxline(pX0, Y, pX1, Y, co.grid, 1) end
+    kids[#kids + 1] = pxtext(fmt(gy, d.y and d.y.fmt or "int"), pX0 - fp * 0.45, Y, fp * 0.6, co.sub, 1, 0.5)
+  end
+  -- axes
+  kids[#kids + 1] = pxline(pX0, pY1, pX1, pY1, co.axis, 1.8)
+  kids[#kids + 1] = pxline(pX0, pY0, pX0, pY1, co.axis, 1.8)
+  if d.x and d.x.label then kids[#kids + 1] = pxtext(d.x.label, (pX0 + pX1) / 2, cy1 - fp * 1.0, fp * 0.7, co.axis, 0.5, 0) end
+  if d.y and d.y.label then                                  -- rotated (subtree t_rot) vertical axis label
+    local s = fp * 0.66; local tw, th2 = measure_text(d.y.label, s, 0, false)
+    local ccx, ccy = cx0 + fp * 1.0, (pY0 + pY1) / 2
+    kids[#kids + 1] = box{ float = "tl", fx = ccx - tw / 2, fy = ccy - th2 / 2, t_rot = -90,
+      kids = { text(d.y.label, { size = s, col = co.axis }) } }
+  end
+  -- dashed vertical markers (e.g. "frame 0" on the flick trace)
+  for _, v in ipairs(d.vlines or {}) do
+    local X = sx(v.x); local vc = v.color or co.acc; local dash, gap = v.dash or 9, v.gap or 7
+    local y = pY0
+    while y < pY1 do kids[#kids + 1] = pxline(X, y, X, math.min(y + dash, pY1), vc, v.thickness or 1.5); y = y + dash + gap end
+    if v.label then kids[#kids + 1] = pxtext(v.label, X + 5, pY0 + 2, fp * 0.58, vc, 0, 0) end
+  end
+  -- series (reveal = left-to-right plotter draw)
+  local reveal = d.reveal; if reveal == nil then reveal = anim.rise(t - 0.15, d.reveal_dur or 1.1) end
+  for _, sr in ipairs(d.series or {}) do
+    local pts = sr.points or {}; local N = #pts
+    if N > 0 then
+      local col = sr.color or co.acc; local th = sr.width or 3.0
+      local kfull = reveal >= 1 and N or math.max(1, math.floor(reveal * N))
+      local rp = {}
+      for i = 1, math.min(kfull, N) do rp[#rp + 1] = { sx(pts[i][1]), sy(pts[i][2]) } end
+      if kfull < N then                                     -- partial last segment
+        local fpts = reveal * (N - 1) + 1; local k = math.floor(fpts)
+        if k >= 1 and k < N then local fr = fpts - k
+          rp[#rp + 1] = { sx(pts[k][1] + (pts[k + 1][1] - pts[k][1]) * fr),
+                          sy(pts[k][2] + (pts[k + 1][2] - pts[k][2]) * fr) }
+        end
+      end
+      if sr.kind == "scatter" then
+        for _, p in ipairs(rp) do kids[#kids + 1] = pxdot(p[1], p[2], th * 1.7, col, col, 0) end
+      elseif sr.kind == "bar" then
+        local base = sy(math.max(ymin, 0)); local bw = (pX1 - pX0) / math.max(1, N) * 0.6
+        for i = 1, math.min(kfull, N) do local X, Y = sx(pts[i][1]), sy(pts[i][2])
+          kids[#kids + 1] = pxrect(X - bw / 2, math.min(Y, base), bw, math.abs(Y - base), col, 0) end
+      else
+        if sr.kind == "step" then local st = {}
+          for i = 1, #rp do st[#st + 1] = rp[i]; if rp[i + 1] then st[#st + 1] = { rp[i + 1][1], rp[i][2] } end end
+          rp = st
+        end
+        if #rp >= 2 then kids[#kids + 1] = pxpoly(rp, col, th) end
+        if sr.dots then for i = 1, math.min(kfull, N) do kids[#kids + 1] = pxdot(sx(pts[i][1]), sy(pts[i][2]), th * 1.5, col, col, 0) end end
+      end
+    end
+  end
+  -- annotated markers: dot + ring + callout pill above (connector line), kept inside the plot
+  for _, m in ipairs(d.markers or {}) do
+    local X, Y = sx(m.x), sy(m.y); local mc = m.color or co.yellow
+    kids[#kids + 1] = pxdot(X, Y, 5, mc, mc, 0)
+    kids[#kids + 1] = pxdot(X, Y, 9, nil, mc, 1.6)
+    if m.label and m.label ~= "" then
+      local s1, s2 = fp * 0.72, fp * 0.56
+      local lw = measure_text(m.label, s1, 0, false)
+      local sw = m.sub and measure_text(m.sub, s2, 0, false) or 0
+      local lh = fp * 0.9
+      local bw = math.max(lw, sw) + fp * 0.7
+      local bh = lh + (m.sub and (fp * 0.72 + 2) or 0) + fp * 0.4
+      local lx = math.max(pX0, math.min(pX1 - bw, X - bw / 2))
+      local ly = Y + (m.dy or -1) * fp * 1.4 - bh
+      kids[#kids + 1] = pxline(X, Y, X, ly + bh, mc, 1.3)
+      kids[#kids + 1] = pxrect(lx, ly, bw, bh, co.pill, fp * 0.25, 1.2, mc)
+      kids[#kids + 1] = pxtext(m.label, lx + bw / 2, ly + fp * 0.2, s1, co.txt, 0.5, 0)
+      if m.sub then kids[#kids + 1] = pxtext(m.sub, lx + bw / 2, ly + fp * 0.2 + lh, s2, co.sub, 0.5, 0) end
+    end
+  end
+  -- arrow callouts (a text block with an arrow that extends to a data point)
+  for _, c in ipairs(d.callouts or {}) do
+    local X, Y = sx(c.x), sy(c.y); local cc = _col(c.color or co.acc)
+    local ax0 = (c.from and c.from[1] or 0.62) * W; local ay0 = (c.from and c.from[2] or 0.66) * H
+    local e = anim.rise(t - (c.delay or 0.9), 0.5)
+    if e > 0.01 then kids[#kids + 1] = pxarrow(ax0, ay0, ax0 + (X - ax0) * e, ay0 + (Y - ay0) * e, cc, c.thickness or 4) end
+    local lines = c.lines or {}
+    if c.text then for ln in tostring(c.text):gmatch("[^\n]+") do lines[#lines + 1] = ln end end
+    local ly = ay0; local ls = c.size or fp * 0.82
+    for _, ln in ipairs(lines) do
+      kids[#kids + 1] = pxtext(ln, ax0, ly - #lines * ls * 1.15, ls, theme.fade(cc, e), 0, 0)
+      ly = ly + ls * 1.15
+    end
+  end
+  -- legend (top-right inside the plot)
+  if d.legend then
+    local maxw = 0; local nrow = 0
+    for _, sr in ipairs(d.series or {}) do if sr.label then maxw = math.max(maxw, (measure_text(sr.label, fp * 0.62, 0, false))); nrow = nrow + 1 end end
+    if nrow > 0 then
+      local sw = fp * 0.9; local boxw = maxw + sw + fp * 1.1; local boxh = nrow * fp * 0.95 + fp * 0.5
+      local lx = pX1 - boxw - fp * 0.4; local ty = pY0 + fp * 0.35
+      kids[#kids + 1] = pxrect(lx, ty, boxw, boxh, { 20, 22, 34, 225 }, fp * 0.2, 1, { 90, 100, 130, 160 })
+      local yy = ty + fp * 0.28
+      for _, sr in ipairs(d.series or {}) do if sr.label then
+        kids[#kids + 1] = pxline(lx + fp * 0.4, yy + fp * 0.32, lx + fp * 0.4 + sw, yy + fp * 0.32, sr.color or co.acc, sr.width or 3)
+        kids[#kids + 1] = pxtext(sr.label, lx + fp * 0.4 + sw + fp * 0.3, yy, fp * 0.62, co.txt, 0, 0)
+        yy = yy + fp * 0.95
+      end end
+    end
+  end
+  if d.source then kids[#kids + 1] = pxtext(d.source, cx1 - 6, cy1 - fp * 0.85, fp * 0.54, { 150, 140, 172, 200 }, 1, 0) end
+  return box{ growx = true, growy = true, t_op = anim.rise(t, 0.3), kids = kids }
+end
+
+-- DCM — the ADXL202 duty-cycle diagram: two labeled square waves (0 g = 50% duty, +1 g = wider
+-- high-time) with dimension brackets (T1/T2), side annotations, legend, and a running-in reveal.
+-- The pulses are `polyline` step waves. data: { title, sub, waves=[{label,color,duty,cy(frac)}],
+--   cycles, source }.
+function widgets.dcm(t, d)
+  d = d or {}
+  local W, H, co = _fw(), _fh(), FIG
+  local kids = {}
+  local cx0, cy0 = 0.045 * W, 0.11 * H
+  local cx1, cy1 = 0.955 * W, 0.915 * H
+  local fp = d.font_px or 30
+  local pX0, pX1 = cx0 + fp * 1.0, cx1 - fp * 8.5           -- leave a right gutter for side labels
+  local pTop, pBot = cy0 + fp * 2.9, cy1 - fp * 2.2
+  local cycles = d.cycles or 4.0
+  local amp = fp * 1.5                                       -- wave half-height
+  local P = (pX1 - pX0) / (cycles + 0.15)                   -- one period width
+  -- card + title/sub
+  local pad = fp * 0.7
+  kids[#kids + 1] = pxrect(cx0 - pad, cy0 - pad, (cx1 - cx0) + 2 * pad, (cy1 - cy0) + 2 * pad, co.card, fp * 0.4, 1.2, co.cardb)
+  if d.title then kids[#kids + 1] = pxtext(d.title, (cx0 + cx1) / 2, cy0 - fp * 0.2, fp * 1.2, co.txt, 0.5, 0) end
+  if d.sub then kids[#kids + 1] = pxtext(d.sub, (cx0 + cx1) / 2, cy0 + fp * 1.35, fp * 0.72, co.acc, 0.5, 0) end
+  local reveal = d.reveal; if reveal == nil then reveal = anim.rise(t - 0.1, 1.2) end
+  local waves = d.waves or {}
+  for wi, wv in ipairs(waves) do
+    local cyy = (wv.cy or (wi == 1 and 0.40 or 0.66)) * H
+    local yHi, yLo = cyy - amp, cyy + amp
+    local duty = wv.duty or 0.5
+    -- build the square wave as a step polyline, revealed left→right
+    local pts = {}; local x = pX0
+    local xend = pX0 + reveal * (pX1 - pX0)
+    local function push(px, py) pts[#pts + 1] = { math.min(px, xend), py } end
+    for c = 0, math.ceil(cycles) - 1 do
+      local x0 = pX0 + c * P
+      if x0 > xend then break end
+      push(x0, yHi); push(x0 + duty * P, yHi); push(x0 + duty * P, yLo); push(x0 + P, yLo)
+      x = x0 + P
+    end
+    if #pts >= 2 then kids[#kids + 1] = pxpoly(pts, wv.color or co.acc, wv.width or 4) end
+    -- side annotation to the right of the wave
+    if wv.side then
+      local sc = (d.highlight == "duty") and co.txt or (wv.color or co.acc)
+      kids[#kids + 1] = pxtext(wv.side, pX1 + fp * 0.5, cyy - fp * 0.5, fp * 0.82, sc, 0, 0.5)
+    end
+  end
+  -- highlight the 50%-duty reference (the "flat" beat): a dashed midline across the flat wave
+  if d.highlight == "duty" and #waves >= 1 then
+    local w1 = waves[1]; local cyy = (w1.cy or 0.40) * H
+    local x = pX0
+    while x < pX1 do kids[#kids + 1] = pxline(x, cyy, math.min(x + 12, pX1), cyy, { 120, 205, 235, 150 }, 1.5); x = x + 22 end
+    kids[#kids + 1] = pxtext("50% = flat", pX0 + fp * 0.3, cyy - fp * 1.0, fp * 0.6, co.acc, 0, 0)
+  end
+  -- dimension brackets on the first wave: T1 (high-time, above) and T2 (period, below)
+  if #waves >= 1 then
+    local w1 = waves[1]; local cyy = (w1.cy or 0.40) * H; local yHi = cyy - amp
+    local duty = w1.duty or 0.5
+    local function dim(x0, x1, y, label, above)
+      local cap = fp * 0.4
+      kids[#kids + 1] = pxline(x0, y, x1, y, co.sub, 2)
+      kids[#kids + 1] = pxline(x0, y - cap, x0, y + cap, co.sub, 2)
+      kids[#kids + 1] = pxline(x1, y - cap, x1, y + cap, co.sub, 2)
+      kids[#kids + 1] = pxtext(label, (x0 + x1) / 2, above and (y - fp * 1.05) or (y + fp * 0.25), fp * 0.64, co.txt, 0.5, 0)
+    end
+    dim(pX0, pX0 + duty * P, yHi - fp * 0.9, "T1 (high)", true)
+    dim(pX0, pX0 + P, (cyy + amp) + fp * 1.2, "T2 (period, fixed by RSET)", false)
+    if #waves >= 2 then
+      local w2 = waves[2]; local cyy2 = (w2.cy or 0.66) * H; local d2 = w2.duty or 0.625
+      kids[#kids + 1] = pxtext("T1 grows with tilt", pX0, (cyy2 - amp) - fp * 1.15, fp * 0.62, w2.color or co.yellow, 0, 0)
+      local cap = fp * 0.4; local y = (cyy2 - amp) - fp * 0.55
+      kids[#kids + 1] = pxline(pX0, y, pX0 + d2 * P, y, w2.color or co.yellow, 2)
+      kids[#kids + 1] = pxline(pX0, y - cap, pX0, y + cap, w2.color or co.yellow, 2)
+      kids[#kids + 1] = pxline(pX0 + d2 * P, y - cap, pX0 + d2 * P, y + cap, w2.color or co.yellow, 2)
+    end
+  end
+  -- x axis with ticks 0..cycles
+  kids[#kids + 1] = pxline(pX0, pBot, pX1 + P * 0.15, pBot, co.axis, 1.8)
+  for i = 0, math.floor(cycles) do local X = pX0 + i * P
+    kids[#kids + 1] = pxtext(tostring(i), X, pBot + fp * 0.3, fp * 0.62, co.sub, 0.5, 0) end
+  if d.xlabel then kids[#kids + 1] = pxtext(d.xlabel, (pX0 + pX1) / 2, cy1 - fp * 1.0, fp * 0.68, co.acc, 0.5, 0) end
+  -- legend (top-right)
+  local nrow = #waves
+  if nrow > 0 then
+    local maxw = 0; for _, wv in ipairs(waves) do maxw = math.max(maxw, (measure_text(wv.label or "", fp * 0.62, 0, false))) end
+    local sw = fp * 0.9; local boxw = maxw + sw + fp * 1.1; local boxh = nrow * fp * 0.95 + fp * 0.5
+    local lx = cx1 - boxw - fp * 0.8; local ty = cy0 + fp * 2.3
+    kids[#kids + 1] = pxrect(lx, ty, boxw, boxh, { 20, 22, 34, 230 }, fp * 0.2, 1, { 90, 100, 130, 170 })
+    local yy = ty + fp * 0.28
+    for _, wv in ipairs(waves) do
+      kids[#kids + 1] = pxline(lx + fp * 0.4, yy + fp * 0.32, lx + fp * 0.4 + sw, yy + fp * 0.32, wv.color or co.acc, wv.width or 4)
+      kids[#kids + 1] = pxtext(wv.label or "", lx + fp * 0.4 + sw + fp * 0.3, yy, fp * 0.62, co.txt, 0, 0)
+      yy = yy + fp * 0.95
+    end
+  end
+  if d.source then kids[#kids + 1] = pxtext(d.source, cx1 - 6, cy1 - fp * 0.8, fp * 0.54, { 150, 140, 172, 200 }, 1, 0) end
+  return box{ growx = true, growy = true, t_op = anim.rise(t, 0.3), kids = kids }
+end
+
+-- OCTANT — the "menus quantize to 8 buckets" radial dial: 8 filled pie wedges + labels, a live
+-- cyan analog tilt vector that sweeps continuously (the point: the raw tilt is analog, the menu
+-- SNAPS it to whichever octant it lands in — highlighted). data: { title, sub, footer, note,
+--   cx,cy,r (frame fractions), vector_deg (screen deg, 0=E +cw, -90=up), sweep, speed, source }.
+function widgets.octant(t, d)
+  d = d or {}
+  local W, H, co = _fw(), _fh(), FIG
+  local kids = {}
+  local cxp, cyp = (d.cx or 0.5) * W, (d.cy or 0.53) * H
+  local r = (d.r or 0.235) * H
+  local OCT = { { a = 0, l = "E" }, { a = 45, l = "SE" }, { a = 90, l = "S" }, { a = 135, l = "SW" },
+                { a = 180, l = "W" }, { a = 225, l = "NW" }, { a = 270, l = "N" }, { a = 315, l = "NE" } }
+  local function rim(ang, rr) local a = ang * math.pi / 180; return { cxp + math.cos(a) * rr, cyp + math.sin(a) * rr } end
+  -- the live analog vector sweeps across the N/NE boundary, gliding (never snapping) — and it stays
+  -- off the octant labels (which sit on the spoke centres) so the arrow doesn't cross the text
+  local va = (d.vector_deg or -62) + (d.sweep or 20) * math.sin(t * (d.speed or 0.7) + 0.5)
+  local function norm(a) a = a % 360; if a < 0 then a = a + 360 end; return a end
+  local active, best = 1, 1e9
+  for i, o in ipairs(OCT) do local dd = math.abs(((norm(va) - o.a + 180) % 360) - 180)
+    if dd < best then best = dd; active = i end end
+  -- title / sub (above the dial)
+  if d.title then kids[#kids + 1] = pxtext(d.title, 0.06 * W, 0.06 * H, 44, co.txt, 0, 0) end
+  if d.sub then kids[#kids + 1] = pxtext(d.sub, 0.06 * W, 0.06 * H + 52, 26, co.acc, 0, 0) end
+  -- filled pie wedges (alternating purple), outlined so the radial separators come for free
+  local shades = { { 104, 74, 158, 255 }, { 132, 92, 190, 255 } }
+  local diag = { [2] = true, [4] = true, [6] = true, [8] = true }   -- SE/SW/NW/NE = the diagonals
+  local appear = anim.rise(t, 0.5)
+  for i, o in ipairs(OCT) do
+    local a0, a1 = o.a - 22.5, o.a + 22.5
+    local pts = { { cxp, cyp } }
+    for k = 0, 9 do pts[#pts + 1] = rim(a0 + (a1 - a0) * k / 9, r * appear) end
+    local fillc = shades[(i % 2) + 1]
+    if d.highlight == "diagonals" and diag[i] then fillc = { 152, 108, 214, 255 } end   -- brighten the 4 diagonals
+    kids[#kids + 1] = pxpoly(pts, { 38, 28, 52, 255 }, 1.5, true, fillc)
+  end
+  -- active-octant accent rim arc
+  do local o = OCT[active]; local a0, a1 = o.a - 22.5, o.a + 22.5; local arc = {}
+    for k = 0, 12 do arc[#arc + 1] = rim(a0 + (a1 - a0) * k / 12, r) end
+    kids[#kids + 1] = pxpoly(arc, { 64, 224, 208, 255 }, 5, false, nil)
+  end
+  kids[#kids + 1] = pxdot(cxp, cyp, r, nil, { 158, 128, 208, 170 }, 2)   -- clean outer ring
+  -- octant labels (active one — or all diagonals when highlighted — brightened cyan + bigger)
+  for i, o in ipairs(OCT) do local lp = rim(o.a, r * 0.60); local act = i == active
+    local hot = act or (d.highlight == "diagonals" and diag[i])
+    kids[#kids + 1] = pxtext(o.l, lp[1], lp[2], hot and 42 or 34, hot and { 64, 224, 208, 255 } or { 245, 245, 250, 255 }, 0.5, 0.5)
+  end
+  -- the analog tilt vector
+  local vp = rim(va, r * 0.80)
+  kids[#kids + 1] = pxarrow(cxp, cyp, vp[1], vp[2], { 64, 224, 208, 255 }, 6)
+  local tipx = vp[1] > cxp and (vp[1] + 18) or (vp[1] - 18)
+  local aticha = vp[1] > cxp and 0 or 1
+  kids[#kids + 1] = pxtext("actual analog", tipx, vp[2] - 24, 26, { 64, 224, 208, 255 }, aticha, 0)
+  kids[#kids + 1] = pxtext("tilt vector", tipx, vp[2] + 2, 26, { 64, 224, 208, 255 }, aticha, 0)
+  -- footer + note (below the dial)
+  if d.footer then kids[#kids + 1] = pxtext(d.footer, 0.5 * W, cyp + r + 0.03 * H, 34, co.acc, 0.5, 0) end
+  if d.note then kids[#kids + 1] = pxtext(d.note, 0.5 * W, cyp + r + 0.03 * H + 44, 26, co.sub, 0.5, 0) end
+  if d.source then kids[#kids + 1] = pxtext(d.source, 0.945 * W, 0.945 * H, 24, { 150, 140, 172, 200 }, 1, 0) end
+  return box{ growx = true, growy = true, t_op = anim.rise(t, 0.3), kids = kids }
+end

@@ -5070,8 +5070,9 @@ static bool image_mean_rgb(const std::string& uri, float& r, float& g, float& b)
 // vector shapes (box/ellipse/line/arrow/underline/bracket) drawn within a laid-out box; from/to
 // are fractions 0..1 of that box, so a full-frame floating shape addresses the whole frame.
 struct SceneShape { int kind; Clay_Color color, fill; bool hasFill; float thickness, round, ax, ay, bx, by;
-                    float count, phase, duty; };   // rays: wedge count, rotation (rad), ray/gap duty 0..1
+                    float count, phase, duty; int polyOff, polyN; bool closed; };   // rays: wedge count, rotation (rad), ray/gap duty 0..1; polyline: [polyOff,polyN) slice of g_scenePoly (x,y fractions) + closed/fill
 static std::deque<SceneShape> g_sceneShapes;
+static std::vector<float> g_scenePoly;   // polyline point buffer (x,y box-fractions); sliced by SceneShape.polyOff/polyN. Same per-frame lifetime as g_sceneShapes.
 // SUBTREE transform: a node's `t_x`/`t_y` (px) + `t_op` (0..1) + `t_rot` (deg) apply to the node AND
 // all its descendants — a group slide/fade/TILT (containers or text), the container/text analogue of
 // the image quad transform. Tagged onto every element's Clay userData during the walk; read back per
@@ -5312,7 +5313,7 @@ static void scene_walk(lua_State* L, int idx, const SceneXform* inXf = nullptr) 
     if (k == "shape") {
         SceneShape sh; memset(&sh, 0, sizeof sh);
         std::string kind = lf_str(L, idx, "shape", "box");
-        sh.kind = kind == "ellipse" ? 1 : kind == "line" ? 2 : kind == "arrow" ? 3 : kind == "underline" ? 4 : kind == "bracket" ? 5 : kind == "rays" ? 6 : kind == "heart" ? 7 : kind == "cursor" ? 8 : 0;
+        sh.kind = kind == "ellipse" ? 1 : kind == "line" ? 2 : kind == "arrow" ? 3 : kind == "underline" ? 4 : kind == "bracket" ? 5 : kind == "rays" ? 6 : kind == "heart" ? 7 : kind == "cursor" ? 8 : kind == "polyline" ? 9 : 0;
         Clay_Color col{ 255, 214, 90, 255 }; lf_color(L, idx, "color", &col); sh.color = col;
         Clay_Color fill{ 0, 0, 0, 0 }; sh.hasFill = lf_color(L, idx, "fill", &fill); sh.fill = fill;
         sh.thickness = (float)lf_num(L, idx, "thickness", 4);
@@ -5323,6 +5324,24 @@ static void scene_walk(lua_State* L, int idx, const SceneXform* inXf = nullptr) 
         float a[2] = { 0, 0.5f }, b[2] = { 1, 0.5f };   // default: a horizontal center line/arrow
         lf_xy(L, idx, "from", a); lf_xy(L, idx, "to", b);
         sh.ax = a[0]; sh.ay = a[1]; sh.bx = b[0]; sh.by = b[1];
+        sh.closed = lf_bool(L, idx, "closed", false);
+        sh.polyOff = (int)g_scenePoly.size(); sh.polyN = 0;
+        if (sh.kind == 9) {   // polyline: read a list of {x,y} points (0..1 of the box) into the shared buffer
+            lua_getfield(L, idx, "points");
+            if (lua_istable(L, -1)) {
+                int n = (int)lua_rawlen(L, -1);
+                for (int i = 1; i <= n; i++) {
+                    lua_geti(L, -1, i);
+                    if (lua_istable(L, -1)) {
+                        lua_geti(L, -1, 1); float x = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+                        lua_geti(L, -1, 2); float y = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+                        g_scenePoly.push_back(x); g_scenePoly.push_back(y); sh.polyN++;
+                    }
+                    lua_pop(L, 1);
+                }
+            }
+            lua_pop(L, 1);
+        }
         g_sceneShapes.push_back(sh);
         Clay_ElementDeclaration d; memset(&d, 0, sizeof d);
         bool grow = lf_bool(L, idx, "grow", false);
@@ -5540,6 +5559,16 @@ static void scene_draw_shape(ImDrawList* dl, SceneShape* sh, ImVec2 p0, ImVec2 p
             ImU32 fc = sh->hasFill ? C(sh->fill) : IM_COL32(245, 246, 250, (int)(255 * glob));
             dl->AddConcavePolyFilled(pts, 7, fc);
             dl->AddPolyline(pts, 7, col, ImDrawFlags_Closed, std::max(1.5f, sh->thickness * s * 0.6f));
+            break; }
+        case 9: { // polyline — a list of points (0..1 of the box); optional closed + fill. The workhorse
+                  // for chart series, square waves, arcs, and (closed+filled) pie wedges.
+            if (sh->polyN >= 2 && sh->polyOff + 2 * sh->polyN <= (int)g_scenePoly.size()) {
+                std::vector<ImVec2> pts; pts.reserve(sh->polyN);
+                for (int i = 0; i < sh->polyN; i++)
+                    pts.push_back(pt(g_scenePoly[sh->polyOff + 2 * i], g_scenePoly[sh->polyOff + 2 * i + 1]));
+                if (sh->hasFill && sh->polyN >= 3) dl->AddConcavePolyFilled(pts.data(), sh->polyN, C(sh->fill));
+                if (th > 0) dl->AddPolyline(pts.data(), sh->polyN, col, sh->closed ? ImDrawFlags_Closed : 0, th);
+            }
             break; }
     }
 }
@@ -5849,6 +5878,7 @@ static void draw_scene_clip(ImDrawList* dl, float cx, float cy, float s, Clip& c
     g_sceneErr.clear();
     g_sceneImgs.clear();   // per-frame image-handle pool (Clay carries pointers into it → draw)
     g_sceneShapes.clear(); // per-frame shape pool (same lifetime contract)
+    g_scenePoly.clear();   // per-frame polyline point buffer (sliced by SceneShape.polyOff/polyN)
     g_sceneXforms.clear(); // per-frame subtree-transform pool (userData points into it)
     if (scene_dbg()) { fprintf(stderr, "[scene] ENTER id=%s t=%.2f clipStack=%d\n", c.id.c_str(), t - c.start, dl->_ClipRectStack.Size); fflush(stderr); }
     int ref = scene_get_chunk(L, src);
