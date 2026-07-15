@@ -111,7 +111,7 @@ function anim.spring_path(t, path, st, dm)
   if t > settle then local x, y = target(1e9); return x, y, 0, 0 end
   local dt = 1 / 60
   local px, py = target(0); local vx, vy = 0, 0; local ppx, ppy = px, py
-  for i = 1, math.floor(t / dt) do
+  for i = 1, math.min(math.floor(t / dt), 240) do   -- hard cap (belt-and-suspenders past the settle early-out)
     ppx, ppy = px, py
     local tx, ty = target(i * dt)
     px, vx = anim.spring_step(px, vx, tx, dt, st, dm)
@@ -128,6 +128,15 @@ function anim.shake(t, mag, dur, freq)
   local decay = (1 - t / dur) ^ 2
   local w = freq * 2 * PI
   return math.sin(t * w) * mag * decay, math.sin(t * w * 1.37 + 1.1) * mag * decay
+end
+
+-- a soft handheld CAMERA BOB — gentle looping (tx,ty) drift + a hair of rotation, so an image is
+-- never truly static (owner: "we almost never want truly static images"). Deterministic (summed
+-- sines). Returns dx, dy (px), drot (deg). Add to any image's tx/ty/rot.
+function anim.bob(t, amp, speed)
+  amp = amp or 12; speed = speed or 1.0
+  return amp * math.sin(t * speed * 0.8 + 0.5), amp * 0.85 * math.sin(t * speed * 1.13),
+         0.5 * math.sin(t * speed * 0.55)
 end
 
 -- brand tokens (subset — the locked palette lives in gemma-brand; wire fully in P2) --
@@ -316,7 +325,7 @@ function widgets.perspective(t, d)
   local de = d.hold and 1.0 or anim.rise(t, settle * 1.25)         -- DoF fades in as the tilt settles
   local drift = (d.drift or 1.6) * math.sin(t * (d.drift_speed or 0.5))   -- gentle living sway on ry (deg)
   local glow = (d.glow or 0) * (d.hold and 1.0 or anim.rise(t, settle))   -- optional glow, blooms in with the tilt
-  return center(image{ asset = d.image, pw = d.size or 0.72, aspect = true,
+  return center(image{ asset = d.image, pw = d.size or 0.72, aspect = true, crop = d.crop,
     rx = (d.rx or 16) * e, ry = (d.ry or -13) * e + drift * e, persp = d.persp or 0.55,
     focus = d.focus or { 0.5, 0.42 }, focus_r = d.focus_r or 0.22,
     dof = (d.dof or 2.2) * de, dof_max = d.dof_max or 26, glow = glow, glow_col = d.glow_col })
@@ -510,8 +519,9 @@ function widgets.waves(t, d)
   end
   if d.image then
     local pop = anim.tween(t, 0.5, "out_back")
+    local bx, by, br = anim.bob(t, d.bob or 15, d.bob_speed or 0.9)   -- soft camera bob (never static)
     kids[#kids + 1] = image{ asset = d.image, w = math.floor((d.size or 0.5) * W), aspect = true, float = "c",
-      sc = 0.85 + 0.15 * pop, glow = d.glow or 0 }
+      sc = 0.85 + 0.15 * pop, tx = bx, ty = by, rot = br, glow = d.glow or 0 }
   end
   return box{ growx = true, growy = true, kids = kids }
 end

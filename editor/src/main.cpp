@@ -1545,6 +1545,10 @@ static ID3D11ShaderResourceView* get_processed_srv(const std::string& uri, float
                 int i = y * lw + x; float inv = cnt ? 1.0f / cnt : 0.0f;
                 ch[0][i] = a0 * inv; ch[1][i] = a1 * inv; ch[2][i] = a2 * inv; ch[3][i] = a3 * inv;
             }
+        // PREMULTIPLY by alpha before blurring: a transparent pixel's (undefined/black) RGB must not
+        // bleed into an opaque neighbour → the blur near a cutout's edge stays the subject's colour,
+        // not a dark fringe. Un-premultiplied after the gaussian.
+        for (int i = 0; i < N; i++) { float a = ch[3][i] / 255.0f; ch[0][i] *= a; ch[1][i] *= a; ch[2][i] *= a; }
         // separable gaussian at working res
         float sw = sig / ds; if (sw < 0.5f) sw = 0.5f;
         int rad = std::max(1, (int)ceilf(sw * 3.0f));
@@ -1568,6 +1572,7 @@ static ID3D11ShaderResourceView* get_processed_srv(const std::string& uri, float
                     }
                 ch[c].swap(tmp);
             }
+        for (int i = 0; i < N; i++) { float a = ch[3][i]; if (a > 0.5f) { float inv = 255.0f / a; ch[0][i] *= inv; ch[1][i] *= inv; ch[2][i] *= inv; } }
     } else {
         // grade-only: full resolution, no downsample/blur
         lw = sp->w; lh = sp->h;
@@ -5660,6 +5665,11 @@ static void scene_draw_image_mesh(ImDrawList* dl, const SceneImg* si, ImVec2 q0,
     ImU32 tint = IM_COL32((int)si->tint.r, (int)si->tint.g, (int)si->tint.b, ta);
     auto bc = [&](float bb) { int a = (int)(si->tint.a * glob * bb + 0.5f); a = a < 0 ? 0 : (a > 255 ? 255 : a);
                               return IM_COL32((int)si->tint.r, (int)si->tint.g, (int)si->tint.b, a); };
+    // sharp-layer alpha under DoF = (1-beta): a true CROSS-FADE with the blurred layer, so the
+    // out-of-focus SILHOUETTE actually softens into the blur instead of staying crisp underneath it
+    // (a transparent cutout's blurred alpha feathers, so a full-alpha sharp layer would show through).
+    auto sc = [&](float bb) { int a = (int)(si->tint.a * glob * (1.0f - bb) + 0.5f); a = a < 0 ? 0 : (a > 255 ? 255 : a);
+                              return IM_COL32((int)si->tint.r, (int)si->tint.g, (int)si->tint.b, a); };
     // SHARP pass — every cell from the crisp texture, one texture binding for the whole mesh
     dl->PushTextureID((ImTextureID)(intptr_t)si->srv);
     for (int j = 0; j < G; j++)
@@ -5667,7 +5677,9 @@ static void scene_draw_image_mesh(ImDrawList* dl, const SceneImg* si, ImVec2 q0,
             float u0 = (float)i / G, u1 = (float)(i + 1) / G, v0 = (float)j / G, v1 = (float)(j + 1) / G;
             ImVec2 p[4] = { P[j*V+i], P[j*V+i+1], P[(j+1)*V+i+1], P[(j+1)*V+i] };
             ImVec2 uv[4] = { suv(u0, v0), suv(u1, v0), suv(u1, v1), suv(u0, v1) };
-            ImU32 col[4] = { tint, tint, tint, tint };
+            ImU32 col[4];
+            if (hasDof) { col[0] = sc(B[j*V+i]); col[1] = sc(B[j*V+i+1]); col[2] = sc(B[(j+1)*V+i+1]); col[3] = sc(B[(j+1)*V+i]); }
+            else col[0] = col[1] = col[2] = col[3] = tint;
             scene_img_quad_va(dl, p, uv, col);
         }
     dl->PopTextureID();
