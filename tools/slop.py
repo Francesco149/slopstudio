@@ -678,6 +678,7 @@ def cmd_skeleton(a):
                 # replacement for a baked matplotlib PNG. Rides r_diagram (a figure card; counts as content).
                 cid=new_clip(p,"plot","r_plot",at,vdur,OD(v["plot"]),f"{pref}{sfx}_plot")
                 _set_xform(p["clips"][cid],S(0,-40))    # centered; auto-fits width; a host beside it goes small
+                fill=False   # NO filler — the chart card sits on the BARE bright grid (like code cards)
             if cid and zoom!=1.0:
                 tf=p["clips"][cid]["transform"]; tf["scale"]=[tf["scale"][0]*zoom, tf["scale"][1]*zoom]
             # place:"bottom" = a bottom reaction OVERLAY (a meme) — over the host, ~width_frac wide,
