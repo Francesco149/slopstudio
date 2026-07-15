@@ -5280,7 +5280,7 @@ static void scene_walk(lua_State* L, int idx, const SceneXform* inXf = nullptr) 
     if (k == "shape") {
         SceneShape sh; memset(&sh, 0, sizeof sh);
         std::string kind = lf_str(L, idx, "shape", "box");
-        sh.kind = kind == "ellipse" ? 1 : kind == "line" ? 2 : kind == "arrow" ? 3 : kind == "underline" ? 4 : kind == "bracket" ? 5 : kind == "rays" ? 6 : 0;
+        sh.kind = kind == "ellipse" ? 1 : kind == "line" ? 2 : kind == "arrow" ? 3 : kind == "underline" ? 4 : kind == "bracket" ? 5 : kind == "rays" ? 6 : kind == "heart" ? 7 : 0;
         Clay_Color col{ 255, 214, 90, 255 }; lf_color(L, idx, "color", &col); sh.color = col;
         Clay_Color fill{ 0, 0, 0, 0 }; sh.hasFill = lf_color(L, idx, "fill", &fill); sh.fill = fill;
         sh.thickness = (float)lf_num(L, idx, "thickness", 4);
@@ -5463,6 +5463,16 @@ static void scene_draw_shape(ImDrawList* dl, SceneShape* sh, ImVec2 p0, ImVec2 p
                 ImVec2 b2(ctr.x + cosf(ang + hw) * R, ctr.y + sinf(ang + hw) * R);
                 scene_prim_tri(dl, uv, ctr, b1, b2, cin, cout, cout);
             }
+            break; }
+        case 7: { // heart (two lobes + a point) — a "like"
+            ImU32 fc = sh->hasFill ? C(sh->fill) : col;
+            float cx = (p0.x + p1.x) * 0.5f, r = w * 0.27f, lobeY = p0.y + h * 0.34f;
+            ImVec2 lc(cx - r * 0.66f, lobeY), rc(cx + r * 0.66f, lobeY);
+            dl->AddCircleFilled(lc, r, fc, 24);
+            dl->AddCircleFilled(rc, r, fc, 24);
+            dl->AddTriangleFilled(ImVec2(cx - r * 1.30f, lobeY + r * 0.18f),
+                                  ImVec2(cx + r * 1.30f, lobeY + r * 0.18f),
+                                  ImVec2(cx, p1.y - h * 0.06f), fc);
             break; }
     }
 }

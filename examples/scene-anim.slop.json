@@ -32,7 +32,8 @@
         "sc_spin",
         "sc_drag",
         "sc_rays",
-        "sc_code"
+        "sc_code",
+        "sc_comment"
       ]
     }
   },
@@ -258,6 +259,40 @@
             "  return image{ tx = dx, glow = 0.85 }",
             "end"
           ]
+        },
+        "transition": false
+      },
+      "transform": {
+        "pos": [
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "rot": 0.0,
+        "opacity": 1.0,
+        "anchor": [
+          0.5,
+          0.5
+        ]
+      }
+    },
+    "sc_comment": {
+      "row": "r_scene",
+      "start": 27.0,
+      "dur": 6.0,
+      "params": {
+        "script": "local t, d = ...\nreturn widgets.youtube_comment(t, d)",
+        "data": {
+          "author": "@mortal_no_47",
+          "time": "2 hours ago",
+          "likes": 1420,
+          "hearted": true,
+          "av_color": [90, 150, 220],
+          "text": "wait the accelerometer is REAL hardware in the cartridge?? this whole time i thought it was software. mind blown",
+          "cps": 34
         },
         "transition": false
       },

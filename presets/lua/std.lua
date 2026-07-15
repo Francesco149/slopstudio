@@ -371,6 +371,60 @@ function widgets.rays(t, d)
            color = { col[1], col[2], col[3], (col[4] or 210) * env } } } }
 end
 
+-- format a like count YouTube-style: 1200 -> "1.2K", 3400000 -> "3.4M"
+local function fmtk(n)
+  n = n or 0
+  if n >= 1e6 then local s = string.format("%.1f", n / 1e6):gsub("%.0$", ""); return s .. "M" end
+  if n >= 1000 then local s = string.format("%.1f", n / 1000):gsub("%.0$", ""); return s .. "K" end
+  return tostring(math.floor(n))
+end
+
+-- YOUTUBE COMMENT — a YouTube-style comment that slides up + fades in, with the comment text TYPING
+-- in (typewriter + a blinking caret) as if written live. The phone/YouTube-comment move. data:
+--   { author="@name", text="...", avatar=uri, av_color={r,g,b}, time="2 days ago", likes=1200,
+--     hearted=true (creator heart), cps=34 (chars/sec; false = no typewriter), width=0..1 }
+function widgets.youtube_comment(t, d)
+  d = d or {}
+  local W, H = (frame and frame.w) or 1920, (frame and frame.h) or 1080
+  local cw = math.floor(W * (d.width or 0.6))
+  local av = d.av_size or 88
+  local e = anim.rise(t, 0.5)                                  -- card slide-up + fade
+  local full = d.text or ""
+  local shown = full
+  if d.cps ~= false then                                       -- type the comment after the card lands
+    shown = anim.typewrite(t - 0.35, full, d.cps or 34)
+    if shown ~= full and (math.floor(t * 2) % 2 == 0) then shown = shown .. "|" end   -- blinking caret
+  end
+  -- avatar: an image, else a coloured circle with the author's initial
+  local avatar
+  if d.avatar then
+    avatar = box{ w = av, h = av, kids = { image{ asset = d.avatar, grow = true, radius = av * 0.5 } } }
+  else
+    local ac = d.av_color or { 150, 90, 210 }
+    local initial = tostring(d.author or "?"):gsub("^@", ""):sub(1, 1):upper()
+    -- a circle = a box whose corner radius is half its size (no floating shape → stays in place)
+    avatar = box{ w = av, h = av, radius = av * 0.5, bg = ac, ax = "c", ay = "c",
+      kids = { text(initial, { size = av * 0.5, col = { 255, 255, 255 }, ta = "c" }) } }
+  end
+  local head = { text(d.author or "@viewer", { size = 33, col = { 236, 238, 245 } }) }
+  if d.time then head[#head + 1] = text("· " .. d.time, { size = 28, col = { 140, 146, 165 } }) end
+  local acts = {
+    box{ w = 30, h = 30, kids = { shape{ grow = true, shape = "heart", fill = d.hearted and { 240, 90, 130 } or { 150, 156, 175 } } } },
+    text(fmtk(d.likes), { size = 26, col = { 150, 156, 175 } }),
+    spacer(20, true),
+    text("Reply", { size = 26, col = { 150, 156, 175 } }),
+  }
+  local body = col{ growx = true, gap = 7, kids = {
+    row{ gap = 12, ay = "c", kids = head },
+    text(shown, { size = 34, col = { 216, 220, 232 }, wrap = "words" }),
+    row{ gap = 14, ay = "c", padt = 6, kids = acts },
+  } }
+  local card = row{ w = cw, gap = 26, ay = "t", kids = { avatar, body } }
+  -- top-anchored (grows DOWN as it types, no vertical drift), nudged to upper-centre
+  return box{ growx = true, growy = true, ax = "c", ay = "t", padt = math.floor(H * 0.30),
+    kids = { box{ t_y = (1 - e) * 44, t_op = e, kids = { card } } } }
+end
+
 -- COMPARISON — N cells (image + caption) side by side, staggered in. data:
 --   { title="...", items = { { image=uri, label="..." }, ... } }
 function widgets.comparison(t, d)
