@@ -762,6 +762,50 @@ local function pxtext(s, x, y, size, col, ax, ay, mono)
     kids = { text(s, { size = size, col = _col(col), font = mono and "mono" or nil }) } }
 end
 
+-- ZOOMOUT — the pan-zoom-out reveal: start tight on a crop window (a few cells) and pull back to
+-- the full image, easing out, so the whole thing (e.g. all 64 sprite frames) resolves into view.
+-- Keep `from`/`to` at the frame aspect (for a 16:9 image, w==h in fraction) so nothing stretches.
+-- data: { image, from={x,y,w,h}(0..1 of the image), to={x,y,w,h}, dur, ease, fit, glow, hold }
+function widgets.zoomout(t, d)
+  d = d or {}
+  local dur = d.dur or 1.7
+  local e = anim.tween(t, dur, d.ease or "out_expo")
+  local f = d.from or { 0.40, 0.15, 0.30, 0.30 }
+  local to = d.to or { 0, 0, 1, 1 }
+  local crop = {}; for i = 1, 4 do crop[i] = f[i] + (to[i] - f[i]) * e end
+  local bx, by = anim.bob(t, 6, 0.5)                                 -- a hair of life once settled
+  local glow = (d.glow or 0) * anim.rise(t, dur * 0.7) * (1 - anim.clamp((t - dur * 0.9) / 0.6, 0, 1))
+  return center(image{ asset = d.image, grow = true, crop = crop, fit = d.fit or "contain",
+    tx = bx * e, ty = by * e, glow = glow, glow_col = d.glow_col })
+end
+
+-- FILMSTRIP — highlight each panel of a baked sequence strip in turn (a slow "watch it advance"
+-- sweep — the tilt→roll odometer feel). The base strip fills the frame; an accent box steps across.
+-- data: { image, panels=[{x,y,w,h}(0..1 frame)], step=sec, color, dim=0..1, label }
+function widgets.filmstrip(t, d)
+  d = d or {}
+  local W, H = _fw(), _fh()
+  local ac = d.color or { 120, 205, 235, 255 }
+  local panels = d.panels or {}
+  local step = d.step or 1.0
+  local cur = math.max(1, math.min(#panels, math.floor(t / step) + 1))
+  local kids = { image{ asset = d.image, grow = true, fit = "contain", tint = { 255, 255, 255, math.floor(255 * (1 - (d.dim or 0.0))) } } }
+  for i, p in ipairs(panels) do
+    local shown = t >= (i - 1) * step
+    if shown then
+      local on = i == cur
+      local e = anim.rise(t - (i - 1) * step, 0.28)
+      kids[#kids + 1] = box{ float = "tl", fx = p[1] * W, fy = p[2] * H, w = p[3] * W, h = p[4] * H,
+        radius = 10, bw = on and 6 or 3, bc = theme.fade(ac, (on and 1.0 or 0.35) * e) }
+      if on and d.label then
+        kids[#kids + 1] = box{ float = "tl", fx = p[1] * W, fy = (p[2] + p[4]) * H + 8, pad = 8, radius = 8,
+          bg = theme.fade({ 18, 20, 30 }, e), kids = { text(string.format(d.label, i), { size = 26, col = ac }) } }
+      end
+    end
+  end
+  return box{ growx = true, growy = true, kids = kids }
+end
+
 -- CHART — line/step/scatter/bar with axes, ticks (int|hex|f1|f2|pct), gridlines, shaded regions,
 -- dashed vlines, annotated markers (dot + callout pill), arrow callouts, legend, title/subtitle,
 -- and a left-to-right `reveal`. Parity with the native `plot` clip, now a forkable scene widget.
