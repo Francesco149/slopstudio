@@ -73,8 +73,17 @@ passthrough, composed across nesting; v1 = translate+opacity (scale/rot can foll
 via a new `tokenize(src,lang)` binding that reuses the code-clip lexer (One Dark colours, same as the native clip) +
 chrome + line-number gutter, keeping the per-line reveal; (2) **`widgets.youtube_comment`** — a comment that TYPES in
 live (typewriter + blinking caret, avatar + like row + creator heart; `heart` shape kind added). Also fixed a UI nit:
-the transport time readout was nudging the add-buttons (proportional-font digit width) → fixed width. **All BIG
-ANIMATION WISHLIST enablers + moves now landed** (remaining: perspective card-flip = wants subtree scale/rot). **→ P3**
+the transport time readout was nudging the add-buttons (proportional-font digit width) → fixed width.
+**★ Then 3D PERSPECTIVE + DEPTH OF FIELD + YT-comment polish (2026-07-15, overnight follow-up):** the `image` node gains
+**`rx`/`ry`** (3D tilt about the h/v axis) + **`persp`** (foreshortening) and **`dof`/`focus`/`focus_r`/`dof_max`**
+(a focus point + sharp radius + tunable blur-growth rate). Either switches the draw to a subdivided **mesh**
+(`scene_draw_image_mesh`, 18×18): perspective-CORRECT (per-cell affine → no bent-diagonal warp), overdrawn with a cached
+gaussian-blurred copy (`get_processed_srv`) at per-vertex alpha = blur amount → a smooth CoC gradient. New **`widgets.perspective`**
+(eased tilt-in + DoF fade = the cinematic "hero screenshot / floating plane") + `sc_persp` demo clip. **YT-comment fixes** (owner
+review): clean filled **parametric heart** (was two-circles+triangle), avatar initial nudged to its optical centre, and the whole
+block **vertically centred by its FULL height** via a new **`measure_text(s,size,wrap,mono)`** binding (no drift while typing;
+`scene-check` stubs it). **`sc_spin` demo loop fixed** — its `rot` was a modulo SAWTOOTH that snapped at the period seam →
+smooth cosine. **All BIG ANIMATION WISHLIST enablers + moves now landed.** **→ P3**
 (diagram/chart parity; crisp large text — ImGui 1.91.4 bakes 48px so big text is soft, size-ladder/1.92 fix).
 Self-contained clip → PNG fallback always. **KIRBY:** the quote-clip reuse (tilt-sensor/MBC7 → `style:"quote"`)
 is engine-independent, do anytime; the diagram/card-PNG→transparent-scene swaps come after the remaining P2 widgets.

@@ -152,10 +152,10 @@ Clay element per node, and after `Clay.EndLayout()` translates the render comman
 |---|---|---|
 | `row` / `col` / `box` | `gap pad align justify w h grow wrap bg radius border clip children` | Clay container (+ optional rect/border) |
 | `text` | `s` (string, req) `size col ta wrap`; **`font="mono"`** = the code face (g_monoFont/Consolas) | Clay text (measured via ImGui) |
-| `image` | `asset`/`uri` (req) `fit`(cover/contain) `crop`(x,y,w,h 0..1) `tint opacity radius`; **per-node transform** `tx ty`(px) `sc`\|`scx scy` `rot`(deg); **glow** `glow`(0..1) `glow_col`; **motion-blur** `mb`={dx,dy}(per-frame px) `mb_n` | Clay image → `AddImageQuad` at its rect (transformed about center; glow = gradient-ring halo; mb = trailing ghost smear) |
-| `shape` | `kind`(box/line/arrow/ellipse/bracket/**rays**/**heart**) `color thickness fill from to`; rays: `count phase`(rad) `duty` | Clay **custom** element → `draw_shape` at its rect |
+| `image` | `asset`/`uri` (req) `fit`(cover/contain) `crop`(x,y,w,h 0..1) `tint opacity radius`; **per-node transform** `tx ty`(px) `sc`\|`scx scy` `rot`(deg); **glow** `glow`(0..1) `glow_col`; **motion-blur** `mb`={dx,dy}(per-frame px) `mb_n`; **3D perspective** `rx ry`(deg tilt about the h/v axis) `persp`(0..1 foreshorten); **depth-of-field** `dof`(rate) `focus`={x,y}(uv) `focus_r`(sharp radius) `dof_max`(px) | Clay image → `AddImageQuad` at its rect (transformed about center; glow = gradient-ring halo; mb = trailing ghost smear). `rx/ry` or `dof` switch to a **subdivided mesh** (`scene_draw_image_mesh`): perspective-correct tilt + a per-vertex cross-fade to a cached gaussian-blurred copy (a soft CoC gradient) |
+| `shape` | `kind`(box/line/arrow/ellipse/bracket/**rays**/**heart**) `color thickness fill from to`; rays: `count phase`(rad) `duty`; heart = a filled parametric curve (the YouTube "like") | Clay **custom** element → `draw_shape` at its rect |
 
-A C **`tokenize(src, lang)`** binding (reuses the code-clip lexer) returns per-line coloured spans for `widgets.code` — the only non-math host binding besides text measurement.
+Host (C) bindings besides the math stdlib: **`tokenize(src, lang)`** (reuses the code-clip lexer → per-line coloured spans for `widgets.code`) and **`measure_text(s, size, wrap_w, mono) → w, h`** (the same `CalcTextSizeA` path Clay measures with, so a widget can reserve the EXACT space text will occupy — e.g. `widgets.youtube_comment` centres the whole block by its FINAL height while the typewriter reveals it, no vertical drift).
 
 **Any** node may carry a **subtree transform** `t_x`/`t_y` (px) + `t_op` (0..1 opacity) that applies to it and all descendants (a group slide/fade — containers or text; composes across nesting). The returned **root** node may also carry `ox`/`oy` (project px) — a scene-level offset for **screen-shake** (drive it from `anim.shake(t,…)`).
 | `rule` / `spacer` | `size color` | thin rect / empty gap |
@@ -230,8 +230,14 @@ Built as stdlib Lua on top of the kernel. Each is transparent, reflowable, and d
   gutter, whose lines reveal one by one (slide up + fade, staggered) via the subtree transform.
   `data = { code|lines, lang, title, size, step, dur, nums, hi }`.
 - **`youtube_comment`** — a YouTube/phone comment that types in live (avatar + `@author · time` +
-  typewriter comment with a blinking caret + a like row), the card sliding up + fading in.
-  `data = { author, text, avatar, av_color, time, likes, hearted, cps, width }`.
+  typewriter comment with a blinking caret + a like row), the card sliding up + fading in. The block
+  is **vertically centred by the FULL comment's height** (via `measure_text`, so it doesn't drift as
+  the typewriter reveals text); the avatar initial is nudged to its optical centre; the like heart is
+  the filled parametric `heart` shape. `data = { author, text, avatar, av_color, time, likes, hearted, cps, width }`.
+- **`perspective`** — a screenshot/card shown at a **3D angle** (foreshortened, receding into frame)
+  with **depth of field**: sharp within `focus_r` of the `focus` point, blurring at rate `dof` beyond
+  it (the cinematic "hero screenshot / floating plane"). Tilt + DoF ease in and settle. `data = {
+  image, rx, ry, persp, focus:{x,y}, focus_r, dof, dof_max, size, settle, hold }`.
 - **`document`** — **the interview case.** `data = { image, source, excerpts:[{rect,hold,
   translation,note}] }`. Sequences pan/zoom (eased Ken-Burns between excerpt rects so the active
   excerpt fills ~60% of frame), drops each `translation` in a card on whichever side has room
@@ -330,9 +336,16 @@ Built as stdlib Lua on top of the kernel. Each is transparent, reflowable, and d
   syntax highlighting via a `tokenize(src,lang)` binding that reuses the code-clip lexer (One Dark) +
   chrome + line-number gutter, keeping the per-line reveal. ✓ **`widgets.youtube_comment` (DONE)** —
   the comment types in live (typewriter + caret), avatar + like row + creator heart; added a `heart`
-  shape kind.
-- **Remaining move:** perspective card-flip (wants subtree scale/rotate — the follow-up to the
-  translate+opacity core above).
+  shape kind. **Polish (2026-07-15):** clean filled parametric heart (was two-circles+triangle), the
+  avatar initial nudged to its optical centre, and the whole block vertically centred by its FULL
+  height via the new `measure_text` binding (no drift while typing).
+- ✓ **3D PERSPECTIVE + DEPTH OF FIELD (DONE 2026-07-15).** The `image` node gains `rx`/`ry` (tilt about
+  the horizontal/vertical axis) + `persp` (foreshortening) and `dof`/`focus`/`focus_r`/`dof_max` (a
+  focus point with a sharp radius and a tunable blur-growth rate). Either switches the draw to a
+  subdivided **mesh** (`scene_draw_image_mesh`, 18×18): each cell mapped affinely → perspective-CORRECT
+  (no bent-diagonal warp), overdrawn with a cached gaussian-blurred copy (`get_processed_srv`) whose
+  per-vertex alpha = blur amount → a smooth CoC gradient. `widgets.perspective` wraps it with an
+  eased tilt-in + DoF fade. The cinematic "hero screenshot / floating plane" look.
 
 **P3 — parity + migration + polish.**
 - `widgets.diagram`/`widgets.chart` at parity → retire the C++ `diagram`/`plot` draw paths (or
