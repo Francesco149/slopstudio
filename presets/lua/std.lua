@@ -275,14 +275,16 @@ end
 --   { image=uri, rx=deg(tilt top away/toward), ry=deg(tilt left/right), persp=0..1(foreshorten;
 --     higher=stronger), focus={x,y}(0..1 ON the image), focus_r=0..1(sharp radius, image-space),
 --     dof=rate(how fast blur grows past the radius), dof_max=px(max blur sigma),
---     size=0..1(pw), settle=sec, hold=true(skip the entrance → straight to the final angle) }
+--     size=0..1(pw), settle=sec, hold=true(skip the entrance → straight to the final angle),
+--     drift=deg(a slow living ry sway so a long hold isn't frozen), drift_speed=rad/s }
 function widgets.perspective(t, d)
   d = d or {}
   local settle = d.settle or 0.9
   local e  = d.hold and 1.0 or anim.tween(t, settle, "out_back")   -- tilt eases in with a hair of overshoot
   local de = d.hold and 1.0 or anim.rise(t, settle * 1.25)         -- DoF fades in as the tilt settles
+  local drift = (d.drift or 1.6) * math.sin(t * (d.drift_speed or 0.5))   -- gentle living sway on ry (deg)
   return center(image{ asset = d.image, pw = d.size or 0.72, aspect = true,
-    rx = (d.rx or 16) * e, ry = (d.ry or -13) * e, persp = d.persp or 0.55,
+    rx = (d.rx or 16) * e, ry = (d.ry or -13) * e + drift * e, persp = d.persp or 0.55,
     focus = d.focus or { 0.5, 0.42 }, focus_r = d.focus_r or 0.22,
     dof = (d.dof or 2.2) * de, dof_max = d.dof_max or 26 })
 end

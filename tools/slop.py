@@ -875,9 +875,9 @@ def cmd_lint(p, a):
     warn=[]; info=[]
     tot=total(p)
     vo=_spans(p,("tts",))
-    vis=_spans(p,("image","video","code","caption","diagram","plot","shape"))
+    vis=_spans(p,("image","video","code","caption","diagram","plot","shape","scene"))
     # 1. narration with NOTHING on screen but the host/bg (fine) — vs literally nothing
-    allvis=_spans(p,("image","video","code","caption","diagram","plot","shape","avatar","gradient","filler"))
+    allvis=_spans(p,("image","video","code","caption","diagram","plot","shape","scene","avatar","gradient","filler"))
     def gaps(cover, lo, hi, min_gap):
         g=[]; cur=lo
         for s,e in cover:
