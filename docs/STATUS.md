@@ -56,9 +56,10 @@ quad (not the layout slot) via `AddImageQuad` about the box center, plus **`glow
 brightened-image-mean color) drawn as a soft **solid-color** halo behind the transformed quad (solid, so it blooms
 regardless of the source's own brightness — a tinted dark card would just read as a shadow). First widgets on it:
 **`widgets.reveal`** (inertial slide-in + straighten w/ overshoot + glow bloom) and **`widgets.cardflip`** (squash
-1→0→1, face swaps at edge-on). Proof: `examples/scene-anim.slop.json` (scene-check 3/3; montage on the feed). This
-is the first of the **BIG ANIMATION WISHLIST** shared enablers — it also unblocks the balatro cursor-drag
-(`tx`/`ty` + `anim.spring_step`) and pan-zoom-out (already via `crop`). **NEXT enablers:** motion-blur (velocity
+1→0→1, face swaps at edge-on), and **`widgets.drag`** (the balatro cursor-drag — a card dragged along a `path` of
+cursor keyframes, lagging behind with a velocity spring `anim.spring_step` + leaning into the horizontal velocity;
+pure Lua, no engine change). Proof: `examples/scene-anim.slop.json` (scene-check 4/4; two montages on the feed). This
+is the first of the **BIG ANIMATION WISHLIST** shared enablers (pan-zoom-out is already via `crop`). **NEXT enablers:** motion-blur (velocity
 ghosts) · screen-shake · light-rays · a per-node transform for CONTAINERS/TEXT (transform a whole Clay subtree,
 not just images). Then sequence the remaining moves (combine-then-rays · vscode code reveal · phone comment). **→ P3**
 (diagram/chart parity; crisp large text — ImGui 1.91.4 bakes 48px so big text is soft, size-ladder/1.92 fix).

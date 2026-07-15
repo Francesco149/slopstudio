@@ -215,6 +215,9 @@ Built as stdlib Lua on top of the kernel. Each is transparent, reflowable, and d
   Exercises the per-node image transform (`tx`/`ty`/`rot`) + `glow`. `data = { image, dx, dy, rot, glow, dur, size }`.
 - **`cardflip`** — a 2D card flip: horizontal squash 1→0→1 with the face swapping at the edge-on
   midpoint. `data = { front, back, dur, delay, size, glow }`.
+- **`drag`** — the Balatro cursor-drag: a card dragged along a `path` of cursor keyframes, lagging
+  behind with a velocity spring (`anim.spring_step`) and leaning into the horizontal velocity.
+  `data = { image, path:[{t,x,y}], stiffness, damping, lean, size, glow }`.
 - **`document`** — **the interview case.** `data = { image, source, excerpts:[{rect,hold,
   translation,note}] }`. Sequences pan/zoom (eased Ken-Burns between excerpt rects so the active
   excerpt fills ~60% of frame), drops each `translation` in a card on whichever side has room
@@ -296,9 +299,9 @@ Built as stdlib Lua on top of the kernel. Each is transparent, reflowable, and d
   `sc`/`scx`/`scy`, `rot` (deg) — applied to the drawn quad (not the layout slot) via `AddImageQuad`
   about the box center — and `glow` (0..1, `glow_col` or auto brightened-mean), drawn as a soft
   solid-color halo behind the (transformed) quad so it blooms regardless of source brightness.
-  First widgets on it: `reveal` (inertial slide + straighten + bloom) and `cardflip` (squash + face
-  swap). Proof: `examples/scene-anim.slop.json` (feed). This unblocks the balatro cursor-drag (`tx`/`ty`
-  + `anim.spring_step`) and pan-zoom-out (already via `crop`).
+  Widgets on it: `reveal` (inertial slide + straighten + bloom), `cardflip` (squash + face swap), and
+  `drag` (the balatro cursor-drag — velocity spring lag + lean). Proof: `examples/scene-anim.slop.json`
+  (feed). Pan-zoom-out is already available via `crop`.
 - **NEXT enablers:** motion-blur (velocity ghosts), screen-shake, light-rays (radial streaks), a
   per-node transform for *containers/text* (transform the whole Clay subtree, not just images).
 - **Then the moves:** combine-then-white-rays · vscode code reveal (line highlight/blur) · phone
