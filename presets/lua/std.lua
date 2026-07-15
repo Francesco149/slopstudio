@@ -409,11 +409,12 @@ function widgets.code(t, d)
   local cellw = size * 0.6                                     -- monospace advance ≈ 0.6em (Consolas)
   -- entrance: the window is DRAGGED in from the left with a spring dangle (balatro). The per-line
   -- reveal waits until it lands (rvt) so the two moves don't fight.
-  local slideX, sop, rvt = 0, 1, t
+  local slideX, sop, rvt, tilt = 0, 1, t, 0
   if d.slide ~= false then
-    local sx = anim.spring_path(t, { { t = 0, x = -1.18, y = 0 }, { t = 0.02, x = 0, y = 0 }, { t = 30, x = 0, y = 0 } },
+    local sx, _, dx = anim.spring_path(t, { { t = 0, x = -1.18, y = 0 }, { t = 0.02, x = 0, y = 0 }, { t = 30, x = 0, y = 0 } },
       d.stiffness or 78, d.damping or 13)
     slideX = sx * W; sop = anim.rise(t, 0.3); rvt = t - (d.reveal_delay or 0.5)
+    tilt = anim.clamp(dx * (d.lean or 190), -13, 13)   -- balatro lean: tilt into the drag velocity, settles to 0
   end
   local rows = {}
   for li, spans in ipairs(toklines) do
@@ -444,7 +445,7 @@ function widgets.code(t, d)
                text(d.title, { size = size * 0.82, font = "mono", col = theme.fade(cc.cls[0], 0.9) }) } }
   end
   kids[#kids + 1] = body
-  local card = col{ radius = 10, bg = cc.bg, bw = 2, bc = cc.border, clip = true, kids = kids, t_x = slideX, t_op = sop }
+  local card = col{ radius = 10, bg = cc.bg, bw = 2, bc = cc.border, clip = true, kids = kids, t_x = slideX, t_op = sop, t_rot = tilt }
   local root = { center(card) }
   -- a fake mouse cursor "holding" the title bar, moving in with the window (drag feel). Prefer a real
   -- cursor IMAGE (d.cursor_img — e.g. an open-source Adwaita arrow) over the drawn `cursor` shape.

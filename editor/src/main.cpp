@@ -5067,10 +5067,13 @@ static bool image_mean_rgb(const std::string& uri, float& r, float& g, float& b)
 struct SceneShape { int kind; Clay_Color color, fill; bool hasFill; float thickness, round, ax, ay, bx, by;
                     float count, phase, duty; };   // rays: wedge count, rotation (rad), ray/gap duty 0..1
 static std::deque<SceneShape> g_sceneShapes;
-// SUBTREE transform: a node's `t_x`/`t_y` (px) + `t_op` (0..1) apply to the node AND all its
-// descendants — a group slide/fade (containers or text), the container/text analogue of the image
-// quad transform. Tagged onto every element's Clay userData during the walk; read back per command.
-struct SceneXform { float tx = 0, ty = 0, op = 1; };
+// SUBTREE transform: a node's `t_x`/`t_y` (px) + `t_op` (0..1) + `t_rot` (deg) apply to the node AND
+// all its descendants — a group slide/fade/TILT (containers or text), the container/text analogue of
+// the image quad transform. Tagged onto every element's Clay userData during the walk; read back per
+// command. Rotation can't go through immediate-mode text/rect draws, so it's applied by post-rotating
+// each command's emitted VERTICES about the subtree's screen bbox centre (computed in a pre-pass).
+struct SceneXform { float tx = 0, ty = 0, op = 1, rot = 0;
+                    float bx0 = 0, by0 = 0, bx1 = 0, by1 = 0; bool hasBox = false; };
 static std::deque<SceneXform> g_sceneXforms;
 static unsigned long long    g_stdMtime = 0;              // presets/lua/std.lua mtime → hot-reload on save
 
@@ -5295,10 +5298,12 @@ static bool lf_xy(lua_State* L, int idx, const char* k, float* out) {
 static void scene_walk(lua_State* L, int idx, const SceneXform* inXf = nullptr) {
     std::string k = lf_str(L, idx, "k", "box");
     const SceneXform* curXf = inXf;
-    { double tX = lf_num(L, idx, "t_x", 0), tY = lf_num(L, idx, "t_y", 0), tOp = lf_num(L, idx, "t_op", 1);
-      if (tX != 0 || tY != 0 || tOp != 1) {   // this node adds a group slide/fade → compose + tag its subtree
+    { double tX = lf_num(L, idx, "t_x", 0), tY = lf_num(L, idx, "t_y", 0), tOp = lf_num(L, idx, "t_op", 1),
+             tR = lf_num(L, idx, "t_rot", 0);
+      if (tX != 0 || tY != 0 || tOp != 1 || tR != 0) {   // this node adds a group slide/fade/tilt → compose + tag its subtree
           SceneXform x; x.tx = (inXf ? inXf->tx : 0) + (float)tX; x.ty = (inXf ? inXf->ty : 0) + (float)tY;
-          x.op = (inXf ? inXf->op : 1.0f) * (float)tOp; g_sceneXforms.push_back(x); curXf = &g_sceneXforms.back(); } }
+          x.op = (inXf ? inXf->op : 1.0f) * (float)tOp; x.rot = (inXf ? inXf->rot : 0) + (float)(tR * 3.14159265358979 / 180.0);
+          g_sceneXforms.push_back(x); curXf = &g_sceneXforms.back(); } }
     if (k == "shape") {
         SceneShape sh; memset(&sh, 0, sizeof sh);
         std::string kind = lf_str(L, idx, "shape", "box");
@@ -5689,6 +5694,18 @@ static void scene_draw_image_mesh(ImDrawList* dl, const SceneImg* si, ImVec2 q0,
 static void scene_draw_cmds(ImDrawList* dl, Clay_RenderCommandArray cmds, ImVec2 origin, float s, float glob) {
     float lop = glob;   // updated per command from its subtree transform's opacity
     auto C = [&](Clay_Color c) -> ImU32 { int a = (int)(c.a * lop + 0.5f); a = a < 0 ? 0 : (a > 255 ? 255 : a); return IM_COL32((int)c.r, (int)c.g, (int)c.b, a); };
+    // PRE-PASS: a subtree that TILTS (t_rot) rotates about its own screen-bbox centre — accumulate that
+    // bbox (translated by the subtree's t_x/t_y) over all its commands before drawing.
+    for (int i = 0; i < cmds.length; i++) {
+        Clay_RenderCommand* cmd = Clay_RenderCommandArray_Get(&cmds, i);
+        SceneXform* sx = (SceneXform*)cmd->userData;
+        if (!sx || sx->rot == 0) continue;
+        Clay_BoundingBox b = cmd->boundingBox; float tox = sx->tx * s, toy = sx->ty * s;
+        float x0 = origin.x + b.x * s + tox, y0 = origin.y + b.y * s + toy;
+        float x1 = origin.x + (b.x + b.width) * s + tox, y1 = origin.y + (b.y + b.height) * s + toy;
+        if (!sx->hasBox) { sx->bx0 = x0; sx->by0 = y0; sx->bx1 = x1; sx->by1 = y1; sx->hasBox = true; }
+        else { sx->bx0 = std::min(sx->bx0, x0); sx->by0 = std::min(sx->by0, y0); sx->bx1 = std::max(sx->bx1, x1); sx->by1 = std::max(sx->by1, y1); }
+    }
     for (int i = 0; i < cmds.length; i++) {
         Clay_RenderCommand* cmd = Clay_RenderCommandArray_Get(&cmds, i);
         Clay_BoundingBox b = cmd->boundingBox;
@@ -5697,6 +5714,7 @@ static void scene_draw_cmds(ImDrawList* dl, Clay_RenderCommandArray cmds, ImVec2
         float tox = sx ? sx->tx * s : 0.0f, toy = sx ? sx->ty * s : 0.0f;
         ImVec2 p0(origin.x + b.x * s + tox, origin.y + b.y * s + toy);
         ImVec2 p1(origin.x + (b.x + b.width) * s + tox, origin.y + (b.y + b.height) * s + toy);
+        int vrot0 = (sx && sx->rot != 0) ? dl->VtxBuffer.Size : -1;   // tilt: capture the vtx range this command emits
         switch (cmd->commandType) {
             case CLAY_RENDER_COMMAND_TYPE_RECTANGLE: { auto& r = cmd->renderData.rectangle;
                 dl->AddRectFilled(p0, p1, C(r.backgroundColor), r.cornerRadius.topLeft * s); } break;
@@ -5752,12 +5770,24 @@ static void scene_draw_cmds(ImDrawList* dl, Clay_RenderCommandArray cmds, ImVec2
                     }   // end else (non-mesh flat / 2D-transform path)
                 } else dl->AddRectFilled(p0, p1, IM_COL32(38, 40, 52, (int)(120 * lop)), 6 * s);   // missing-asset placeholder
             } break;
-            case CLAY_RENDER_COMMAND_TYPE_SCISSOR_START: dl->PushClipRect(p0, p1, true); break;
-            case CLAY_RENDER_COMMAND_TYPE_SCISSOR_END:   dl->PopClipRect(); break;
+            // a tilted subtree can't use an axis-aligned scissor (it'd clip the rotated corners) → skip it
+            case CLAY_RENDER_COMMAND_TYPE_SCISSOR_START: if (!(sx && sx->rot != 0)) dl->PushClipRect(p0, p1, true); break;
+            case CLAY_RENDER_COMMAND_TYPE_SCISSOR_END:   if (!(sx && sx->rot != 0)) dl->PopClipRect(); break;
             case CLAY_RENDER_COMMAND_TYPE_CUSTOM: { auto& cu = cmd->renderData.custom;
                 if (cu.customData) scene_draw_shape(dl, (SceneShape*)cu.customData, p0, p1, s, lop);
             } break;
             default: break;
+        }
+        // TILT: rotate this command's emitted vertices about the subtree's screen-bbox centre.
+        if (vrot0 >= 0 && sx->hasBox && dl->VtxBuffer.Size > vrot0) {
+            ImVec2 piv((sx->bx0 + sx->bx1) * 0.5f, (sx->by0 + sx->by1) * 0.5f);
+            float cr = cosf(sx->rot), sr = sinf(sx->rot);
+            ImDrawVert* vb = dl->VtxBuffer.Data;
+            for (int vi = vrot0; vi < dl->VtxBuffer.Size; vi++) {
+                float dx = vb[vi].pos.x - piv.x, dy = vb[vi].pos.y - piv.y;
+                vb[vi].pos.x = piv.x + dx * cr - dy * sr;
+                vb[vi].pos.y = piv.y + dx * sr + dy * cr;
+            }
         }
     }
 }
