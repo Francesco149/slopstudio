@@ -155,7 +155,7 @@ Clay element per node, and after `Clay.EndLayout()` translates the render comman
 | `image` | `asset`/`uri` (req) `fit`(cover/contain) `crop`(x,y,w,h 0..1) `tint opacity radius`; **per-node transform** `tx ty`(px) `sc`\|`scx scy` `rot`(deg); **glow** `glow`(0..1) `glow_col`; **motion-blur** `mb`={dx,dy}(per-frame px) `mb_n` | Clay image → `AddImageQuad` at its rect (transformed about center; glow = gradient-ring halo; mb = trailing ghost smear) |
 | `shape` | `kind`(box/line/arrow/ellipse/bracket/**rays**) `color thickness fill from to`; rays: `count phase`(rad) `duty` | Clay **custom** element → `draw_shape` at its rect |
 
-The returned **root** node may also carry `ox`/`oy` (project px) — a scene-level offset for **screen-shake** (drive it from `anim.shake(t,…)`).
+**Any** node may carry a **subtree transform** `t_x`/`t_y` (px) + `t_op` (0..1 opacity) that applies to it and all descendants (a group slide/fade — containers or text; composes across nesting). The returned **root** node may also carry `ox`/`oy` (project px) — a scene-level offset for **screen-shake** (drive it from `anim.shake(t,…)`).
 | `rule` / `spacer` | `size color` | thin rect / empty gap |
 
 - **Sizing:** `w`/`h` in project px, or `grow` (flex-grow), or omitted (fit content). Clay
@@ -223,6 +223,9 @@ Built as stdlib Lua on top of the kernel. Each is transparent, reflowable, and d
 - **`rays`** — an anime sunburst / impact lines radiating from `at`, fading to the tips, optionally
   rotating (`spin`) and bursting (`burst`). Put the subject image after it (a higher-z float) to sit
   on top → the "combine-then-rays" dramatic reveal. `data = { at, count, color, spin, burst, duty }`.
+- **`code`** — a vscode-style code card whose lines reveal one by one (slide up + fade, staggered via
+  `anim.stagger`), with an optional highlighted line. The first widget on the subtree transform.
+  `data = { title, lines:[...], step, dur, size, hi }`.
 - **`document`** — **the interview case.** `data = { image, source, excerpts:[{rect,hold,
   translation,note}] }`. Sequences pan/zoom (eased Ken-Burns between excerpt rects so the active
   excerpt fills ~60% of frame), drops each `translation` in a card on whichever side has room
@@ -311,8 +314,14 @@ Built as stdlib Lua on top of the kernel. Each is transparent, reflowable, and d
   (velocity ghost smear; reads best on fast/small motion) · root `ox`/`oy` + `anim.shake` (a decaying
   jolt) · `shape="rays"` sunburst (gradient wedges) + `widgets.rays` (burst envelope) → the
   "combine-then-rays" reveal. Motion-blur folded into `reveal`/`drag`; shake fires on the reveal landing.
-- **NEXT enabler:** a per-node transform for *containers/text* (transform the whole Clay subtree, not
-  just images) — unblocks the vscode-code-reveal, phone-typing-comment, and perspective card-flip moves.
+- ✓ **Subtree transform for containers/text (DONE 2026-07-15).** Any node's `t_x`/`t_y` (px) + `t_op`
+  (0..1) apply to it AND its descendants — a group slide/fade (containers or text), not just a single
+  image. Implemented via Clay's per-command `userData` passthrough (tagged during the walk; composed
+  across nesting — translates add, opacities multiply). v1 is translate + opacity (pivot-free);
+  subtree scale/rotate can follow. First widget: `widgets.code` (the vscode line-by-line reveal). This
+  also unblocks the phone-typing-comment move (typewriter text + a sliding bubble).
+- **Remaining moves to sequence:** phone-typing comment · perspective card-flip (wants subtree
+  scale/rotate — the follow-up to the translate+opacity core above).
 
 **P3 — parity + migration + polish.**
 - `widgets.diagram`/`widgets.chart` at parity → retire the C++ `diagram`/`plot` draw paths (or

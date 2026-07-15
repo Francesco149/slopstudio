@@ -65,8 +65,12 @@ per-vertex-alpha trapezoids via the ImDrawList prim API → smooth, no banding).
 **motion-blur** (image `mb`={dx,dy}+`mb_n` → velocity ghost smear; folded into reveal/drag; reads best on fast/small
 motion) · **screen-shake** (root `ox`/`oy` + `anim.shake` decaying jolt; reveal fires it on landing) · **light-rays**
 (`shape="rays"` gradient sunburst + `widgets.rays` burst envelope → the **combine-then-rays** dramatic reveal).
-**NEXT enabler:** a per-node transform for CONTAINERS/TEXT (transform a whole Clay subtree, not just images) — unblocks
-vscode-code-reveal · phone-typing-comment · perspective card-flip. **→ P3**
+**★ Then SUBTREE TRANSFORM (the last shared enabler):** any node's `t_x`/`t_y`+`t_op` apply to it AND its
+descendants (a group slide/fade for CONTAINERS/TEXT, not just images) — via Clay's per-command `userData`
+passthrough, composed across nesting; v1 = translate+opacity (scale/rot can follow). First widget: **`widgets.code`**
+(the vscode line-by-line reveal; +`anim.stagger`/`anim.typewrite`). Unblocks phone-typing-comment too. All BIG
+ANIMATION WISHLIST shared enablers now landed; remaining = compose the last moves (phone comment · perspective
+flip). **→ P3**
 (diagram/chart parity; crisp large text — ImGui 1.91.4 bakes 48px so big text is soft, size-ladder/1.92 fix).
 Self-contained clip → PNG fallback always. **KIRBY:** the quote-clip reuse (tilt-sensor/MBC7 → `style:"quote"`)
 is engine-independent, do anytime; the diagram/card-PNG→transparent-scene swaps come after the remaining P2 widgets.
