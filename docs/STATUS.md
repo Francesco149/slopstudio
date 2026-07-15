@@ -49,11 +49,18 @@ thumb-tool board natively (axis + dated dots + alternating labels + span, transp
 **kirby conversions validated** (preview `../slopstudio-projects/kirby-tilt-n-tumble/kirby-scenetest.slop.json`,
 scene-check 2/2, feed): `lineage.png`→`widgets.timeline`, `trains-interview.png`→`widgets.document`(contain) with
 EN translations backing the "tested on the bullet train" claim (trans=3). **NOT yet baked into the live kirby cut**
-— awaiting owner review of the previews, then swap b99/b84 (+ emu-comparison/octant/other interviews). **BIG
-ANIMATION WISHLIST from owner** (image reveal w/ inertial slide+straighten+glow · combine-then-rays · vscode code
-reveal · phone typing comment · card flip · pan-zoom-out reveal · balatro cursor-drag) — shared primitives:
-per-node image transform (tx/ty/sc/rot via AddImageQuad), glow (auto-color), motion-blur/screen-shake/rays;
-sequence them next. **→ P3**
+— awaiting owner review of the previews, then swap b99/b84 (+ emu-comparison/octant/other interviews).
+**★ P2d — ANIMATION ENABLER: per-node image transform + glow (2026-07-15, same session):** the scene `image`
+node now carries a **per-node transform** — `tx`/`ty` (px), `sc`\|`scx`/`scy`, `rot` (deg) — applied to the drawn
+quad (not the layout slot) via `AddImageQuad` about the box center, plus **`glow`** (0..1; `glow_col` or an auto
+brightened-image-mean color) drawn as a soft **solid-color** halo behind the transformed quad (solid, so it blooms
+regardless of the source's own brightness — a tinted dark card would just read as a shadow). First widgets on it:
+**`widgets.reveal`** (inertial slide-in + straighten w/ overshoot + glow bloom) and **`widgets.cardflip`** (squash
+1→0→1, face swaps at edge-on). Proof: `examples/scene-anim.slop.json` (scene-check 3/3; montage on the feed). This
+is the first of the **BIG ANIMATION WISHLIST** shared enablers — it also unblocks the balatro cursor-drag
+(`tx`/`ty` + `anim.spring_step`) and pan-zoom-out (already via `crop`). **NEXT enablers:** motion-blur (velocity
+ghosts) · screen-shake · light-rays · a per-node transform for CONTAINERS/TEXT (transform a whole Clay subtree,
+not just images). Then sequence the remaining moves (combine-then-rays · vscode code reveal · phone comment). **→ P3**
 (diagram/chart parity; crisp large text — ImGui 1.91.4 bakes 48px so big text is soft, size-ladder/1.92 fix).
 Self-contained clip → PNG fallback always. **KIRBY:** the quote-clip reuse (tilt-sensor/MBC7 → `style:"quote"`)
 is engine-independent, do anytime; the diagram/card-PNG→transparent-scene swaps come after the remaining P2 widgets.

@@ -102,7 +102,11 @@ function box(o) return node("box", o) end
 function row(o) return node("row", o) end
 function col(o) return node("col", o) end
 function text(s, o) o = o or {}; o.k = "text"; o.s = tostring(s == nil and "" or s); return o end
-function image(o) o = o or {}; o.k = "image"; return o end   -- { asset=uri, crop={x,y,w,h}(0..1), fit, tint, radius, grow/w/h }
+-- image node. { asset=uri, crop={x,y,w,h}(0..1), fit="cover|contain", tint, radius, grow/w/h/pw/ph }
+-- PER-NODE TRANSFORM (offsets the drawn quad, not the layout slot — slide/spin/scale in place):
+--   tx,ty=px  sc=uniform | scx,scy=per-axis  rot=degrees   (reveal/card-flip/drag animations)
+-- GLOW: glow=0..1 draws enlarged copies behind, colored from glow_col={r,g,b} or a brightened mean.
+function image(o) o = o or {}; o.k = "image"; return o end
 function shape(o) o = o or {}; o.k = "shape"; return o end   -- { shape="box|ellipse|line|arrow|underline|bracket", from={x,y}, to={x,y}, color, fill, thickness } — from/to are 0..1 of the box
 function rule(o) o = o or {}; return box{ h = o.h or 3, w = o.w, growx = (o.w == nil) or nil, bg = o.col or theme.accent(1) } end
 function spacer(px, horizontal) if horizontal then return box{ w = px } else return box{ h = px } end end
@@ -200,6 +204,36 @@ function widgets.split(t, d)
   if d.body then tk[#tk + 1] = text(d.body, { size = 36, col = theme.fade(theme.fg, e), wrap = "words" }) end
   kids[#kids + 1] = col{ growx = true, gap = 18, ay = "c", kids = tk }
   return center(row{ gap = 44, ay = "c", pw = 0.9, kids = kids })
+end
+
+-- REVEAL — the "ta-da, here's the artifact" beat: an image slides in with inertia (friction stop),
+-- straightens from a slight tilt (a hair of overshoot), and blooms a glow that fades after it settles.
+-- Exercises the per-node image transform (tx/ty/rot) + glow. data:
+--   { image=uri, dx=px(from), dy=px(from), rot=deg(from), glow=0..1, dur=sec, size=0..1(pw), radius=px }
+function widgets.reveal(t, d)
+  d = d or {}
+  local dur = d.dur or 0.9
+  local e = anim.out_expo(t / dur)                                  -- fast in, long friction settle
+  local dx = (d.dx or -460) * (1 - e)
+  local dy = (d.dy or 40) * (1 - e)
+  local rot = (d.rot or -7) * (1 - anim.out_back(t / (dur * 1.15)))  -- straighten past 0 then back
+  local gin = anim.rise(t, dur * 0.6)
+  local gout = 1 - anim.clamp((t - dur * 1.05) / 0.5, 0, 1)
+  local glow = (d.glow or 0.85) * gin * gout
+  return center(image{ asset = d.image, pw = d.size or 0.66, aspect = true,
+    tx = dx, ty = dy, rot = rot, glow = glow, glow_col = d.glow_col, radius = d.radius or 0 })
+end
+
+-- CARDFLIP — a 2D card flip: horizontal squash 1->0->1, the face swapping at the edge-on midpoint
+-- (front -> back). data: { front=uri, back=uri, dur=sec, delay=sec, size=0..1(pw), glow=0..1 }
+function widgets.cardflip(t, d)
+  d = d or {}
+  local dur = d.dur or 0.8
+  local p = anim.clamp((t - (d.delay or 0.3)) / dur, 0, 1)
+  local face = (p < 0.5) and (d.front or d.back) or (d.back or d.front)
+  local sx = math.abs(math.cos(p * math.pi))                        -- 1 -> 0 (edge-on) -> 1
+  if sx < 0.02 then sx = 0.02 end
+  return center(image{ asset = face, pw = d.size or 0.5, aspect = true, scx = sx, glow = d.glow or 0 })
 end
 
 -- COMPARISON — N cells (image + caption) side by side, staggered in. data:

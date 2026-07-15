@@ -1,0 +1,46 @@
+{
+  "schema": "slopstudio.project/1",
+  "meta": {
+    "title": "scene animation demo — per-node image transform + glow",
+    "fps": 60,
+    "resolution": [1920, 1080],
+    "bg": "checker",
+    "notes": "Self-demo for the BIG ANIMATION WISHLIST enablers (docs/LAYOUT_ENGINE.md): the scene `image` node now carries a per-node transform (tx/ty/sc/scx/scy/rot) + glow, drawn via AddImageQuad. Three clips: widgets.reveal (inertial slide + straighten + glow bloom), widgets.cardflip (2D flip, face swap at edge-on), and a raw transformed+glowing image. Scrub to see the motion. Render a frame: build/slopstudio.exe examples/scene-anim.slop.json --shot-frame out.png --time 0.5"
+  },
+  "assets": {},
+  "tracks": [
+    { "id": "tk_v", "name": "Video", "kind": "video", "rows": ["r_scene"] }
+  ],
+  "rows": {
+    "r_scene": { "type": "scene", "name": "Scene", "params": {}, "clips": ["sc_reveal", "sc_flip", "sc_spin"] }
+  },
+  "clips": {
+    "sc_reveal": {
+      "row": "r_scene", "start": 0.0, "dur": 4.0,
+      "params": {
+        "script": "local t, d = ...\nreturn widgets.reveal(t, d)",
+        "data": { "image": "docs/hero/code-card.png", "dx": -520, "dy": 60, "rot": -8, "glow": 0.9, "dur": 0.95, "size": 0.62, "radius": 16 }
+      },
+      "transform": { "pos": [0, 0], "scale": [1, 1], "rot": 0, "opacity": 1, "anchor": [0.5, 0.5] },
+      "keyframes": {}
+    },
+    "sc_flip": {
+      "row": "r_scene", "start": 4.0, "dur": 4.0,
+      "params": {
+        "script": "local t, d = ...\nreturn widgets.cardflip(t, d)",
+        "data": { "front": "docs/hero/diagram.png", "back": "docs/hero/footage.png", "dur": 0.8, "delay": 0.6, "size": 0.6, "glow": 0.4 }
+      },
+      "transform": { "pos": [0, 0], "scale": [1, 1], "rot": 0, "opacity": 1, "anchor": [0.5, 0.5] },
+      "keyframes": {}
+    },
+    "sc_spin": {
+      "row": "r_scene", "start": 8.0, "dur": 4.0,
+      "params": {
+        "script": "local t, d = ...\nlocal e = anim.rise(t, 0.6)\nreturn center(image{ asset = d.image, pw = 0.5, aspect = true, rot = -6 + 12 * anim.io_cubic((t % 3) / 3), glow = 0.6 + 0.4 * e, radius = 18 })",
+        "data": { "image": "docs/hero/editor.png" }
+      },
+      "transform": { "pos": [0, 0], "scale": [1, 1], "rot": 0, "opacity": 1, "anchor": [0.5, 0.5] },
+      "keyframes": {}
+    }
+  }
+}

@@ -5047,8 +5047,13 @@ static std::map<size_t,int> g_sceneChunks;               // script-hash -> compi
 static std::string          g_sceneErr;                  // last error (drawn as a card)
 // image nodes resolve a texture (srv + crop uv + tint) into this per-frame pool; Clay carries the
 // pointer through to the IMAGE render command. A std::deque keeps element addresses stable on push.
-struct SceneImg { ID3D11ShaderResourceView* srv; float u0, v0, u1, v1; Clay_Color tint; float radius; float aspect; bool contain; };
+// tx/ty/scx/scy/rot are a PER-NODE transform applied to the drawn quad (not the layout box) so a
+// script can slide/scale/spin an image within its reserved slot (image-reveal, card-flip, drag);
+// glow draws enlarged silhouette-following copies behind it (auto-colored from the image mean).
+struct SceneImg { ID3D11ShaderResourceView* srv; float u0, v0, u1, v1; Clay_Color tint; float radius; float aspect; bool contain;
+                  float tx = 0, ty = 0, scx = 1, scy = 1, rot = 0, glow = 0; Clay_Color glowCol{ 255, 255, 255, 255 }; };
 static std::deque<SceneImg>  g_sceneImgs;
+static bool image_mean_rgb(const std::string& uri, float& r, float& g, float& b);   // auto glow color (defined below)
 // vector shapes (box/ellipse/line/arrow/underline/bracket) drawn within a laid-out box; from/to
 // are fractions 0..1 of that box, so a full-frame floating shape addresses the whole frame.
 struct SceneShape { int kind; Clay_Color color, fill; bool hasFill; float thickness, round, ax, ay, bx, by; };
@@ -5260,6 +5265,23 @@ static void scene_walk(lua_State* L, int idx) {
         Clay_Color tint{ 255, 255, 255, 255 }; lf_color(L, idx, "tint", &tint); si.tint = tint;
         si.radius = (float)lf_num(L, idx, "radius", 0);
         si.contain = (lf_str(L, idx, "fit", "cover") == "contain");
+        // per-node transform: sc = uniform shortcut; scx/scy override each axis; rot in DEGREES.
+        si.tx = (float)lf_num(L, idx, "tx", 0);
+        si.ty = (float)lf_num(L, idx, "ty", 0);
+        double sc = lf_num(L, idx, "sc", 1.0);
+        si.scx = (float)lf_num(L, idx, "scx", sc);
+        si.scy = (float)lf_num(L, idx, "scy", sc);
+        si.rot = (float)(lf_num(L, idx, "rot", 0.0) * 3.14159265358979 / 180.0);
+        // glow: enlarged copies behind, colored from `glow_col` or (default) a brightened image mean.
+        si.glow = (float)lf_num(L, idx, "glow", 0.0);
+        Clay_Color gcol{ 255, 255, 255, 255 };
+        if (!lf_color(L, idx, "glow_col", &gcol) && si.glow > 0.001f) {
+            float mr, mg, mb;
+            if (image_mean_rgb(uri, mr, mg, mb)) {   // push the hue toward luminous (a light bloom)
+                gcol.r = mr + (255 - mr) * 0.5f; gcol.g = mg + (255 - mg) * 0.5f; gcol.b = mb + (255 - mb) * 0.5f;
+            }
+        }
+        si.glowCol = gcol;
         si.aspect = (tex && tex->h > 0) ? ((si.u1 - si.u0) * tex->w) / ((si.v1 - si.v0) * tex->h) : 1.0f;  // crop-region pixel aspect
         g_sceneImgs.push_back(si);
         Clay_ElementDeclaration d; memset(&d, 0, sizeof d);
@@ -5358,6 +5380,17 @@ static void scene_draw_shape(ImDrawList* dl, SceneShape* sh, ImVec2 p0, ImVec2 p
     }
 }
 
+// The 4 screen-space corners of an image quad after its per-node transform: scale about the box
+// center, rotate, then translate by (tx,ty) px. `extra` inflates it uniformly (glow halos).
+static void scene_image_quad(const SceneImg* si, ImVec2 q0, ImVec2 q1, float s, float extra, ImVec2 out[4]) {
+    ImVec2 c((q0.x + q1.x) * 0.5f, (q0.y + q1.y) * 0.5f);
+    float hx = (q1.x - q0.x) * 0.5f * si->scx * extra, hy = (q1.y - q0.y) * 0.5f * si->scy * extra;
+    float ca = cosf(si->rot), sa = sinf(si->rot), ox = si->tx * s, oy = si->ty * s;
+    const float rx[4] = { -hx, hx, hx, -hx }, ry[4] = { -hy, -hy, hy, hy };
+    for (int i = 0; i < 4; i++)
+        out[i] = ImVec2(c.x + rx[i] * ca - ry[i] * sa + ox, c.y + rx[i] * sa + ry[i] * ca + oy);
+}
+
 // Translate Clay's render commands into ImDrawList calls (glob = clip opacity 0..1).
 static void scene_draw_cmds(ImDrawList* dl, Clay_RenderCommandArray cmds, ImVec2 origin, float s, float glob) {
     ImFont* font = g_captionFont ? g_captionFont : ImGui::GetFont();
@@ -5378,6 +5411,7 @@ static void scene_draw_cmds(ImDrawList* dl, Clay_RenderCommandArray cmds, ImVec2
             case CLAY_RENDER_COMMAND_TYPE_IMAGE: { auto& im = cmd->renderData.image;
                 SceneImg* si = (SceneImg*)im.imageData;
                 if (si && si->srv) {
+                    ImTextureID tid = (ImTextureID)(intptr_t)si->srv;
                     ImU32 tint = C(si->tint); ImVec2 uv0(si->u0, si->v0), uv1(si->u1, si->v1);
                     ImVec2 q0 = p0, q1 = p1;
                     if (si->contain && si->aspect > 0) {   // letterbox: fit the crop-region aspect inside the box, centered
@@ -5385,8 +5419,27 @@ static void scene_draw_cmds(ImDrawList* dl, Clay_RenderCommandArray cmds, ImVec2
                         if (si->aspect > ba) { float nh = bw / si->aspect, off = (bh - nh) * 0.5f; q0.y = p0.y + off; q1.y = p1.y - off; }
                         else { float nw = bh * si->aspect, off = (bw - nw) * 0.5f; q0.x = p0.x + off; q1.x = p1.x - off; }
                     }
-                    if (si->radius > 0) dl->AddImageRounded((ImTextureID)(intptr_t)si->srv, q0, q1, uv0, uv1, tint, si->radius * s);
-                    else dl->AddImage((ImTextureID)(intptr_t)si->srv, q0, q1, uv0, uv1, tint);
+                    bool xf = si->rot != 0 || si->scx != 1 || si->scy != 1 || si->tx != 0 || si->ty != 0;
+                    // glow: soft SOLID-color halo behind the (transformed) quad. Solid — not a tinted
+                    // texture copy — so it blooms regardless of the source's own brightness (a tinted
+                    // dark card just reads as a shadow). Many low-alpha enlarged layers ≈ a feathered
+                    // falloff (bright at the edge, fading out); the opaque image covers the inner part.
+                    if (si->glow > 0.001f) {
+                        const int GLOW_LAYERS = 6;
+                        for (int lyr = GLOW_LAYERS; lyr >= 1; lyr--) {
+                            float extra = 1.0f + (0.18f * si->glow) * (float)lyr / GLOW_LAYERS;
+                            ImVec2 gq[4]; scene_image_quad(si, q0, q1, s, extra, gq);
+                            int a = (int)(si->glow * 24.0f * glob + 0.5f); a = a < 0 ? 0 : (a > 255 ? 255 : a);
+                            dl->AddQuadFilled(gq[0], gq[1], gq[2], gq[3],
+                                              IM_COL32((int)si->glowCol.r, (int)si->glowCol.g, (int)si->glowCol.b, a));
+                        }
+                    }
+                    if (xf) {   // transformed → quad (AddImageQuad has no rounding; transforms rarely want it)
+                        ImVec2 qq[4]; scene_image_quad(si, q0, q1, s, 1.0f, qq);
+                        dl->AddImageQuad(tid, qq[0], qq[1], qq[2], qq[3],
+                            ImVec2(uv0.x, uv0.y), ImVec2(uv1.x, uv0.y), ImVec2(uv1.x, uv1.y), ImVec2(uv0.x, uv1.y), tint);
+                    } else if (si->radius > 0) dl->AddImageRounded(tid, q0, q1, uv0, uv1, tint, si->radius * s);
+                    else dl->AddImage(tid, q0, q1, uv0, uv1, tint);
                 } else dl->AddRectFilled(p0, p1, IM_COL32(38, 40, 52, (int)(120 * glob)), 6 * s);   // missing-asset placeholder
             } break;
             case CLAY_RENDER_COMMAND_TYPE_SCISSOR_START: dl->PushClipRect(p0, p1, true); break;
@@ -5506,6 +5559,10 @@ static ImgMean image_mean(const std::string& uri) {
     }
     g_meanCache[uri] = m;
     return m;
+}
+// Thin bool-returning wrapper (fwd-declared up in the scene block for auto glow color).
+static bool image_mean_rgb(const std::string& uri, float& r, float& g, float& b) {
+    ImgMean m = image_mean(uri); if (!m.ok) return false; r = m.r; g = m.g; b = m.b; return true;
 }
 
 // Does this image carry REAL transparency (a cut-out like the konata PNG)? Cached, subsampled.

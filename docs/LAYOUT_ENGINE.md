@@ -152,7 +152,7 @@ Clay element per node, and after `Clay.EndLayout()` translates the render comman
 |---|---|---|
 | `row` / `col` / `box` | `gap pad align justify w h grow wrap bg radius border clip children` | Clay container (+ optional rect/border) |
 | `text` | `s` (string, req) `font size color wrap align weight` | Clay text (measured via ImGui) |
-| `image` | `asset`/`uri` (req) `fit`(cover/contain) `crop`(x,y,w,h 0..1) `tint opacity radius` | Clay image → textured quad at its rect |
+| `image` | `asset`/`uri` (req) `fit`(cover/contain) `crop`(x,y,w,h 0..1) `tint opacity radius`; **per-node transform** `tx ty`(px) `sc`\|`scx scy` `rot`(deg); **glow** `glow`(0..1) `glow_col` | Clay image → `AddImageQuad` at its rect (transformed about center; glow = solid-color halo behind) |
 | `shape` | `kind`(box/line/arrow/ellipse/bracket) `color thickness fill from to` | Clay **custom** element → `draw_shape` at its rect |
 | `rule` / `spacer` | `size color` | thin rect / empty gap |
 
@@ -210,6 +210,11 @@ Built as stdlib Lua on top of the kernel. Each is transparent, reflowable, and d
   bar (rebuilds the kirby `lineage.png` thumb-tool board natively; positioned via floating shapes+labels).
 - **`diagram`** — boxes + arrows / flow chains (parity with `draw_diagram_clip`, then retire it).
 - **`chart`** — line/step/scatter/bar + axes/markers/regions/reveal (parity with `draw_plot_clip`).
+- **`reveal`** — the "here's the artifact" beat: an image slides in with inertia (friction stop),
+  straightens from a slight tilt (a hair of overshoot), and blooms a glow that fades after it settles.
+  Exercises the per-node image transform (`tx`/`ty`/`rot`) + `glow`. `data = { image, dx, dy, rot, glow, dur, size }`.
+- **`cardflip`** — a 2D card flip: horizontal squash 1→0→1 with the face swapping at the edge-on
+  midpoint. `data = { front, back, dur, delay, size, glow }`.
 - **`document`** — **the interview case.** `data = { image, source, excerpts:[{rect,hold,
   translation,note}] }`. Sequences pan/zoom (eased Ken-Burns between excerpt rects so the active
   excerpt fills ~60% of frame), drops each `translation` in a card on whichever side has room
@@ -285,6 +290,19 @@ Built as stdlib Lua on top of the kernel. Each is transparent, reflowable, and d
 - **REMAINING P2:** swap 2–3 kirby thumb-tool diagram/comparison PNGs + an interview screenshot to
   scenes — what actually unblocks the kirby "solid rectangles" fix (content work; wants owner steer
   on which excerpts/translations).
+
+**BIG ANIMATION WISHLIST (owner) — shared enablers first, then sequence the moves.**
+- ✓ **Per-node image transform + glow (DONE 2026-07-15).** The `image` node carries `tx`/`ty` (px),
+  `sc`/`scx`/`scy`, `rot` (deg) — applied to the drawn quad (not the layout slot) via `AddImageQuad`
+  about the box center — and `glow` (0..1, `glow_col` or auto brightened-mean), drawn as a soft
+  solid-color halo behind the (transformed) quad so it blooms regardless of source brightness.
+  First widgets on it: `reveal` (inertial slide + straighten + bloom) and `cardflip` (squash + face
+  swap). Proof: `examples/scene-anim.slop.json` (feed). This unblocks the balatro cursor-drag (`tx`/`ty`
+  + `anim.spring_step`) and pan-zoom-out (already via `crop`).
+- **NEXT enablers:** motion-blur (velocity ghosts), screen-shake, light-rays (radial streaks), a
+  per-node transform for *containers/text* (transform the whole Clay subtree, not just images).
+- **Then the moves:** combine-then-white-rays · vscode code reveal (line highlight/blur) · phone
+  typing comment · card flip w/ perspective. Sequence from the enablers above.
 
 **P3 — parity + migration + polish.**
 - `widgets.diagram`/`widgets.chart` at parity → retire the C++ `diagram`/`plot` draw paths (or
