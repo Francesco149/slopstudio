@@ -456,17 +456,24 @@ function widgets.code(t, d)
   kids[#kids + 1] = body
   local card = col{ radius = 10, bg = cc.bg, bw = 2, bc = cc.border, clip = true, kids = kids, t_x = slideX, t_op = sop, t_rot = tilt }
   local root = { center(card) }
-  -- a fake mouse cursor "holding" the title bar, moving in with the window (drag feel). Prefer a real
-  -- cursor IMAGE (d.cursor_img — e.g. an open-source Adwaita arrow) over the drawn `cursor` shape.
-  if d.cursor ~= false and d.title then
-    local cw = d.cursor_size or 46
-    local fx, fy = (d.cursor_x or 0.585) * W + slideX, (d.cursor_y or 0.29) * H
-    if d.cursor_img then
-      root[#root + 1] = image{ asset = d.cursor_img, w = cw, aspect = true, float = "tl", fx = fx, fy = fy }
-    else
-      root[#root + 1] = box{ float = "tl", fx = fx, fy = fy, w = cw, h = cw * 1.46,
-        kids = { shape{ grow = true, shape = "cursor", color = { 16, 16, 22 }, fill = { 247, 248, 252 }, thickness = 3 } } }
+  -- a fake mouse cursor "holding" the title bar. It's positioned from the PREDICTED (centred) card
+  -- layout — measured with the same mono metrics Clay uses — so it stays ON the title bar as the code
+  -- (and thus the card) changes size. Upright; shifts with the slide (but doesn't tilt with the card).
+  if d.cursor ~= false and d.title and d.cursor_img then
+    local gw = (d.nums ~= false) and measure_text(string.rep("0", gdig), size, 0, true) or 0
+    local maxLineW = 0
+    for _, spans in ipairs(toklines) do
+      local ln = ""; for _, sp in ipairs(spans) do ln = ln .. sp.s end
+      local lw = measure_text(ln, size, 0, true); if lw > maxLineW then maxLineW = lw end
     end
+    local bodyW = size * 1.8 + gw + cellw * 1.5 + maxLineW
+    local tlW = size * 3.74 + measure_text(d.title, size * 0.82, 0, true)
+    local cardW = math.max(bodyW, tlW)
+    local titleH = size * 1.85
+    local cardH = titleH + size * 1.4 + #toklines * size * 1.05 + (#toklines - 1) * size * 0.24
+    local cardLeft, cardTop = (W - cardW) * 0.5, (H - cardH) * 0.5
+    root[#root + 1] = image{ asset = d.cursor_img, w = d.cursor_size or 46, aspect = true, float = "tl",
+      fx = cardLeft + cardW * (d.cursor_x or 0.66) + slideX, fy = cardTop + titleH * (d.cursor_y or 0.42) }
   end
   return box{ growx = true, growy = true, kids = root }
 end
