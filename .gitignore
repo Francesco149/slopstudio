@@ -110,3 +110,7 @@ examples/assets/*/viseme/
 
 # release build artifacts (stock pack etc.)
 dist/
+
+# editor backup-on-save artifacts (next to any opened .slop.json)
+*.slop.json.bak
+.backups/
