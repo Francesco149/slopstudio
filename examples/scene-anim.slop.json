@@ -3,79 +3,279 @@
   "meta": {
     "title": "scene animation demo — per-node image transform + glow",
     "fps": 60,
-    "resolution": [1920, 1080],
+    "resolution": [
+      1920,
+      1080
+    ],
     "bg": "checker",
     "notes": "Self-demo for the BIG ANIMATION WISHLIST enablers (docs/LAYOUT_ENGINE.md): the scene `image` node now carries a per-node transform (tx/ty/sc/scx/scy/rot) + glow, drawn via AddImageQuad. Three clips: widgets.reveal (inertial slide + straighten + glow bloom), widgets.cardflip (2D flip, face swap at edge-on), and a raw transformed+glowing image. Scrub to see the motion. Render a frame: build/slopstudio.exe examples/scene-anim.slop.json --shot-frame out.png --time 0.5"
   },
   "assets": {},
   "tracks": [
-    { "id": "tk_v", "name": "Video", "kind": "video", "rows": ["r_scene"] }
+    {
+      "id": "tk_v",
+      "name": "Video",
+      "kind": "video",
+      "rows": [
+        "r_scene"
+      ]
+    }
   ],
   "rows": {
-    "r_scene": { "type": "scene", "name": "Scene", "params": {}, "clips": ["sc_reveal", "sc_flip", "sc_spin", "sc_drag", "sc_rays"] }
+    "r_scene": {
+      "type": "scene",
+      "name": "Scene",
+      "params": {},
+      "clips": [
+        "sc_reveal",
+        "sc_flip",
+        "sc_spin",
+        "sc_drag",
+        "sc_rays",
+        "sc_code"
+      ]
+    }
   },
   "clips": {
     "sc_reveal": {
-      "row": "r_scene", "start": 0.0, "dur": 4.0,
+      "row": "r_scene",
+      "start": 0.0,
+      "dur": 4.0,
       "params": {
         "script": "local t, d = ...\nreturn widgets.reveal(t, d)",
-        "data": { "image": "docs/hero/code-card.png", "dx": -520, "dy": 60, "rot": -8, "glow": 0.9, "dur": 0.95, "size": 0.62, "radius": 16, "shake": 22 },
+        "data": {
+          "image": "docs/hero/code-card.png",
+          "dx": -520,
+          "dy": 60,
+          "rot": -8,
+          "glow": 0.9,
+          "dur": 0.95,
+          "size": 0.62,
+          "radius": 16,
+          "shake": 22
+        },
         "transition": false
       },
-      "transform": { "pos": [0, 0], "scale": [1, 1], "rot": 0, "opacity": 1, "anchor": [0.5, 0.5] },
-      "keyframes": {}
+      "transform": {
+        "pos": [
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "rot": 0.0,
+        "opacity": 1.0,
+        "anchor": [
+          0.5,
+          0.5
+        ]
+      }
     },
     "sc_flip": {
-      "row": "r_scene", "start": 4.0, "dur": 4.0,
+      "row": "r_scene",
+      "start": 4.0,
+      "dur": 4.0,
       "params": {
         "script": "local t, d = ...\nreturn widgets.cardflip(t, d)",
-        "data": { "front": "docs/hero/diagram.png", "back": "docs/hero/footage.png", "dur": 0.8, "delay": 0.6, "size": 0.6, "glow": 0.4 }
+        "data": {
+          "front": "docs/hero/diagram.png",
+          "back": "docs/hero/footage.png",
+          "dur": 0.8,
+          "delay": 0.6,
+          "size": 0.6,
+          "glow": 0.4
+        }
       },
-      "transform": { "pos": [0, 0], "scale": [1, 1], "rot": 0, "opacity": 1, "anchor": [0.5, 0.5] },
-      "keyframes": {}
+      "transform": {
+        "pos": [
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "rot": 0.0,
+        "opacity": 1.0,
+        "anchor": [
+          0.5,
+          0.5
+        ]
+      }
     },
     "sc_spin": {
-      "row": "r_scene", "start": 8.0, "dur": 4.0,
+      "row": "r_scene",
+      "start": 8.0,
+      "dur": 4.0,
       "params": {
         "script": "local t, d = ...\nlocal e = anim.rise(t, 0.6)\nreturn center(image{ asset = d.image, pw = 0.5, aspect = true, rot = -6 + 12 * anim.io_cubic((t % 3) / 3), glow = 0.6 + 0.4 * e, radius = 18 })",
-        "data": { "image": "docs/hero/editor.png" }
+        "data": {
+          "image": "docs/hero/editor.png"
+        }
       },
-      "transform": { "pos": [0, 0], "scale": [1, 1], "rot": 0, "opacity": 1, "anchor": [0.5, 0.5] },
-      "keyframes": {}
+      "transform": {
+        "pos": [
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "rot": 0.0,
+        "opacity": 1.0,
+        "anchor": [
+          0.5,
+          0.5
+        ]
+      }
     },
     "sc_drag": {
-      "row": "r_scene", "start": 12.0, "dur": 6.0,
+      "row": "r_scene",
+      "start": 12.0,
+      "dur": 6.0,
       "params": {
         "script": "local t, d = ...\nreturn widgets.drag(t, d)",
         "data": {
           "image": "docs/hero/code-card.png",
           "glow": 0.35,
           "path": [
-            { "t": 0.0, "x": 0.5, "y": 0.5 },
-            { "t": 0.8, "x": 0.5, "y": 0.5 },
-            { "t": 1.3, "x": 0.24, "y": 0.42 },
-            { "t": 1.9, "x": 0.24, "y": 0.42 },
-            { "t": 2.5, "x": 0.76, "y": 0.6 },
-            { "t": 3.1, "x": 0.76, "y": 0.6 },
-            { "t": 3.7, "x": 0.5, "y": 0.28 },
-            { "t": 4.3, "x": 0.5, "y": 0.28 },
-            { "t": 5.0, "x": 0.5, "y": 0.5 },
-            { "t": 6.0, "x": 0.5, "y": 0.5 }
+            {
+              "t": 0.0,
+              "x": 0.5,
+              "y": 0.5
+            },
+            {
+              "t": 0.8,
+              "x": 0.5,
+              "y": 0.5
+            },
+            {
+              "t": 1.3,
+              "x": 0.24,
+              "y": 0.42
+            },
+            {
+              "t": 1.9,
+              "x": 0.24,
+              "y": 0.42
+            },
+            {
+              "t": 2.5,
+              "x": 0.76,
+              "y": 0.6
+            },
+            {
+              "t": 3.1,
+              "x": 0.76,
+              "y": 0.6
+            },
+            {
+              "t": 3.7,
+              "x": 0.5,
+              "y": 0.28
+            },
+            {
+              "t": 4.3,
+              "x": 0.5,
+              "y": 0.28
+            },
+            {
+              "t": 5.0,
+              "x": 0.5,
+              "y": 0.5
+            },
+            {
+              "t": 6.0,
+              "x": 0.5,
+              "y": 0.5
+            }
           ]
         }
       },
-      "transform": { "pos": [0, 0], "scale": [1, 1], "rot": 0, "opacity": 1, "anchor": [0.5, 0.5] },
-      "keyframes": {}
+      "transform": {
+        "pos": [
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "rot": 0.0,
+        "opacity": 1.0,
+        "anchor": [
+          0.5,
+          0.5
+        ]
+      }
     },
     "sc_rays": {
-      "row": "r_scene", "start": 18.0, "dur": 4.0,
+      "row": "r_scene",
+      "start": 18.0,
+      "dur": 4.0,
       "params": {
         "script": "local t, d = ...\nlocal pop = anim.out_back(anim.clamp(t / 0.55, 0, 1))\nlocal W = (frame and frame.w) or 1920\nlocal n = box{ growx = true, growy = true, kids = {\n  widgets.rays(t, { count = 22, spin = 0.5, burst = 1.6, color = { 255, 242, 214, 225 } }),\n  image{ asset = d.image, w = math.floor(W * 0.42), aspect = true, glow = 0.55, radius = 14, sc = pop, float = \"c\", z = 4 } } }\nn.ox, n.oy = anim.shake(t, 20, 0.4)\nreturn n",
-        "data": { "image": "docs/hero/code-card.png" },
+        "data": {
+          "image": "docs/hero/code-card.png"
+        },
         "transition": false
       },
-      "transform": { "pos": [0, 0], "scale": [1, 1], "rot": 0, "opacity": 1, "anchor": [0.5, 0.5] },
-      "keyframes": {}
+      "transform": {
+        "pos": [
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "rot": 0.0,
+        "opacity": 1.0,
+        "anchor": [
+          0.5,
+          0.5
+        ]
+      }
+    },
+    "sc_code": {
+      "row": "r_scene",
+      "start": 22.0,
+      "dur": 5.0,
+      "params": {
+        "script": "local t, d = ...\nreturn widgets.code(t, d)",
+        "data": {
+          "title": "std.lua — the scene stdlib",
+          "hi": 4,
+          "step": 0.16,
+          "lines": [
+            "function widgets.reveal(t, d)",
+            "  local e = anim.out_expo(t / dur)",
+            "  local dx = (d.dx or -460) * (1 - e)",
+            "  return image{ tx = dx, glow = 0.85 }",
+            "end"
+          ]
+        },
+        "transition": false
+      },
+      "transform": {
+        "pos": [
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0
+        ],
+        "rot": 0.0,
+        "opacity": 1.0,
+        "anchor": [
+          0.5,
+          0.5
+        ]
+      }
     }
   }
 }

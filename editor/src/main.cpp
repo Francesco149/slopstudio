@@ -5060,6 +5060,11 @@ static bool image_mean_rgb(const std::string& uri, float& r, float& g, float& b)
 struct SceneShape { int kind; Clay_Color color, fill; bool hasFill; float thickness, round, ax, ay, bx, by;
                     float count, phase, duty; };   // rays: wedge count, rotation (rad), ray/gap duty 0..1
 static std::deque<SceneShape> g_sceneShapes;
+// SUBTREE transform: a node's `t_x`/`t_y` (px) + `t_op` (0..1) apply to the node AND all its
+// descendants — a group slide/fade (containers or text), the container/text analogue of the image
+// quad transform. Tagged onto every element's Clay userData during the walk; read back per command.
+struct SceneXform { float tx = 0, ty = 0, op = 1; };
+static std::deque<SceneXform> g_sceneXforms;
 static unsigned long long    g_stdMtime = 0;              // presets/lua/std.lua mtime → hot-reload on save
 
 // Clay measures text in PROJECT px; ImGui scales the 48px atlas (soft at extremes — see doc §9).
@@ -5226,9 +5231,16 @@ static bool lf_xy(lua_State* L, int idx, const char* k, float* out) {
     lua_pop(L, 1); return ok;
 }
 
-// Recursively drive Clay from the node table at absolute index `idx` (stack-balanced).
-static void scene_walk(lua_State* L, int idx) {
+// Recursively drive Clay from the node table at absolute index `idx` (stack-balanced). `inXf` is
+// the subtree transform inherited from an ancestor (nullptr = none); a node's own `t_x`/`t_y`/`t_op`
+// compose onto it and pass down to descendants, tagged onto every element's Clay userData.
+static void scene_walk(lua_State* L, int idx, const SceneXform* inXf = nullptr) {
     std::string k = lf_str(L, idx, "k", "box");
+    const SceneXform* curXf = inXf;
+    { double tX = lf_num(L, idx, "t_x", 0), tY = lf_num(L, idx, "t_y", 0), tOp = lf_num(L, idx, "t_op", 1);
+      if (tX != 0 || tY != 0 || tOp != 1) {   // this node adds a group slide/fade → compose + tag its subtree
+          SceneXform x; x.tx = (inXf ? inXf->tx : 0) + (float)tX; x.ty = (inXf ? inXf->ty : 0) + (float)tY;
+          x.op = (inXf ? inXf->op : 1.0f) * (float)tOp; g_sceneXforms.push_back(x); curXf = &g_sceneXforms.back(); } }
     if (k == "shape") {
         SceneShape sh; memset(&sh, 0, sizeof sh);
         std::string kind = lf_str(L, idx, "shape", "box");
@@ -5249,6 +5261,7 @@ static void scene_walk(lua_State* L, int idx) {
         scene_sizing(&d.layout.sizing.width,  lf_num(L, idx, "w", -1), lf_num(L, idx, "pw", -1), grow || lf_bool(L, idx, "growx", false));
         scene_sizing(&d.layout.sizing.height, lf_num(L, idx, "h", -1), lf_num(L, idx, "ph", -1), grow || lf_bool(L, idx, "growy", false));
         d.custom.customData = &g_sceneShapes.back();
+        d.userData = (void*)curXf;
         scene_apply_float(L, idx, &d);
         Clay__OpenElement(); Clay__ConfigureOpenElement(d); Clay__CloseElement();
         return;
@@ -5301,6 +5314,7 @@ static void scene_walk(lua_State* L, int idx) {
         d.image.imageData = &g_sceneImgs.back();
         d.backgroundColor = tint;
         d.cornerRadius.topLeft = d.cornerRadius.topRight = d.cornerRadius.bottomLeft = d.cornerRadius.bottomRight = si.radius;
+        d.userData = (void*)curXf;
         scene_apply_float(L, idx, &d);
         Clay__OpenElement(); Clay__ConfigureOpenElement(d); Clay__CloseElement();
         return;
@@ -5313,6 +5327,7 @@ static void scene_walk(lua_State* L, int idx) {
         tc.textAlignment = ta == "c" ? CLAY_TEXT_ALIGN_CENTER : ta == "r" ? CLAY_TEXT_ALIGN_RIGHT : CLAY_TEXT_ALIGN_LEFT;
         std::string wr = lf_str(L, idx, "wrap", "words");
         tc.wrapMode = wr == "none" ? CLAY_TEXT_WRAP_NONE : wr == "lines" ? CLAY_TEXT_WRAP_NEWLINES : CLAY_TEXT_WRAP_WORDS;
+        tc.userData = (void*)curXf;   // TEXT commands inherit userData from the text config (not the element)
         lua_getfield(L, idx, "s"); size_t len = 0; const char* sp = lua_tolstring(L, -1, &len);
         Clay_String cs; cs.isStaticallyAllocated = false; cs.length = (int32_t)len; cs.chars = sp ? sp : "";
         Clay__OpenTextElement(cs, Clay__StoreTextElementConfig(tc));
@@ -5340,6 +5355,7 @@ static void scene_walk(lua_State* L, int idx) {
     if (bw > 0) { Clay_Color bc{ 255, 255, 255, 255 }; lf_color(L, idx, "bc", &bc); d.border.color = bc;
         d.border.width.left = d.border.width.right = d.border.width.top = d.border.width.bottom = (uint16_t)bw; }
     if (lf_bool(L, idx, "clip", false)) { d.clip.horizontal = true; d.clip.vertical = true; }
+    d.userData = (void*)curXf;
     scene_apply_float(L, idx, &d);
     Clay__OpenElement();
     Clay__ConfigureOpenElement(d);
@@ -5347,7 +5363,7 @@ static void scene_walk(lua_State* L, int idx) {
     if (lua_istable(L, -1)) {
         int kidsIdx = lua_gettop(L);
         lua_Integer n = (lua_Integer)luaL_len(L, kidsIdx);
-        for (lua_Integer i = 1; i <= n; i++) { lua_geti(L, kidsIdx, i); if (lua_istable(L, -1)) scene_walk(L, lua_gettop(L)); lua_pop(L, 1); }
+        for (lua_Integer i = 1; i <= n; i++) { lua_geti(L, kidsIdx, i); if (lua_istable(L, -1)) scene_walk(L, lua_gettop(L), curXf); lua_pop(L, 1); }
     }
     lua_pop(L, 1);   // pop kids
     Clay__CloseElement();
@@ -5484,15 +5500,21 @@ static void scene_draw_glow(ImDrawList* dl, const SceneImg* si, ImVec2 q0, ImVec
     }
 }
 
-// Translate Clay's render commands into ImDrawList calls (glob = clip opacity 0..1).
+// Translate Clay's render commands into ImDrawList calls (glob = clip opacity 0..1). Each command
+// may carry a SUBTREE transform via userData (a group slide/fade tagged during the walk); `lop` is
+// the effective per-command opacity, applied through the C() colour helper.
 static void scene_draw_cmds(ImDrawList* dl, Clay_RenderCommandArray cmds, ImVec2 origin, float s, float glob) {
     ImFont* font = g_captionFont ? g_captionFont : ImGui::GetFont();
-    auto C = [&](Clay_Color c) -> ImU32 { int a = (int)(c.a * glob + 0.5f); a = a < 0 ? 0 : (a > 255 ? 255 : a); return IM_COL32((int)c.r, (int)c.g, (int)c.b, a); };
+    float lop = glob;   // updated per command from its subtree transform's opacity
+    auto C = [&](Clay_Color c) -> ImU32 { int a = (int)(c.a * lop + 0.5f); a = a < 0 ? 0 : (a > 255 ? 255 : a); return IM_COL32((int)c.r, (int)c.g, (int)c.b, a); };
     for (int i = 0; i < cmds.length; i++) {
         Clay_RenderCommand* cmd = Clay_RenderCommandArray_Get(&cmds, i);
         Clay_BoundingBox b = cmd->boundingBox;
-        ImVec2 p0(origin.x + b.x * s, origin.y + b.y * s);
-        ImVec2 p1(origin.x + (b.x + b.width) * s, origin.y + (b.y + b.height) * s);
+        const SceneXform* sx = (const SceneXform*)cmd->userData;   // subtree slide/fade (nullptr = none)
+        lop = sx ? glob * sx->op : glob;
+        float tox = sx ? sx->tx * s : 0.0f, toy = sx ? sx->ty * s : 0.0f;
+        ImVec2 p0(origin.x + b.x * s + tox, origin.y + b.y * s + toy);
+        ImVec2 p1(origin.x + (b.x + b.width) * s + tox, origin.y + (b.y + b.height) * s + toy);
         switch (cmd->commandType) {
             case CLAY_RENDER_COMMAND_TYPE_RECTANGLE: { auto& r = cmd->renderData.rectangle;
                 dl->AddRectFilled(p0, p1, C(r.backgroundColor), r.cornerRadius.topLeft * s); } break;
@@ -5517,7 +5539,7 @@ static void scene_draw_cmds(ImDrawList* dl, Clay_RenderCommandArray cmds, ImVec2
                     // not a tinted texture copy — so it blooms regardless of the source's own brightness
                     // (a tinted dark card just reads as a shadow); a uniform-width gradient ring so it's
                     // even on every side (aspect-independent) and smooth (no banding). See scene_draw_glow.
-                    if (si->glow > 0.001f) scene_draw_glow(dl, si, q0, q1, s, glob);
+                    if (si->glow > 0.001f) scene_draw_glow(dl, si, q0, q1, s, lop);
                     // motion blur: faint trailing copies of the (transformed) quad along -mb (the recent
                     // motion), behind the crisp main image → a velocity smear that vanishes at rest.
                     // Reads best on fast / small motion (on a big opaque card the ghosts mostly hide
@@ -5528,7 +5550,7 @@ static void scene_draw_cmds(ImDrawList* dl, Clay_RenderCommandArray cmds, ImVec2
                         for (int gi = si->mbn; gi >= 1; gi--) {
                             float f = (float)gi / (float)(si->mbn + 1);           // 0..1 back along the trail
                             float ox = -si->mbx * f * s, oy = -si->mby * f * s;
-                            int a = (int)(glob * 255.0f * 0.30f * (1.0f - f) + 0.5f); a = a < 0 ? 0 : (a > 255 ? 255 : a);
+                            int a = (int)(lop * 255.0f * 0.30f * (1.0f - f) + 0.5f); a = a < 0 ? 0 : (a > 255 ? 255 : a);
                             dl->AddImageQuad(tid, ImVec2(base[0].x + ox, base[0].y + oy), ImVec2(base[1].x + ox, base[1].y + oy),
                                                   ImVec2(base[2].x + ox, base[2].y + oy), ImVec2(base[3].x + ox, base[3].y + oy),
                                                   ua, ub, uc, ud, IM_COL32(255, 255, 255, a));
@@ -5540,12 +5562,12 @@ static void scene_draw_cmds(ImDrawList* dl, Clay_RenderCommandArray cmds, ImVec2
                             ImVec2(uv0.x, uv0.y), ImVec2(uv1.x, uv0.y), ImVec2(uv1.x, uv1.y), ImVec2(uv0.x, uv1.y), tint);
                     } else if (si->radius > 0) dl->AddImageRounded(tid, q0, q1, uv0, uv1, tint, si->radius * s);
                     else dl->AddImage(tid, q0, q1, uv0, uv1, tint);
-                } else dl->AddRectFilled(p0, p1, IM_COL32(38, 40, 52, (int)(120 * glob)), 6 * s);   // missing-asset placeholder
+                } else dl->AddRectFilled(p0, p1, IM_COL32(38, 40, 52, (int)(120 * lop)), 6 * s);   // missing-asset placeholder
             } break;
             case CLAY_RENDER_COMMAND_TYPE_SCISSOR_START: dl->PushClipRect(p0, p1, true); break;
             case CLAY_RENDER_COMMAND_TYPE_SCISSOR_END:   dl->PopClipRect(); break;
             case CLAY_RENDER_COMMAND_TYPE_CUSTOM: { auto& cu = cmd->renderData.custom;
-                if (cu.customData) scene_draw_shape(dl, (SceneShape*)cu.customData, p0, p1, s, glob);
+                if (cu.customData) scene_draw_shape(dl, (SceneShape*)cu.customData, p0, p1, s, lop);
             } break;
             default: break;
         }
@@ -5578,6 +5600,7 @@ static void draw_scene_clip(ImDrawList* dl, float cx, float cy, float s, Clip& c
     g_sceneErr.clear();
     g_sceneImgs.clear();   // per-frame image-handle pool (Clay carries pointers into it → draw)
     g_sceneShapes.clear(); // per-frame shape pool (same lifetime contract)
+    g_sceneXforms.clear(); // per-frame subtree-transform pool (userData points into it)
     int ref = scene_get_chunk(L, src);
     if (ref == LUA_NOREF) { draw_scene_error(dl, f0, fw, fh, s, g_sceneErr); return; }
     lua_rawgeti(L, LUA_REGISTRYINDEX, ref);            // push chunk

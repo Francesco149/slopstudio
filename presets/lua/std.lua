@@ -26,6 +26,14 @@ function anim.smoothstep(e) return smooth(e) end
 function anim.rise(t, dur) return smooth(t / (dur or 0.45)) end                 -- 0->1 ease over the clip head
 function anim.lerp(t, a, b, dur, delay) return a + (b - a) * smooth((t - (delay or 0)) / (dur or 0.5)) end
 function anim.count(t, from, to, dur) return math.floor(from + (to - from) * smooth(t / (dur or 1.0)) + 0.5) end
+-- element i (1-based) reveals after (i-1)*step seconds, over dur → 0..1 (staggered list/line reveals)
+function anim.stagger(t, i, step, dur) return anim.rise(t - (i - 1) * (step or 0.08), dur or 0.4) end
+-- typewriter: the leading chars of `str` shown at time t (utf8-aware; cps = chars/sec)
+function anim.typewrite(t, str, cps)
+  local n = math.max(0, math.floor(t * (cps or 28)))
+  local off = utf8.offset(str, n + 1)
+  return off and str:sub(1, off - 1) or str
+end
 
 -- Tunable power ease-in-out: x in 0..1 -> 0..1. p=1 linear, p=2 gentle, p>=3 heavy (flat
 -- ends). The single knob behind the "camera inertia" feel for pans.
@@ -287,6 +295,29 @@ function widgets.drag(t, d)
   local mb = (d.blur ~= false) and { (px - ppx) * W, (py - ppy) * H } or nil
   return center(image{ asset = d.image, pw = d.size or 0.28, aspect = true,
     tx = (px - 0.5) * W, ty = (py - 0.5) * H, rot = rot, glow = d.glow or 0, mb = mb })
+end
+
+-- CODE — a vscode-style code card whose lines reveal one by one (slide up + fade, staggered). The
+-- FIRST use of the per-node SUBTREE transform (t_y/t_op on each line text node — a group slide/fade).
+-- data: { title="file.lua", lines={...}, step=0.12, dur=0.4, size=32, hi=<1-based line to highlight> }
+function widgets.code(t, d)
+  d = d or {}
+  local lines = d.lines or {}
+  local size = d.size or 32
+  local kids = {}
+  if d.title then                                             -- a chrome title bar (traffic lights + name)
+    local dot = function(c) return shape{ w = 13, h = 13, shape = "ellipse", fill = c, color = c } end
+    kids[#kids + 1] = row{ gap = 9, ay = "c", padb = 14, kids = {
+      dot{ 255, 95, 86 }, dot{ 255, 189, 46 }, dot{ 39, 201, 63 }, spacer(12, true),
+      text(d.title, { size = size * 0.72, col = theme.dim }) } }
+  end
+  for i, ln in ipairs(lines) do
+    local e = anim.stagger(t, i, d.step or 0.12, d.dur or 0.4)
+    kids[#kids + 1] = text(ln, { size = size, wrap = "none",
+      col = (d.hi == i) and theme.acc or theme.fg,
+      t_y = (1 - e) * 22, t_op = e })                         -- slide up + fade in, staggered per line
+  end
+  return center(box{ pad = 44, radius = 16, bg = { 20, 22, 30, 245 }, gap = 7, kids = kids })
 end
 
 -- RAYS — an anime sunburst / impact lines behind a subject. `count` wedges radiate from `at` (frame
