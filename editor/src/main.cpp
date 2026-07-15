@@ -5049,6 +5049,10 @@ static std::string          g_sceneErr;                  // last error (drawn as
 // pointer through to the IMAGE render command. A std::deque keeps element addresses stable on push.
 struct SceneImg { ID3D11ShaderResourceView* srv; float u0, v0, u1, v1; Clay_Color tint; float radius; };
 static std::deque<SceneImg>  g_sceneImgs;
+// vector shapes (box/ellipse/line/arrow/underline/bracket) drawn within a laid-out box; from/to
+// are fractions 0..1 of that box, so a full-frame floating shape addresses the whole frame.
+struct SceneShape { int kind; Clay_Color color, fill; bool hasFill; float thickness, round, ax, ay, bx, by; };
+static std::deque<SceneShape> g_sceneShapes;
 static unsigned long long    g_stdMtime = 0;              // presets/lua/std.lua mtime → hot-reload on save
 
 // Clay measures text in PROJECT px; ImGui scales the 48px atlas (soft at extremes — see doc §9).
@@ -5207,9 +5211,38 @@ static void scene_apply_float(lua_State* L, int idx, Clay_ElementDeclaration* d)
     d->floating.pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH;
 }
 
+// Read a {x,y} table field into out[2] (fractions); returns true if present.
+static bool lf_xy(lua_State* L, int idx, const char* k, float* out) {
+    lua_getfield(L, idx, k); bool ok = false;
+    if (lua_istable(L, -1)) { lua_geti(L, -1, 1); out[0] = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+                              lua_geti(L, -1, 2); out[1] = (float)lua_tonumber(L, -1); lua_pop(L, 1); ok = true; }
+    lua_pop(L, 1); return ok;
+}
+
 // Recursively drive Clay from the node table at absolute index `idx` (stack-balanced).
 static void scene_walk(lua_State* L, int idx) {
     std::string k = lf_str(L, idx, "k", "box");
+    if (k == "shape") {
+        SceneShape sh; memset(&sh, 0, sizeof sh);
+        std::string kind = lf_str(L, idx, "shape", "box");
+        sh.kind = kind == "ellipse" ? 1 : kind == "line" ? 2 : kind == "arrow" ? 3 : kind == "underline" ? 4 : kind == "bracket" ? 5 : 0;
+        Clay_Color col{ 255, 214, 90, 255 }; lf_color(L, idx, "color", &col); sh.color = col;
+        Clay_Color fill{ 0, 0, 0, 0 }; sh.hasFill = lf_color(L, idx, "fill", &fill); sh.fill = fill;
+        sh.thickness = (float)lf_num(L, idx, "thickness", 4);
+        sh.round = (float)lf_num(L, idx, "round", 8);
+        float a[2] = { 0, 0.5f }, b[2] = { 1, 0.5f };   // default: a horizontal center line/arrow
+        lf_xy(L, idx, "from", a); lf_xy(L, idx, "to", b);
+        sh.ax = a[0]; sh.ay = a[1]; sh.bx = b[0]; sh.by = b[1];
+        g_sceneShapes.push_back(sh);
+        Clay_ElementDeclaration d; memset(&d, 0, sizeof d);
+        bool grow = lf_bool(L, idx, "grow", false);
+        scene_sizing(&d.layout.sizing.width,  lf_num(L, idx, "w", -1), lf_num(L, idx, "pw", -1), grow || lf_bool(L, idx, "growx", false));
+        scene_sizing(&d.layout.sizing.height, lf_num(L, idx, "h", -1), lf_num(L, idx, "ph", -1), grow || lf_bool(L, idx, "growy", false));
+        d.custom.customData = &g_sceneShapes.back();
+        scene_apply_float(L, idx, &d);
+        Clay__OpenElement(); Clay__ConfigureOpenElement(d); Clay__CloseElement();
+        return;
+    }
     if (k == "image") {
         std::string uri = lf_str(L, idx, "asset", "");
         if (uri.empty()) uri = lf_str(L, idx, "uri", "");
@@ -5287,6 +5320,42 @@ static void scene_walk(lua_State* L, int idx) {
     Clay__CloseElement();
 }
 
+// Draw a vector shape within its laid-out box [p0,p1]; from/to are fractions of that box.
+static void scene_draw_shape(ImDrawList* dl, SceneShape* sh, ImVec2 p0, ImVec2 p1, float s, float glob) {
+    auto C = [&](Clay_Color c) -> ImU32 { int a = (int)(c.a * glob + 0.5f); a = a < 0 ? 0 : (a > 255 ? 255 : a); return IM_COL32((int)c.r, (int)c.g, (int)c.b, a); };
+    float th = sh->thickness * s; if (th < 1) th = 1;
+    ImU32 col = C(sh->color);
+    float w = p1.x - p0.x, h = p1.y - p0.y;
+    auto pt = [&](float fx, float fy) { return ImVec2(p0.x + fx * w, p0.y + fy * h); };
+    switch (sh->kind) {
+        case 0:   // box
+            if (sh->hasFill) dl->AddRectFilled(p0, p1, C(sh->fill), sh->round * s);
+            dl->AddRect(p0, p1, col, sh->round * s, 0, th); break;
+        case 1: { // ellipse
+            ImVec2 c((p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f), r(w * 0.5f, h * 0.5f);
+            if (sh->hasFill) dl->AddEllipseFilled(c, r, C(sh->fill));
+            dl->AddEllipse(c, r, col, 0, 0, th); break; }
+        case 2:   // line
+            dl->AddLine(pt(sh->ax, sh->ay), pt(sh->bx, sh->by), col, th); break;
+        case 3: { // arrow
+            ImVec2 a = pt(sh->ax, sh->ay), b = pt(sh->bx, sh->by);
+            dl->AddLine(a, b, col, th);
+            float ang = atan2f(b.y - a.y, b.x - a.x), hl = th * 2.6f + 8 * s;
+            dl->AddTriangleFilled(b, ImVec2(b.x - hl * cosf(ang - 0.5f), b.y - hl * sinf(ang - 0.5f)),
+                                     ImVec2(b.x - hl * cosf(ang + 0.5f), b.y - hl * sinf(ang + 0.5f)), col); break; }
+        case 4:   // underline (bottom edge of the box)
+            dl->AddLine(ImVec2(p0.x, p1.y - th * 0.5f), ImVec2(p1.x, p1.y - th * 0.5f), col, th); break;
+        case 5: { // bracket — vertical sides with short caps (a highlight bracket)
+            float cap = w * 0.14f;
+            dl->AddLine(ImVec2(p0.x, p0.y), ImVec2(p0.x, p1.y), col, th);
+            dl->AddLine(ImVec2(p1.x, p0.y), ImVec2(p1.x, p1.y), col, th);
+            dl->AddLine(ImVec2(p0.x, p0.y), ImVec2(p0.x + cap, p0.y), col, th);
+            dl->AddLine(ImVec2(p0.x, p1.y), ImVec2(p0.x + cap, p1.y), col, th);
+            dl->AddLine(ImVec2(p1.x, p0.y), ImVec2(p1.x - cap, p0.y), col, th);
+            dl->AddLine(ImVec2(p1.x, p1.y), ImVec2(p1.x - cap, p1.y), col, th); break; }
+    }
+}
+
 // Translate Clay's render commands into ImDrawList calls (glob = clip opacity 0..1).
 static void scene_draw_cmds(ImDrawList* dl, Clay_RenderCommandArray cmds, ImVec2 origin, float s, float glob) {
     ImFont* font = g_captionFont ? g_captionFont : ImGui::GetFont();
@@ -5314,7 +5383,10 @@ static void scene_draw_cmds(ImDrawList* dl, Clay_RenderCommandArray cmds, ImVec2
             } break;
             case CLAY_RENDER_COMMAND_TYPE_SCISSOR_START: dl->PushClipRect(p0, p1, true); break;
             case CLAY_RENDER_COMMAND_TYPE_SCISSOR_END:   dl->PopClipRect(); break;
-            default: break;   // CUSTOM (vector shapes): later in P2
+            case CLAY_RENDER_COMMAND_TYPE_CUSTOM: { auto& cu = cmd->renderData.custom;
+                if (cu.customData) scene_draw_shape(dl, (SceneShape*)cu.customData, p0, p1, s, glob);
+            } break;
+            default: break;
         }
     }
 }
@@ -5344,6 +5416,7 @@ static void draw_scene_clip(ImDrawList* dl, float cx, float cy, float s, Clip& c
     lua_State* L = g_sceneL;
     g_sceneErr.clear();
     g_sceneImgs.clear();   // per-frame image-handle pool (Clay carries pointers into it → draw)
+    g_sceneShapes.clear(); // per-frame shape pool (same lifetime contract)
     int ref = scene_get_chunk(L, src);
     if (ref == LUA_NOREF) { draw_scene_error(dl, f0, fw, fh, s, g_sceneErr); return; }
     lua_rawgeti(L, LUA_REGISTRYINDEX, ref);            // push chunk

@@ -24,8 +24,23 @@ anim = {}
 function anim.clamp(x, a, b) return clamp(x, a, b) end
 function anim.smoothstep(e) return smooth(e) end
 function anim.rise(t, dur) return smooth(t / (dur or 0.45)) end                 -- 0->1 ease over the clip head
-function anim.ease(t, a, b, dur, delay) return a + (b - a) * smooth((t - (delay or 0)) / (dur or 0.5)) end
+function anim.lerp(t, a, b, dur, delay) return a + (b - a) * smooth((t - (delay or 0)) / (dur or 0.5)) end
 function anim.count(t, from, to, dur) return math.floor(from + (to - from) * smooth(t / (dur or 1.0)) + 0.5) end
+
+-- Tunable power ease-in-out: x in 0..1 -> 0..1. p=1 linear, p=2 gentle, p>=3 heavy (flat
+-- ends). The single knob behind the "camera inertia" feel for pans.
+function anim.ease(x, p)
+  x = clamp(x, 0, 1); p = p or 3
+  if x < 0.5 then return 0.5 * (2 * x) ^ p else return 1 - 0.5 * (2 * (1 - x)) ^ p end
+end
+-- The DAMPENED CAMERA curve for pans/zooms: 0..1 progress over `dur`, with a single `damp`
+-- knob (0 = linear, 1 = very heavy inertia — very slow to start AND to settle). Default is
+-- weighty on purpose (owner: "most panning wants a very dampened curve, lots of inertia").
+anim.damp_default = 0.78
+function anim.pan(t, dur, damp)
+  damp = damp or anim.damp_default
+  return anim.ease(t / (dur or 0.9), 1 + damp * 5)   -- damp 0.78 -> exponent ~4.9 (strong ease-in-out)
+end
 
 -- brand tokens (subset — the locked palette lives in gemma-brand; wire fully in P2) --
 theme = {
@@ -45,13 +60,14 @@ function row(o) return node("row", o) end
 function col(o) return node("col", o) end
 function text(s, o) o = o or {}; o.k = "text"; o.s = tostring(s == nil and "" or s); return o end
 function image(o) o = o or {}; o.k = "image"; return o end   -- { asset=uri, crop={x,y,w,h}(0..1), fit, tint, radius, grow/w/h }
+function shape(o) o = o or {}; o.k = "shape"; return o end   -- { shape="box|ellipse|line|arrow|underline|bracket", from={x,y}, to={x,y}, color, fill, thickness } — from/to are 0..1 of the box
 function rule(o) o = o or {}; return box{ h = o.h or 3, w = o.w, growx = (o.w == nil) or nil, bg = o.col or theme.accent(1) } end
 function spacer(px, horizontal) if horizontal then return box{ w = px } else return box{ h = px } end end
 -- fill the frame and center a single child in it
 function center(child) return box{ growx = true, growy = true, ax = "c", ay = "c", kids = { child } } end
 
 layout = { box = box, row = row, col = col, center = center }
-nodes  = { text = text, image = image, rule = rule, spacer = spacer }
+nodes  = { text = text, image = image, shape = shape, rule = rule, spacer = spacer }
 
 -- widgets — composed from the above; copy + fork inline whenever you need custom ---
 widgets = {}
@@ -104,7 +120,7 @@ function widgets.document(t, d)
   local lt = t - tprev
   local from = (idx > 1) and rectof(idx - 1) or (d.from or { 0, 0, 1, 1 })
   local to = rectof(idx)
-  local e = anim.rise(lt, trans)                              -- 0..1 pan/zoom progress
+  local e = anim.pan(lt, trans, d.damp)                       -- dampened camera pan/zoom (inertia)
   local crop = { from[1] + (to[1] - from[1]) * e, from[2] + (to[2] - from[2]) * e,
                  from[3] + (to[3] - from[3]) * e, from[4] + (to[4] - from[4]) * e }
   local cur = ex[idx] or {}
@@ -178,4 +194,26 @@ function widgets.lineage(t, d)
   local outer = { row{ gap = 18, ay = "c", kids = chain } }
   if d.title then table.insert(outer, 1, text(d.title, { size = 44, col = theme.fg, ta = "c" })) end
   return center(col{ gap = 30, ax = "c", kids = outer })
+end
+
+-- CALLOUT — a label with an arrow that extends to point at a target on the frame. Overlay it
+-- on an image/footage to annotate. data: { text="...", at={x,y}(0..1 frame target),
+--   from={x,y}(0..1 label anchor), color, thickness, size }
+function widgets.callout(t, d)
+  d = d or {}
+  local e = anim.rise(t, 0.5)
+  local at = d.at or { 0.5, 0.5 }
+  local from = d.from or { (at[1] < 0.5) and 0.72 or 0.28, (at[2] < 0.5) and 0.80 or 0.20 }
+  local W, H = (frame and frame.w) or 1920, (frame and frame.h) or 1080
+  local acc = d.color or theme.acc
+  -- Both layers FLOAT (explicit frame-sized arrow at the root origin), so a callout overlays an
+  -- image cleanly whether used standalone or composed over an in-flow image base.
+  return box{ kids = {
+    shape{ float = "tl", fx = 0, fy = 0, w = W, h = H, shape = "arrow", from = from,
+           to = { from[1] + (at[1] - from[1]) * e, from[2] + (at[2] - from[2]) * e },
+           color = acc, thickness = d.thickness or 5 },
+    box{ float = "tl", fx = from[1] * W - 8, fy = from[2] * H - 62, pad = 14, radius = 10,
+         bg = theme.fade(theme.card, e),
+         kids = { text(d.text or "", { size = d.size or 34, col = theme.fade(theme.fg, e) }) } },
+  } }
 end

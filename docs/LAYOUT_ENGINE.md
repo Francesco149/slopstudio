@@ -6,8 +6,10 @@ composed visual can be authored natively — transparent, **reflowable**, adjust
 **minimal layout baking**, instead of hand-cut opaque PNGs per situation. Build spans
 several sessions (owner: "take the time to design this properly"). It lives in **one
 self-contained clip type**; if it ever misbehaves, a beat falls back to a plain `image`
-clip with zero blast radius. **P1 (kernel) + P2a (in-editor Lua editing · image/pan-zoom · the `document`
-widget) are built + proven** — see §11; `examples/scene-demo.slop.json`.
+clip with zero blast radius. **P1 (kernel) + most of P2 are built + proven** (in-editor Lua editing ·
+image/pan-zoom · `document` · dampened camera easing · vector shapes · `slop.py scene`/`scene-check` ·
+widgets quote/stat/document/split/comparison/lineage/callout) — see §11; `examples/scene-demo.slop.json`.
+Only the kirby PNG→scene content swaps remain in P2.
 
 The one-liner: **ImGui to draw · Clay to lay out · Lua to script.**
 
@@ -268,10 +270,19 @@ Built as stdlib Lua on top of the kernel. Each is transparent, reflowable, and d
 - ✓ **`widgets.document`** — the interview case: pan/zoom a screenshot between `excerpts` (each an
   animated crop + a translation strap that fades in on settle) + a persistent source-URL chip.
   Proof: `examples/scene-demo.slop.json` (the `sc_doc` clip pans across `docs/hero/editor.png`; feed).
-- **REMAINING P2:** more widgets (`callout`/`split`/`comparison`/`lineage`); CUSTOM vector-shape
-  render commands (arrows/lines); `slop.py scene`/`doc` verbs + `scene-check` headless lint; std.lua
-  auto-reload on mtime. **Then** swap 2–3 kirby thumb-tool PNGs + an interview screenshot to scenes —
-  what actually unblocks the kirby "solid rectangles" fix.
+- ✓ **std.lua hot-reload** (mtime) + widgets `split`/`comparison`/`lineage` (+ `stat`).
+- ✓ **Dampened camera easing** — `anim.pan(t, dur, damp)` (ease-in-out, single 0..1 `damp` knob,
+  heavy default `anim.damp_default=0.78`) is the pan/zoom curve (owner: "lots of inertia, very slow
+  to start"). `data.damp` tunes it per document clip.
+- ✓ **CUSTOM vector-shape render commands** — a `shape` node (box/ellipse/line/arrow/underline/
+  bracket; from/to are 0..1 of the box) → Clay CUSTOM → `scene_draw_shape`. + `widgets.callout`
+  (a label with an arrow that extends to a target; floats over an image).
+- ✓ **`slop.py scene`** (author/edit a scene clip: `--script`/`--script-file`/`--widget` + `--data`)
+  and **`slop.py scene-check`** (headless: `dofile` std.lua + run `scene(t,data)` in stock `lua` at
+  several t, report precise compile/runtime errors — the agent loop; flake provides `lua5.4`).
+- **REMAINING P2:** swap 2–3 kirby thumb-tool diagram/comparison PNGs + an interview screenshot to
+  scenes — what actually unblocks the kirby "solid rectangles" fix (content work; wants owner steer
+  on which excerpts/translations).
 
 **P3 — parity + migration + polish.**
 - `widgets.diagram`/`widgets.chart` at parity → retire the C++ `diagram`/`plot` draw paths (or

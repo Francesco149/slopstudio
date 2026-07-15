@@ -98,6 +98,7 @@
             # ── editor header-only libs (arch-independent includes) ───────
             nlohmann_json        # project-file JSON parsing
             stb                  # stb_image / stb_image_write (sprites + screenshots)
+            lua5_4               # host lua: `slop.py scene-check` runs scene(t,data) headlessly
 
             # ── media / providers ─────────────────────────────────────────
             ffmpeg               # decode/encode/mux + frame tooling (host side)

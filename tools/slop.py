@@ -21,12 +21,13 @@ OD = collections.OrderedDict
 # ── clip-type defaults: row + a sensible param skeleton (what the compositor reads) ──
 ROW_OF = {"code":"r_code","caption":"r_cap","text":"r_cap","shape":"r_shape","gradient":"r_grade",
           "image":"r_img","video":"r_video","avatar":"r_av","tts":"r_vo","music":"r_music","blur":"r_blur",
-          "diagram":"r_diagram","plot":"r_plot","filler":"r_fill","anchor":"r_capanchor"}
+          "diagram":"r_diagram","plot":"r_plot","filler":"r_fill","anchor":"r_capanchor","scene":"r_scene"}
 TRACK_OF = {"r_code":("tk_code","Decompile","video"),"r_cap":("tk_cap","Captions","video"),
             "r_shape":("tk_shape","Callouts","video"),"r_grade":("tk_grade","Grade","video"),
             "r_img":("tk_img","Footage","video"),"r_video":("tk_video","Video","video"),
             "r_av":("tk_av","Gemma","video"),"r_blur":("tk_blur","Blur","video"),
             "r_diagram":("tk_diagram","Diagram","video"),"r_fill":("tk_fill","Backdrop","video"),
+            "r_plot":("tk_plot","Chart","video"),"r_scene":("tk_scene","Scene","video"),
             "r_vo":("tk_vo","Narration","audio"),"r_music":("tk_music","Music","audio"),
             "r_transcript":("tk_transcript","Transcript","video"),
             "r_capanchor":("tk_capanchor","Cap anchor","video")}
@@ -1644,6 +1645,81 @@ def cmd_genvo(a):
                 print("    "+ (tail[-1] if tail else "(no output)"))
     p=load(a.project); cmd_retime(p, argparse.Namespace(out=a.project, project=a.project))
 
+def _lua_literal(v):
+    """A JSON-ish value → a Lua table-literal string (for embedding `data` in the scene-check harness)."""
+    if isinstance(v, dict):
+        return "{" + ",".join(f"[{json.dumps(k)}]={_lua_literal(x)}" for k,x in v.items()) + "}"
+    if isinstance(v, (list,tuple)):
+        return "{" + ",".join(_lua_literal(x) for x in v) + "}"
+    if isinstance(v, bool): return "true" if v else "false"
+    if v is None: return "nil"
+    if isinstance(v, (int,float)): return repr(v)
+    return "[==[" + str(v) + "]==]"   # string (long bracket → no escaping)
+
+def cmd_scene(p, a):
+    """Author (or edit, with --id on an existing clip) a `scene` layout-engine clip:
+    a Lua `scene(t,data)` script + a JSON `data` body. --widget NAME writes the standard
+    `return widgets.NAME(t, d)` script for you."""
+    out = a.out or a.project
+    script = open(a.script_file, encoding="utf-8").read() if a.script_file else a.script
+    if script is None and a.widget: script = f"local t, d = ...\nreturn widgets.{a.widget}(t, d)"
+    data = None
+    if a.data_file: data = json.load(open(a.data_file, encoding="utf-8"))
+    elif a.data is not None: data = json.loads(a.data)
+    if a.id and a.id in p.get("clips",{}):                     # EDIT an existing scene clip
+        c = p["clips"][a.id]; c.setdefault("params",OD())
+        if script is not None: c["params"]["script"] = script
+        if data is not None: c["params"]["data"] = data
+        save(p,out); print(f"scene: updated {a.id}"+(" script" if script is not None else "")+(" data" if data is not None else "")); return
+    params = OD()
+    params["script"] = script if script is not None else "local t, d = ...\nreturn widgets.quote(t, { text = d.text or \"\", cite = d.cite or \"\" })"
+    if data is not None: params["data"] = data
+    start = a.at if a.at is not None else (a.start if a.start is not None else total(p))
+    dur = a.dur if a.dur is not None else 6.0
+    cid = new_clip(p, "scene", a.row or "r_scene", start, dur, params, a.id)
+    if a.pos is not None: p["clips"][cid]["transform"]["pos"]=[float(x) for x in a.pos.split(",")]
+    save(p,out); print(f"scene: added {cid} on {a.row or 'r_scene'} @ {start:.2f} dur {dur}"+(f" (widget {a.widget})" if a.widget else ""))
+
+def cmd_scene_check(a):
+    """Headlessly validate scene clips' Lua: load presets/lua/std.lua + each script in a stock
+    `lua`, run scene(t,data) at several t, and report syntax/runtime errors + that it returns a
+    tree — closes the agent authoring loop without opening the editor. Needs `lua` on PATH
+    (run inside `nix develop`; the flake provides lua5.4)."""
+    import subprocess, tempfile, shutil
+    p = load(a.project)
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # tools/ -> repo root
+    std = os.path.join(repo, "presets", "lua", "std.lua")
+    if not os.path.exists(std): print(f"scene-check: std.lua not found at {std}", file=sys.stderr); return 1
+    lua = shutil.which("lua") or shutil.which("lua5.4")
+    if not lua: print("scene-check: no `lua` on PATH — run inside `nix develop` (flake provides lua5.4).", file=sys.stderr); return 2
+    clips = [(cid,c) for cid,c in p.get("clips",{}).items()
+             if (c.get("row","")=="r_scene" or (a.clip and cid==a.clip))
+             and isinstance(c.get("params"),dict) and "script" in c["params"]]
+    if a.clip: clips = [(cid,c) for cid,c in clips if cid==a.clip]
+    if not clips: print("scene-check: no scene clips"+(f" matching {a.clip}" if a.clip else "")+" found"); return 0
+    bad = 0
+    for cid,c in clips:
+        script = c["params"].get("script","")
+        data = c["params"].get("data",{})
+        harness = ("frame={w=1920,h=1080}\n"
+                   f"dofile([==[{std}]==])\n"
+                   f"local data={_lua_literal(data)}\n"
+                   f"local chunk,err=load([==[\n{script}\n]==],'@scene')\n"
+                   "if not chunk then io.stderr:write('compile: '..tostring(err)..'\\n'); os.exit(1) end\n"
+                   "for _,t in ipairs({0,0.6,3.0,6.0}) do\n"
+                   "  local ok,tree=pcall(chunk,t,data,frame)\n"
+                   "  if not ok then io.stderr:write('t='..t..': '..tostring(tree)..'\\n'); os.exit(1) end\n"
+                   "  if type(tree)~='table' then io.stderr:write('t='..t..': scene must return a node table, got '..type(tree)..'\\n'); os.exit(1) end\n"
+                   "end\nprint('ok')\n")
+        with tempfile.NamedTemporaryFile("w", suffix=".lua", delete=False) as f:
+            f.write(harness); hp=f.name
+        try: r = subprocess.run([lua, hp], capture_output=True, text=True, timeout=15)
+        finally: os.unlink(hp)
+        if r.returncode==0: print(f"  ok   {cid}")
+        else: bad+=1; print(f"  FAIL {cid}: {r.stderr.strip() or r.stdout.strip()}")
+    print(f"scene-check: {len(clips)-bad}/{len(clips)} ok")
+    return 1 if bad else 0
+
 def main():
     ap=argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub=ap.add_subparsers(dest="cmd", required=True)
@@ -1717,11 +1793,26 @@ def main():
     s.add_argument("--ramp", default=None, help="volume automation: 't:dB,t:dB,...' absolute-time breakpoints, e.g. '26:-28,47:-9,53:-18'")
     s=sub.add_parser("genvo", help="bulk-generate pending VO + visemes headlessly, then retime")
     s.add_argument("project"); s.add_argument("--exe", default=None, help="editor binary (default ./build/slopstudio.exe)")
+    s=sub.add_parser("scene", help="author/edit a `scene` layout-engine clip (a Lua scene(t,data) script + JSON data)"); common(s)
+    s.add_argument("--script", default=None, help="the Lua script inline (else --script-file / --widget)")
+    s.add_argument("--script-file", dest="script_file", default=None, help="read the Lua script from a file")
+    s.add_argument("--widget", default=None, help="shorthand: write `return widgets.NAME(t,d)` (quote/stat/document/split/comparison/lineage/callout)")
+    s.add_argument("--data", default=None, help="the JSON data body inline")
+    s.add_argument("--data-file", dest="data_file", default=None, help="read the JSON data from a file")
+    s.add_argument("--row", default=None); s.add_argument("--id", default=None, help="clip id (existing id = EDIT that clip's script/data)")
+    s.add_argument("--at", type=float, default=None); s.add_argument("--start", type=float, default=None)
+    s.add_argument("--dur", type=float, default=None, help="clip duration (s); default 6.0")
+    s.add_argument("--pos", default=None, help="transform pos 'x,y'")
+    s=sub.add_parser("scene-check", help="headlessly validate scene clips' Lua (run scene(t,data) in `lua`, report errors)")
+    s.add_argument("project"); s.add_argument("--clip", default=None, help="check just this clip id (default: all scene clips)")
     a=ap.parse_args()
 
     if a.cmd=="skeleton": cmd_skeleton(a); return
     if a.cmd=="genvo": cmd_genvo(a); return
+    if a.cmd=="scene-check": sys.exit(cmd_scene_check(a))
     p=load(a.project); out=a.out or a.project
+
+    if a.cmd=="scene": cmd_scene(p,a); return
 
     if a.cmd=="lint": sys.exit(cmd_lint(p,a))
     if a.cmd=="adopt": cmd_adopt(p,a); return

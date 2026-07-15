@@ -12,7 +12,7 @@
     { "id": "tk_v", "name": "Video", "kind": "video", "rows": ["r_scene"] }
   ],
   "rows": {
-    "r_scene": { "type": "scene", "name": "Scene", "params": {}, "clips": ["sc_quote", "sc_stat", "sc_doc", "sc_lineage", "sc_compare"] }
+    "r_scene": { "type": "scene", "name": "Scene", "params": {}, "clips": ["sc_quote", "sc_stat", "sc_doc", "sc_lineage", "sc_compare", "sc_callout"] }
   },
   "clips": {
     "sc_quote": {
@@ -74,6 +74,18 @@
             { "image": "docs/hero/diagram.png", "label": "diagram" },
             { "image": "docs/hero/footage.png", "label": "footage inset" }
           ]
+        }
+      },
+      "transform": { "pos": [0, 0], "scale": [1, 1], "rot": 0, "opacity": 1, "anchor": [0.5, 0.5] },
+      "keyframes": {}
+    },
+    "sc_callout": {
+      "row": "r_scene", "start": 25.5, "dur": 4.0,
+      "params": {
+        "script": "local t, d = ...\nreturn box{ growx = true, growy = true, kids = { image{ asset = d.image, grow = true }, widgets.callout(t, d.callout) } }",
+        "data": {
+          "image": "docs/hero/editor.png",
+          "callout": { "text": "the live preview", "at": [0.52, 0.22], "from": [0.34, 0.64] }
         }
       },
       "transform": { "pos": [0, 0], "scale": [1, 1], "rot": 0, "opacity": 1, "anchor": [0.5, 0.5] },

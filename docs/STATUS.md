@@ -30,9 +30,17 @@ by hash); (2) **IMAGE render commands** — an `image` node (uri→`get_texture`
 window) + tint/radius, plus **floating** overlays (`float="bc"/"tr"/…`+fx/fy, attach to root) for cards/chips;
 (3) **`widgets.document`** — the interview case: pan/zoom a screenshot between `excerpts` (animated crop) with a
 translation strap that fades in on settle + a persistent source-URL chip (proof: `sc_doc` in
-`examples/scene-demo.slop.json` pans across `docs/hero/editor.png`; feed montage). **REMAINING P2:** more widgets
-(`callout`/`split`/`comparison`/`lineage`); CUSTOM vector-shape commands (arrows/lines); `slop.py scene`/`scene-check`
-headless lint; std.lua auto-reload on mtime; then swap kirby's thumb-tool diagram PNGs → scenes. **→ P3**
+`examples/scene-demo.slop.json` pans across `docs/hero/editor.png`; feed montage).
+**★ P2b SHIPPED (2026-07-15, same session):** (4) **std.lua hot-reload** on mtime + widgets `split`/
+`comparison`/`lineage`; (5) **dampened camera easing** `anim.pan(t,dur,damp)` — ease-in-out, single 0..1
+`damp` knob, heavy default 0.78 (owner: "most panning wants lots of inertia, very slow to start"), now the
+document pan curve (`data.damp` tunes per clip); (6) **CUSTOM vector shapes** — a `shape` node (box/ellipse/
+line/arrow/underline/bracket) → Clay CUSTOM → ImDrawList + `widgets.callout` (label + arrow to a target, over
+an image); (7) **`slop.py scene`** (author: `--script`/`--script-file`/`--widget` + `--data`) and
+**`slop.py scene-check`** (headless: `dofile` std.lua + run `scene(t,data)` in stock `lua`, precise error
+reporting — the agent loop; flake now ships `lua5.4`). Verified: scene-check passes all 6 demo widgets +
+catches an injected error. Widgets now: quote/stat/document/split/comparison/lineage/callout. **REMAINING P2:**
+only the kirby PNG→scene content swaps (wants owner steer on excerpts/translations). **→ P3**
 (diagram/chart parity; crisp large text — ImGui 1.91.4 bakes 48px so big text is soft, size-ladder/1.92 fix).
 Self-contained clip → PNG fallback always. **KIRBY:** the quote-clip reuse (tilt-sensor/MBC7 → `style:"quote"`)
 is engine-independent, do anytime; the diagram/card-PNG→transparent-scene swaps come after the remaining P2 widgets.
