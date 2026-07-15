@@ -392,15 +392,24 @@ end
 --   size=30, step=0.1, dur=0.38, nums=true, hi=<1-based line to accent> }
 function widgets.code(t, d)
   d = d or {}
+  local W, H = (frame and frame.w) or 1920, (frame and frame.h) or 1080
   local src = d.code or table.concat(d.lines or {}, "\n")
   local toklines = tokenize(src, d.lang or "lua")
   local size = d.size or 30
   local cc = theme.code
   local gdig = #tostring(#toklines)                            -- gutter digit count
   local cellw = size * 0.6                                     -- monospace advance ≈ 0.6em (Consolas)
+  -- entrance: the window is DRAGGED in from the left with a spring dangle (balatro). The per-line
+  -- reveal waits until it lands (rvt) so the two moves don't fight.
+  local slideX, sop, rvt = 0, 1, t
+  if d.slide ~= false then
+    local sx = anim.spring_path(t, { { t = 0, x = -1.18, y = 0 }, { t = 0.02, x = 0, y = 0 }, { t = 30, x = 0, y = 0 } },
+      d.stiffness or 78, d.damping or 13)
+    slideX = sx * W; sop = anim.rise(t, 0.3); rvt = t - (d.reveal_delay or 0.5)
+  end
   local rows = {}
   for li, spans in ipairs(toklines) do
-    local e = anim.stagger(t, li, d.step or 0.1, d.dur or 0.38)
+    local e = anim.stagger(rvt, li, d.step or 0.1, d.dur or 0.38)
     local cells = {}
     if d.nums ~= false then
       cells[#cells + 1] = box{ w = cellw * gdig, kids = {
@@ -427,7 +436,15 @@ function widgets.code(t, d)
                text(d.title, { size = size * 0.82, font = "mono", col = theme.fade(cc.cls[0], 0.9) }) } }
   end
   kids[#kids + 1] = body
-  return center(col{ radius = 10, bg = cc.bg, bw = 2, bc = cc.border, clip = true, kids = kids })
+  local card = col{ radius = 10, bg = cc.bg, bw = 2, bc = cc.border, clip = true, kids = kids, t_x = slideX, t_op = sop }
+  local root = { center(card) }
+  -- a fake mouse cursor "holding" the title bar, moving in with the window (drag feel)
+  if d.cursor ~= false and d.title then
+    local cw = d.cursor_size or 42
+    root[#root + 1] = box{ float = "tl", fx = (d.cursor_x or 0.585) * W + slideX, fy = (d.cursor_y or 0.30) * H,
+      w = cw, h = cw * 1.46, kids = { shape{ grow = true, shape = "cursor", color = { 16, 16, 22 }, fill = { 247, 248, 252 }, thickness = 3 } } }
+  end
+  return box{ growx = true, growy = true, kids = root }
 end
 
 -- RAYS — an anime sunburst / impact lines behind a subject. `count` wedges radiate from `at` (frame

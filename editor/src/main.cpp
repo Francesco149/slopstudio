@@ -5302,7 +5302,7 @@ static void scene_walk(lua_State* L, int idx, const SceneXform* inXf = nullptr) 
     if (k == "shape") {
         SceneShape sh; memset(&sh, 0, sizeof sh);
         std::string kind = lf_str(L, idx, "shape", "box");
-        sh.kind = kind == "ellipse" ? 1 : kind == "line" ? 2 : kind == "arrow" ? 3 : kind == "underline" ? 4 : kind == "bracket" ? 5 : kind == "rays" ? 6 : kind == "heart" ? 7 : 0;
+        sh.kind = kind == "ellipse" ? 1 : kind == "line" ? 2 : kind == "arrow" ? 3 : kind == "underline" ? 4 : kind == "bracket" ? 5 : kind == "rays" ? 6 : kind == "heart" ? 7 : kind == "cursor" ? 8 : 0;
         Clay_Color col{ 255, 214, 90, 255 }; lf_color(L, idx, "color", &col); sh.color = col;
         Clay_Color fill{ 0, 0, 0, 0 }; sh.hasFill = lf_color(L, idx, "fill", &fill); sh.fill = fill;
         sh.thickness = (float)lf_num(L, idx, "thickness", 4);
@@ -5521,6 +5521,15 @@ static void scene_draw_shape(ImDrawList* dl, SceneShape* sh, ImVec2 p0, ImVec2 p
             for (int i = 0; i < N; i++)
                 pts[i] = ImVec2((rx[i] - minx) * sfit + ox, (maxy - ry[i]) * sfit + oy);   // flip Y: lobes up, point down
             dl->AddConcavePolyFilled(pts, N, fc);
+            break; }
+        case 8: { // cursor — a classic arrow mouse pointer (fill + outline), fit to the box (tip at top-left)
+            static const float cxN[7] = { 0.0f, 0.0f, 0.385f, 0.615f, 0.846f, 0.538f, 1.0f };
+            static const float cyN[7] = { 0.0f, 0.947f, 0.684f, 1.0f, 0.895f, 0.579f, 0.579f };
+            ImVec2 pts[7];
+            for (int i = 0; i < 7; i++) pts[i] = ImVec2(p0.x + cxN[i] * w, p0.y + cyN[i] * h);
+            ImU32 fc = sh->hasFill ? C(sh->fill) : IM_COL32(245, 246, 250, (int)(255 * glob));
+            dl->AddConcavePolyFilled(pts, 7, fc);
+            dl->AddPolyline(pts, 7, col, ImDrawFlags_Closed, std::max(1.5f, sh->thickness * s * 0.6f));
             break; }
     }
 }
