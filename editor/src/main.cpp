@@ -5381,14 +5381,51 @@ static void scene_draw_shape(ImDrawList* dl, SceneShape* sh, ImVec2 p0, ImVec2 p
 }
 
 // The 4 screen-space corners of an image quad after its per-node transform: scale about the box
-// center, rotate, then translate by (tx,ty) px. `extra` inflates it uniformly (glow halos).
-static void scene_image_quad(const SceneImg* si, ImVec2 q0, ImVec2 q1, float s, float extra, ImVec2 out[4]) {
+// center, rotate, then translate by (tx,ty) px. `margin` (screen px) grows the box UNIFORMLY on
+// every side (a fixed-width ring around the rotated rect — used for the glow halo, so the halo is
+// the same thickness top/bottom/left/right regardless of the image's aspect).
+static void scene_image_quad(const SceneImg* si, ImVec2 q0, ImVec2 q1, float s, float margin, ImVec2 out[4]) {
     ImVec2 c((q0.x + q1.x) * 0.5f, (q0.y + q1.y) * 0.5f);
-    float hx = (q1.x - q0.x) * 0.5f * si->scx * extra, hy = (q1.y - q0.y) * 0.5f * si->scy * extra;
+    float hx = (q1.x - q0.x) * 0.5f * si->scx + margin, hy = (q1.y - q0.y) * 0.5f * si->scy + margin;
     float ca = cosf(si->rot), sa = sinf(si->rot), ox = si->tx * s, oy = si->ty * s;
     const float rx[4] = { -hx, hx, hx, -hx }, ry[4] = { -hy, -hy, hy, hy };
     for (int i = 0; i < 4; i++)
         out[i] = ImVec2(c.x + rx[i] * ca - ry[i] * sa + ox, c.y + rx[i] * sa + ry[i] * ca + oy);
+}
+
+// One gradient trapezoid (inner edge ia→ib at cin, outer edge oa→ob at cout) via the ImDrawList
+// primitive API — same technique as AddRectFilledMultiColor, so alpha interpolates smoothly across
+// the vertices (a true feathered gradient, no banding). Assumes the white-pixel texture is bound
+// (it is: images push/pop their own texture, and the glow draws before the image).
+static inline void scene_glow_trap(ImDrawList* dl, ImVec2 uv, ImVec2 ia, ImVec2 ib, ImVec2 ob, ImVec2 oa, ImU32 cin, ImU32 cout) {
+    dl->PrimReserve(6, 4);
+    unsigned int b = dl->_VtxCurrentIdx;
+    dl->PrimWriteVtx(ia, uv, cin);  dl->PrimWriteVtx(ib, uv, cin);
+    dl->PrimWriteVtx(ob, uv, cout); dl->PrimWriteVtx(oa, uv, cout);
+    dl->PrimWriteIdx((ImDrawIdx)b); dl->PrimWriteIdx((ImDrawIdx)(b + 1)); dl->PrimWriteIdx((ImDrawIdx)(b + 2));
+    dl->PrimWriteIdx((ImDrawIdx)b); dl->PrimWriteIdx((ImDrawIdx)(b + 2)); dl->PrimWriteIdx((ImDrawIdx)(b + 3));
+}
+
+// A smooth feathered glow: a uniform-width ring around the (transformed) image quad, drawn as
+// concentric gradient sub-rings with a quadratic alpha falloff to 0 — smooth by construction (each
+// sub-ring is itself a gradient, C0-continuous across boundaries), so no banding and a soft bloom.
+static void scene_draw_glow(ImDrawList* dl, const SceneImg* si, ImVec2 q0, ImVec2 q1, float s, float glob) {
+    float hw = (q1.x - q0.x) * 0.5f * fabsf(si->scx), hh = (q1.y - q0.y) * 0.5f * fabsf(si->scy);
+    float G = si->glow * 0.16f * std::min(hw, hh) + 2.0f * s;   // uniform ring width (screen px)
+    float baseA = si->glow * 150.0f * glob; if (baseA > 255) baseA = 255;
+    int R = (int)si->glowCol.r, Gc = (int)si->glowCol.g, B = (int)si->glowCol.b;
+    ImVec2 uv = ImGui::GetIO().Fonts->TexUvWhitePixel;   // solid-white texel (font atlas texture is bound)
+    const int NR = 5;
+    ImVec2 prev[4]; scene_image_quad(si, q0, q1, s, 0.0f, prev);   // margin 0 = the image edge
+    float prevA = baseA;
+    for (int r = 1; r <= NR; r++) {
+        float f = (float)r / NR;
+        ImVec2 cur[4]; scene_image_quad(si, q0, q1, s, G * f, cur);
+        float a = baseA * (1.0f - f) * (1.0f - f);                // quadratic falloff → 0
+        ImU32 cin = IM_COL32(R, Gc, B, (int)(prevA + 0.5f)), cout = IM_COL32(R, Gc, B, (int)(a + 0.5f));
+        for (int e = 0; e < 4; e++) { int e2 = (e + 1) & 3; scene_glow_trap(dl, uv, prev[e], prev[e2], cur[e2], cur[e], cin, cout); }
+        memcpy(prev, cur, sizeof prev); prevA = a;
+    }
 }
 
 // Translate Clay's render commands into ImDrawList calls (glob = clip opacity 0..1).
@@ -5420,22 +5457,13 @@ static void scene_draw_cmds(ImDrawList* dl, Clay_RenderCommandArray cmds, ImVec2
                         else { float nw = bh * si->aspect, off = (bw - nw) * 0.5f; q0.x = p0.x + off; q1.x = p1.x - off; }
                     }
                     bool xf = si->rot != 0 || si->scx != 1 || si->scy != 1 || si->tx != 0 || si->ty != 0;
-                    // glow: soft SOLID-color halo behind the (transformed) quad. Solid — not a tinted
-                    // texture copy — so it blooms regardless of the source's own brightness (a tinted
-                    // dark card just reads as a shadow). Many low-alpha enlarged layers ≈ a feathered
-                    // falloff (bright at the edge, fading out); the opaque image covers the inner part.
-                    if (si->glow > 0.001f) {
-                        const int GLOW_LAYERS = 6;
-                        for (int lyr = GLOW_LAYERS; lyr >= 1; lyr--) {
-                            float extra = 1.0f + (0.18f * si->glow) * (float)lyr / GLOW_LAYERS;
-                            ImVec2 gq[4]; scene_image_quad(si, q0, q1, s, extra, gq);
-                            int a = (int)(si->glow * 24.0f * glob + 0.5f); a = a < 0 ? 0 : (a > 255 ? 255 : a);
-                            dl->AddQuadFilled(gq[0], gq[1], gq[2], gq[3],
-                                              IM_COL32((int)si->glowCol.r, (int)si->glowCol.g, (int)si->glowCol.b, a));
-                        }
-                    }
+                    // glow: a soft SOLID-color feathered ring behind the (transformed) quad. Solid —
+                    // not a tinted texture copy — so it blooms regardless of the source's own brightness
+                    // (a tinted dark card just reads as a shadow); a uniform-width gradient ring so it's
+                    // even on every side (aspect-independent) and smooth (no banding). See scene_draw_glow.
+                    if (si->glow > 0.001f) scene_draw_glow(dl, si, q0, q1, s, glob);
                     if (xf) {   // transformed → quad (AddImageQuad has no rounding; transforms rarely want it)
-                        ImVec2 qq[4]; scene_image_quad(si, q0, q1, s, 1.0f, qq);
+                        ImVec2 qq[4]; scene_image_quad(si, q0, q1, s, 0.0f, qq);
                         dl->AddImageQuad(tid, qq[0], qq[1], qq[2], qq[3],
                             ImVec2(uv0.x, uv0.y), ImVec2(uv1.x, uv0.y), ImVec2(uv1.x, uv1.y), ImVec2(uv0.x, uv1.y), tint);
                     } else if (si->radius > 0) dl->AddImageRounded(tid, q0, q1, uv0, uv1, tint, si->radius * s);
