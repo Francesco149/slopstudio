@@ -5703,7 +5703,10 @@ static void scene_draw_image_mesh(ImDrawList* dl, const SceneImg* si, ImVec2 q0,
 // Translate Clay's render commands into ImDrawList calls (glob = clip opacity 0..1). Each command
 // may carry a SUBTREE transform via userData (a group slide/fade tagged during the walk); `lop` is
 // the effective per-command opacity, applied through the C() colour helper.
+static bool scene_dbg() { static int d = getenv("SLOP_SCENE_DEBUG") ? 1 : 0; return d; }
 static void scene_draw_cmds(ImDrawList* dl, Clay_RenderCommandArray cmds, ImVec2 origin, float s, float glob) {
+    if (scene_dbg()) { fprintf(stderr, "[scene]   draw_cmds n=%d clipStack=%d vtx=%d\n", cmds.length, dl->_ClipRectStack.Size, dl->VtxBuffer.Size); fflush(stderr); }
+    int clipEntry = dl->_ClipRectStack.Size;
     float lop = glob;   // updated per command from its subtree transform's opacity
     auto C = [&](Clay_Color c) -> ImU32 { int a = (int)(c.a * lop + 0.5f); a = a < 0 ? 0 : (a > 255 ? 255 : a); return IM_COL32((int)c.r, (int)c.g, (int)c.b, a); };
     // PRE-PASS: a subtree that TILTS (t_rot) rotates about its own screen-bbox centre — accumulate that
@@ -5782,9 +5785,21 @@ static void scene_draw_cmds(ImDrawList* dl, Clay_RenderCommandArray cmds, ImVec2
                     }   // end else (non-mesh flat / 2D-transform path)
                 } else dl->AddRectFilled(p0, p1, IM_COL32(38, 40, 52, (int)(120 * lop)), 6 * s);   // missing-asset placeholder
             } break;
-            // a tilted subtree can't use an axis-aligned scissor (it'd clip the rotated corners) → skip it
-            case CLAY_RENDER_COMMAND_TYPE_SCISSOR_START: if (!(sx && sx->rot != 0)) dl->PushClipRect(p0, p1, true); break;
-            case CLAY_RENDER_COMMAND_TYPE_SCISSOR_END:   if (!(sx && sx->rot != 0)) dl->PopClipRect(); break;
+            // a tilted subtree can't use an axis-aligned scissor (it'd clip the rotated corners), so
+            // EXPAND the clip rect to cover the rotated content — but ALWAYS push/pop so the clip
+            // stack stays balanced (skipping only the START would underflow the shared editor clip
+            // stack → crash; headless discards the draw list each frame so it never saw it).
+            case CLAY_RENDER_COMMAND_TYPE_SCISSOR_START:
+                if (sx && sx->rot != 0) { float m = (p1.x - p0.x + p1.y - p0.y) * 0.5f;
+                    dl->PushClipRect(ImVec2(p0.x - m, p0.y - m), ImVec2(p1.x + m, p1.y + m), true); }
+                else dl->PushClipRect(p0, p1, true);
+                if (scene_dbg()) { fprintf(stderr, "[scene]   SCISSOR_START -> clipStack=%d (rect %.0f,%.0f..%.0f,%.0f)\n", dl->_ClipRectStack.Size, p0.x, p0.y, p1.x, p1.y); fflush(stderr); }
+                break;
+            case CLAY_RENDER_COMMAND_TYPE_SCISSOR_END:
+                if (dl->_ClipRectStack.Size <= clipEntry) { if (scene_dbg()) { fprintf(stderr, "[scene]   SCISSOR_END UNDERFLOW (stack=%d entry=%d) — SKIPPED\n", dl->_ClipRectStack.Size, clipEntry); fflush(stderr); } break; }
+                dl->PopClipRect();
+                if (scene_dbg()) { fprintf(stderr, "[scene]   SCISSOR_END -> clipStack=%d\n", dl->_ClipRectStack.Size); fflush(stderr); }
+                break;
             case CLAY_RENDER_COMMAND_TYPE_CUSTOM: { auto& cu = cmd->renderData.custom;
                 if (cu.customData) scene_draw_shape(dl, (SceneShape*)cu.customData, p0, p1, s, lop);
             } break;
@@ -5802,6 +5817,10 @@ static void scene_draw_cmds(ImDrawList* dl, Clay_RenderCommandArray cmds, ImVec2
             }
         }
     }
+    // SAFETY: a scene must never leave the shared editor clip stack unbalanced (an unmatched push
+    // would clip everything drawn after it — or a later stray pop underflows → crash). Pop any excess.
+    while (dl->_ClipRectStack.Size > clipEntry) { dl->PopClipRect(); if (scene_dbg()) { fprintf(stderr, "[scene]   POST-BALANCE pop -> %d\n", dl->_ClipRectStack.Size); fflush(stderr); } }
+    if (scene_dbg()) { fprintf(stderr, "[scene]   draw_cmds DONE clipStack=%d (entry %d)\n", dl->_ClipRectStack.Size, clipEntry); fflush(stderr); }
 }
 
 static void draw_scene_error(ImDrawList* dl, ImVec2 f0, float fw, float fh, float s, const std::string& msg) {
@@ -5831,6 +5850,7 @@ static void draw_scene_clip(ImDrawList* dl, float cx, float cy, float s, Clip& c
     g_sceneImgs.clear();   // per-frame image-handle pool (Clay carries pointers into it → draw)
     g_sceneShapes.clear(); // per-frame shape pool (same lifetime contract)
     g_sceneXforms.clear(); // per-frame subtree-transform pool (userData points into it)
+    if (scene_dbg()) { fprintf(stderr, "[scene] ENTER id=%s t=%.2f clipStack=%d\n", c.id.c_str(), t - c.start, dl->_ClipRectStack.Size); fflush(stderr); }
     int ref = scene_get_chunk(L, src);
     if (ref == LUA_NOREF) { draw_scene_error(dl, f0, fw, fh, s, g_sceneErr); return; }
     lua_rawgeti(L, LUA_REGISTRYINDEX, ref);            // push chunk
