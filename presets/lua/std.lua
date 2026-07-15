@@ -310,10 +310,11 @@ function widgets.perspective(t, d)
   local e  = d.hold and 1.0 or anim.tween(t, settle, "out_back")   -- tilt eases in with a hair of overshoot
   local de = d.hold and 1.0 or anim.rise(t, settle * 1.25)         -- DoF fades in as the tilt settles
   local drift = (d.drift or 1.6) * math.sin(t * (d.drift_speed or 0.5))   -- gentle living sway on ry (deg)
+  local glow = (d.glow or 0) * (d.hold and 1.0 or anim.rise(t, settle))   -- optional glow, blooms in with the tilt
   return center(image{ asset = d.image, pw = d.size or 0.72, aspect = true,
     rx = (d.rx or 16) * e, ry = (d.ry or -13) * e + drift * e, persp = d.persp or 0.55,
     focus = d.focus or { 0.5, 0.42 }, focus_r = d.focus_r or 0.22,
-    dof = (d.dof or 2.2) * de, dof_max = d.dof_max or 26 })
+    dof = (d.dof or 2.2) * de, dof_max = d.dof_max or 26, glow = glow, glow_col = d.glow_col })
 end
 
 -- DRAG — a card "grabbed" and dragged along a cursor path, lagging behind with a velocity spring
