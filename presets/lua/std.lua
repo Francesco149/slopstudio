@@ -151,7 +151,7 @@ end
 function widgets.document(t, d)
   d = d or {}
   local ex = d.excerpts or {}
-  local trans = d.trans or 0.9
+  local trans = d.trans or 3.0            -- owner: pans default slow (heavy inertia); set d.trans lower to speed up
   local function rectof(i) local e = ex[i]; return (e and e.rect) or { 0, 0, 1, 1 } end
   -- which excerpt are we in? accumulate (trans + hold) per excerpt; hold on the last.
   local idx, tprev, acc = 1, 0, 0
