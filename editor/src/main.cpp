@@ -5440,25 +5440,47 @@ static inline void scene_glow_trap(ImDrawList* dl, ImVec2 uv, ImVec2 ia, ImVec2 
     dl->PrimWriteIdx((ImDrawIdx)b); dl->PrimWriteIdx((ImDrawIdx)(b + 2)); dl->PrimWriteIdx((ImDrawIdx)(b + 3));
 }
 
-// A smooth feathered glow: a uniform-width ring around the (transformed) image quad, drawn as
-// concentric gradient sub-rings with a quadratic alpha falloff to 0 — smooth by construction (each
-// sub-ring is itself a gradient, C0-continuous across boundaries), so no banding and a soft bloom.
+// A smooth feathered glow: a uniform-width ring around the (transformed) image quad, falling off to
+// 0 over `G` px. Built as straight gradient bands along each EDGE + ROUNDED radial fans at each
+// CORNER — so the glow extends the same perpendicular distance everywhere (a rounded-rect halo).
+// A plain expanded rectangle would poke out ~√2·G at the corners (pointy); the corner fans fix that.
 static void scene_draw_glow(ImDrawList* dl, const SceneImg* si, ImVec2 q0, ImVec2 q1, float s, float glob) {
     float hw = (q1.x - q0.x) * 0.5f * fabsf(si->scx), hh = (q1.y - q0.y) * 0.5f * fabsf(si->scy);
     float G = si->glow * 0.16f * std::min(hw, hh) + 2.0f * s;   // uniform ring width (screen px)
     float baseA = si->glow * 150.0f * glob; if (baseA > 255) baseA = 255;
     int R = (int)si->glowCol.r, Gc = (int)si->glowCol.g, B = (int)si->glowCol.b;
     ImVec2 uv = ImGui::GetIO().Fonts->TexUvWhitePixel;   // solid-white texel (font atlas texture is bound)
-    const int NR = 5;
-    ImVec2 prev[4]; scene_image_quad(si, q0, q1, s, 0.0f, prev);   // margin 0 = the image edge
-    float prevA = baseA;
-    for (int r = 1; r <= NR; r++) {
-        float f = (float)r / NR;
-        ImVec2 cur[4]; scene_image_quad(si, q0, q1, s, G * f, cur);
-        float a = baseA * (1.0f - f) * (1.0f - f);                // quadratic falloff → 0
-        ImU32 cin = IM_COL32(R, Gc, B, (int)(prevA + 0.5f)), cout = IM_COL32(R, Gc, B, (int)(a + 0.5f));
-        for (int e = 0; e < 4; e++) { int e2 = (e + 1) & 3; scene_glow_trap(dl, uv, prev[e], prev[e2], cur[e2], cur[e], cin, cout); }
-        memcpy(prev, cur, sizeof prev); prevA = a;
+    ImVec2 P[4]; scene_image_quad(si, q0, q1, s, 0.0f, P);         // inner corners TL,TR,BR,BL (screen)
+    float ca = cosf(si->rot), sa = sinf(si->rot);
+    ImVec2 nx(ca, sa), ny(-sa, ca);                                // rotated local axes
+    ImVec2 edgeN[4] = { { -ny.x, -ny.y }, nx, ny, { -nx.x, -nx.y } };   // outward normal: top,right,bottom,left
+    const int NR = 5, KA = 6;                                      // radial bands, corner arc segments
+    auto colAt = [&](float f) -> ImU32 { float a = baseA * (1.0f - f) * (1.0f - f); int ai = (int)(a + 0.5f); ai = ai < 0 ? 0 : (ai > 255 ? 255 : ai); return IM_COL32(R, Gc, B, ai); };
+    // straight strips just outside each edge (offset along the edge's outward normal)
+    for (int e = 0; e < 4; e++) {
+        ImVec2 A = P[e], Bc = P[(e + 1) & 3], N = edgeN[e];
+        for (int b = 0; b < NR; b++) {
+            float r0 = G * b / NR, r1 = G * (b + 1) / NR;
+            ImVec2 ia(A.x + N.x * r0, A.y + N.y * r0), ib(Bc.x + N.x * r0, Bc.y + N.y * r0);
+            ImVec2 oa(A.x + N.x * r1, A.y + N.y * r1), ob(Bc.x + N.x * r1, Bc.y + N.y * r1);
+            scene_glow_trap(dl, uv, ia, ib, ob, oa, colAt((float)b / NR), colAt((float)(b + 1) / NR));
+        }
+    }
+    // rounded corner fans (quarter-arc between the two adjacent edge normals, centered on the corner)
+    ImVec2 cA[4] = { edgeN[3], edgeN[0], edgeN[1], edgeN[2] };     // start normal at corner i
+    ImVec2 cB[4] = { edgeN[0], edgeN[1], edgeN[2], edgeN[3] };     // end normal at corner i
+    for (int i = 0; i < 4; i++) {
+        float a0 = atan2f(cA[i].y, cA[i].x), da = atan2f(cB[i].y, cB[i].x) - a0;
+        while (da > 3.14159265f) da -= 6.28318531f; while (da < -3.14159265f) da += 6.28318531f;   // shorter (90°) arc
+        for (int k = 0; k < KA; k++) {
+            ImVec2 d0(cosf(a0 + da * k / KA), sinf(a0 + da * k / KA)), d1(cosf(a0 + da * (k + 1) / KA), sinf(a0 + da * (k + 1) / KA));
+            for (int b = 0; b < NR; b++) {
+                float r0 = G * b / NR, r1 = G * (b + 1) / NR;
+                ImVec2 ia(P[i].x + d0.x * r0, P[i].y + d0.y * r0), ib(P[i].x + d1.x * r0, P[i].y + d1.y * r0);
+                ImVec2 oa(P[i].x + d0.x * r1, P[i].y + d0.y * r1), ob(P[i].x + d1.x * r1, P[i].y + d1.y * r1);
+                scene_glow_trap(dl, uv, ia, ib, ob, oa, colAt((float)b / NR), colAt((float)(b + 1) / NR));
+            }
+        }
     }
 }
 
