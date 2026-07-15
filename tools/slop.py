@@ -1705,6 +1705,11 @@ def cmd_scene_check(a):
                    # stub the editor's C `tokenize` binding (one default-class span per line) so a
                    # code widget validates headlessly — real syntax colours come from the editor.
                    "function tokenize(src,lang) local r={} for ln in (src..'\\n'):gmatch('([^\\n]*)\\n') do r[#r+1]={{s=ln,c=0}} end return r end\n"
+                   # stub the C `measure_text(s,size,wrap,mono)` binding with a rough proportional
+                   # estimate (real metrics come from the editor); enough for widgets that reserve space.
+                   "function measure_text(s,size,wrap,mono) size=size or 32 local w=#s*size*0.5\n"
+                   "  if wrap and wrap>0 and w>wrap then return wrap, math.ceil(w/wrap)*size*1.2 end\n"
+                   "  return w, size*1.2 end\n"
                    f"dofile([==[{std}]==])\n"
                    f"local data={_lua_literal(data)}\n"
                    f"local chunk,err=load([==[\n{script}\n]==],'@scene')\n"

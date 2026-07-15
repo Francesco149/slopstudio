@@ -269,6 +269,24 @@ function widgets.cardflip(t, d)
   return center(image{ asset = face, pw = d.size or 0.5, aspect = true, scx = sx, glow = d.glow or 0 })
 end
 
+-- PERSPECTIVE — a screenshot / card shown at a 3D ANGLE (foreshortened, receding into the frame) with
+-- DEPTH OF FIELD: sharp within `focus_r` of the `focus` point, blurring at rate `dof` beyond it. The
+-- cinematic "hero screenshot / floating plane" look. The tilt + DoF ease in and settle. data:
+--   { image=uri, rx=deg(tilt top away/toward), ry=deg(tilt left/right), persp=0..1(foreshorten;
+--     higher=stronger), focus={x,y}(0..1 ON the image), focus_r=0..1(sharp radius, image-space),
+--     dof=rate(how fast blur grows past the radius), dof_max=px(max blur sigma),
+--     size=0..1(pw), settle=sec, hold=true(skip the entrance → straight to the final angle) }
+function widgets.perspective(t, d)
+  d = d or {}
+  local settle = d.settle or 0.9
+  local e  = d.hold and 1.0 or anim.tween(t, settle, "out_back")   -- tilt eases in with a hair of overshoot
+  local de = d.hold and 1.0 or anim.rise(t, settle * 1.25)         -- DoF fades in as the tilt settles
+  return center(image{ asset = d.image, pw = d.size or 0.72, aspect = true,
+    rx = (d.rx or 16) * e, ry = (d.ry or -13) * e, persp = d.persp or 0.55,
+    focus = d.focus or { 0.5, 0.42 }, focus_r = d.focus_r or 0.22,
+    dof = (d.dof or 2.2) * de, dof_max = d.dof_max or 26 })
+end
+
 -- DRAG — a card "grabbed" and dragged along a cursor path, lagging behind with a velocity spring
 -- (the Balatro dangle): it leans into the motion (rot ∝ horizontal velocity) and settles when the
 -- cursor stops. Deterministic: re-integrates the spring from t=0 each frame (O(t·60), fine here).
@@ -390,6 +408,7 @@ function widgets.youtube_comment(t, d)
   local W, H = (frame and frame.w) or 1920, (frame and frame.h) or 1080
   local cw = math.floor(W * (d.width or 0.6))
   local av = d.av_size or 88
+  local gap = 26
   local e = anim.rise(t, 0.5)                                  -- card slide-up + fade
   local full = d.text or ""
   local shown = full
@@ -397,7 +416,9 @@ function widgets.youtube_comment(t, d)
     shown = anim.typewrite(t - 0.35, full, d.cps or 34)
     if shown ~= full and (math.floor(t * 2) % 2 == 0) then shown = shown .. "|" end   -- blinking caret
   end
-  -- avatar: an image, else a coloured circle with the author's initial
+  -- avatar: an image, else a coloured circle with the author's initial. A capital glyph sits HIGH and
+  -- a touch LEFT in its em-box (ascender/descender gap + side-bearing), so a plain center reads off;
+  -- nudge it toward the true visual centre (down + right) with a small subtree transform on the glyph.
   local avatar
   if d.avatar then
     avatar = box{ w = av, h = av, kids = { image{ asset = d.avatar, grow = true, radius = av * 0.5 } } }
@@ -406,7 +427,7 @@ function widgets.youtube_comment(t, d)
     local initial = tostring(d.author or "?"):gsub("^@", ""):sub(1, 1):upper()
     -- a circle = a box whose corner radius is half its size (no floating shape → stays in place)
     avatar = box{ w = av, h = av, radius = av * 0.5, bg = ac, ax = "c", ay = "c",
-      kids = { text(initial, { size = av * 0.5, col = { 255, 255, 255 }, ta = "c" }) } }
+      kids = { text(initial, { size = av * 0.5, col = { 255, 255, 255 }, ta = "c", t_x = av * 0.02, t_y = av * 0.055 }) } }
   end
   local head = { text(d.author or "@viewer", { size = 33, col = { 236, 238, 245 } }) }
   if d.time then head[#head + 1] = text("· " .. d.time, { size = 28, col = { 140, 146, 165 } }) end
@@ -416,14 +437,19 @@ function widgets.youtube_comment(t, d)
     spacer(20, true),
     text("Reply", { size = 26, col = { 150, 156, 175 } }),
   }
+  -- reserve the FULL comment's wrapped height (measure_text) so the whole block can be vertically
+  -- CENTRED without drifting as the typewriter reveals it: the text sits in a fixed-height box and
+  -- fills from the top, so the card's total height is stable from t=0.
+  local bodyW = cw - av - gap
+  local _, txH = measure_text(full, 34, bodyW)
   local body = col{ growx = true, gap = 7, kids = {
     row{ gap = 12, ay = "c", kids = head },
-    text(shown, { size = 34, col = { 216, 220, 232 }, wrap = "words" }),
+    box{ growx = true, h = txH + 4, kids = { text(shown, { size = 34, col = { 216, 220, 232 }, wrap = "words" }) } },
     row{ gap = 14, ay = "c", padt = 6, kids = acts },
   } }
-  local card = row{ w = cw, gap = 26, ay = "t", kids = { avatar, body } }
-  -- top-anchored (grows DOWN as it types, no vertical drift), nudged to upper-centre
-  return box{ growx = true, growy = true, ax = "c", ay = "t", padt = math.floor(H * 0.30),
+  local card = row{ w = cw, gap = gap, ay = "t", kids = { avatar, body } }
+  -- vertically centred on the frame by the WHOLE comment's (reserved) height; slides up + fades in.
+  return box{ growx = true, growy = true, ax = "c", ay = "c",
     kids = { box{ t_y = (1 - e) * 44, t_op = e, kids = { card } } } }
 end
 
