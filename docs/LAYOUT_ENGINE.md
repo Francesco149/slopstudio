@@ -151,9 +151,11 @@ Clay element per node, and after `Clay.EndLayout()` translates the render comman
 | kind | fields (all optional unless noted) | draws as |
 |---|---|---|
 | `row` / `col` / `box` | `gap pad align justify w h grow wrap bg radius border clip children` | Clay container (+ optional rect/border) |
-| `text` | `s` (string, req) `font size color wrap align weight` | Clay text (measured via ImGui) |
+| `text` | `s` (string, req) `size col ta wrap`; **`font="mono"`** = the code face (g_monoFont/Consolas) | Clay text (measured via ImGui) |
 | `image` | `asset`/`uri` (req) `fit`(cover/contain) `crop`(x,y,w,h 0..1) `tint opacity radius`; **per-node transform** `tx ty`(px) `sc`\|`scx scy` `rot`(deg); **glow** `glow`(0..1) `glow_col`; **motion-blur** `mb`={dx,dy}(per-frame px) `mb_n` | Clay image → `AddImageQuad` at its rect (transformed about center; glow = gradient-ring halo; mb = trailing ghost smear) |
-| `shape` | `kind`(box/line/arrow/ellipse/bracket/**rays**) `color thickness fill from to`; rays: `count phase`(rad) `duty` | Clay **custom** element → `draw_shape` at its rect |
+| `shape` | `kind`(box/line/arrow/ellipse/bracket/**rays**/**heart**) `color thickness fill from to`; rays: `count phase`(rad) `duty` | Clay **custom** element → `draw_shape` at its rect |
+
+A C **`tokenize(src, lang)`** binding (reuses the code-clip lexer) returns per-line coloured spans for `widgets.code` — the only non-math host binding besides text measurement.
 
 **Any** node may carry a **subtree transform** `t_x`/`t_y` (px) + `t_op` (0..1 opacity) that applies to it and all descendants (a group slide/fade — containers or text; composes across nesting). The returned **root** node may also carry `ox`/`oy` (project px) — a scene-level offset for **screen-shake** (drive it from `anim.shake(t,…)`).
 | `rule` / `spacer` | `size color` | thin rect / empty gap |
@@ -223,9 +225,13 @@ Built as stdlib Lua on top of the kernel. Each is transparent, reflowable, and d
 - **`rays`** — an anime sunburst / impact lines radiating from `at`, fading to the tips, optionally
   rotating (`spin`) and bursting (`burst`). Put the subject image after it (a higher-z float) to sit
   on top → the "combine-then-rays" dramatic reveal. `data = { at, count, color, spin, burst, duty }`.
-- **`code`** — a vscode-style code card whose lines reveal one by one (slide up + fade, staggered via
-  `anim.stagger`), with an optional highlighted line. The first widget on the subtree transform.
-  `data = { title, lines:[...], step, dur, size, hi }`.
+- **`code`** — a real vscode-style code card: **monospace** + **syntax-highlighted** (the `tokenize`
+  binding → One Dark colours, same as the native `code` clip) + a chrome title bar + a line-number
+  gutter, whose lines reveal one by one (slide up + fade, staggered) via the subtree transform.
+  `data = { code|lines, lang, title, size, step, dur, nums, hi }`.
+- **`youtube_comment`** — a YouTube/phone comment that types in live (avatar + `@author · time` +
+  typewriter comment with a blinking caret + a like row), the card sliding up + fading in.
+  `data = { author, text, avatar, av_color, time, likes, hearted, cps, width }`.
 - **`document`** — **the interview case.** `data = { image, source, excerpts:[{rect,hold,
   translation,note}] }`. Sequences pan/zoom (eased Ken-Burns between excerpt rects so the active
   excerpt fills ~60% of frame), drops each `translation` in a card on whichever side has room
@@ -320,8 +326,13 @@ Built as stdlib Lua on top of the kernel. Each is transparent, reflowable, and d
   across nesting — translates add, opacities multiply). v1 is translate + opacity (pivot-free);
   subtree scale/rotate can follow. First widget: `widgets.code` (the vscode line-by-line reveal). This
   also unblocks the phone-typing-comment move (typewriter text + a sliding bubble).
-- **Remaining moves to sequence:** phone-typing comment · perspective card-flip (wants subtree
-  scale/rotate — the follow-up to the translate+opacity core above).
+- ✓ **`widgets.code` = REAL vscode (DONE 2026-07-15).** Monospace (`font="mono"` → g_monoFont) +
+  syntax highlighting via a `tokenize(src,lang)` binding that reuses the code-clip lexer (One Dark) +
+  chrome + line-number gutter, keeping the per-line reveal. ✓ **`widgets.youtube_comment` (DONE)** —
+  the comment types in live (typewriter + caret), avatar + like row + creator heart; added a `heart`
+  shape kind.
+- **Remaining move:** perspective card-flip (wants subtree scale/rotate — the follow-up to the
+  translate+opacity core above).
 
 **P3 — parity + migration + polish.**
 - `widgets.diagram`/`widgets.chart` at parity → retire the C++ `diagram`/`plot` draw paths (or

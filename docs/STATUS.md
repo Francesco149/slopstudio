@@ -68,9 +68,13 @@ motion) · **screen-shake** (root `ox`/`oy` + `anim.shake` decaying jolt; reveal
 **★ Then SUBTREE TRANSFORM (the last shared enabler):** any node's `t_x`/`t_y`+`t_op` apply to it AND its
 descendants (a group slide/fade for CONTAINERS/TEXT, not just images) — via Clay's per-command `userData`
 passthrough, composed across nesting; v1 = translate+opacity (scale/rot can follow). First widget: **`widgets.code`**
-(the vscode line-by-line reveal; +`anim.stagger`/`anim.typewrite`). Unblocks phone-typing-comment too. All BIG
-ANIMATION WISHLIST shared enablers now landed; remaining = compose the last moves (phone comment · perspective
-flip). **→ P3**
+(the vscode line-by-line reveal; +`anim.stagger`/`anim.typewrite`). **★ Then the LAST TWO MOVES (owner asks):**
+(1) **`widgets.code` reworked to look like REAL vscode** — monospace (`font="mono"`→g_monoFont) + syntax highlighting
+via a new `tokenize(src,lang)` binding that reuses the code-clip lexer (One Dark colours, same as the native clip) +
+chrome + line-number gutter, keeping the per-line reveal; (2) **`widgets.youtube_comment`** — a comment that TYPES in
+live (typewriter + blinking caret, avatar + like row + creator heart; `heart` shape kind added). Also fixed a UI nit:
+the transport time readout was nudging the add-buttons (proportional-font digit width) → fixed width. **All BIG
+ANIMATION WISHLIST enablers + moves now landed** (remaining: perspective card-flip = wants subtree scale/rot). **→ P3**
 (diagram/chart parity; crisp large text — ImGui 1.91.4 bakes 48px so big text is soft, size-ladder/1.92 fix).
 Self-contained clip → PNG fallback always. **KIRBY:** the quote-clip reuse (tilt-sensor/MBC7 → `style:"quote"`)
 is engine-independent, do anytime; the diagram/card-PNG→transparent-scene swaps come after the remaining P2 widgets.
