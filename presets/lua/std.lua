@@ -382,7 +382,10 @@ function widgets.slidein(t, d)
     if it.label then
       local le = anim.rise(lt - 0.15, 0.5)
       local lw = math.floor(W * 0.3)
-      kids[#kids + 1] = box{ float = "tl", fx = x * W - lw * 0.5, fy = (y + (it.label_dy or 0.3)) * H,
+      -- label follows the object's x, but its y is `label_y` (absolute frame fraction) when set, so a
+      -- row of labels aligns on one baseline; else it trails below the object (label_dy).
+      local ly = it.label_y and (it.label_y * H) or ((y + (it.label_dy or 0.3)) * H)
+      kids[#kids + 1] = box{ float = "tl", fx = x * W - lw * 0.5, fy = ly,
         w = lw, kids = { text(it.label, { size = it.label_size or 60, ta = "c",
           col = theme.fade(it.label_col or theme.acc, le) }) } }
     end
@@ -443,11 +446,17 @@ function widgets.code(t, d)
   kids[#kids + 1] = body
   local card = col{ radius = 10, bg = cc.bg, bw = 2, bc = cc.border, clip = true, kids = kids, t_x = slideX, t_op = sop }
   local root = { center(card) }
-  -- a fake mouse cursor "holding" the title bar, moving in with the window (drag feel)
+  -- a fake mouse cursor "holding" the title bar, moving in with the window (drag feel). Prefer a real
+  -- cursor IMAGE (d.cursor_img — e.g. an open-source Adwaita arrow) over the drawn `cursor` shape.
   if d.cursor ~= false and d.title then
-    local cw = d.cursor_size or 42
-    root[#root + 1] = box{ float = "tl", fx = (d.cursor_x or 0.585) * W + slideX, fy = (d.cursor_y or 0.30) * H,
-      w = cw, h = cw * 1.46, kids = { shape{ grow = true, shape = "cursor", color = { 16, 16, 22 }, fill = { 247, 248, 252 }, thickness = 3 } } }
+    local cw = d.cursor_size or 46
+    local fx, fy = (d.cursor_x or 0.585) * W + slideX, (d.cursor_y or 0.29) * H
+    if d.cursor_img then
+      root[#root + 1] = image{ asset = d.cursor_img, w = cw, aspect = true, float = "tl", fx = fx, fy = fy }
+    else
+      root[#root + 1] = box{ float = "tl", fx = fx, fy = fy, w = cw, h = cw * 1.46,
+        kids = { shape{ grow = true, shape = "cursor", color = { 16, 16, 22 }, fill = { 247, 248, 252 }, thickness = 3 } } }
+    end
   end
   return box{ growx = true, growy = true, kids = root }
 end
