@@ -123,3 +123,59 @@ function widgets.document(t, d)
   end
   return box{ growx = true, growy = true, kids = kids }
 end
+
+-- SPLIT — an image beside an explanation (the "screenshot + point" beat). data:
+--   { image=uri, title="...", body="...", ratio=0.5 }
+function widgets.split(t, d)
+  d = d or {}
+  local e = anim.rise(t, 0.4)
+  local ratio = d.ratio or 0.5
+  local kids = {}
+  if d.image then kids[#kids + 1] = image{ asset = d.image, pw = ratio, aspect = true, radius = 12, tint = theme.fade({ 255, 255, 255 }, e) } end
+  local tk = {}
+  if d.title then tk[#tk + 1] = text(d.title, { size = 52, col = theme.fade(theme.acc, e) }) end
+  if d.body then tk[#tk + 1] = text(d.body, { size = 36, col = theme.fade(theme.fg, e), wrap = "words" }) end
+  kids[#kids + 1] = col{ growx = true, gap = 18, ay = "c", kids = tk }
+  return center(row{ gap = 44, ay = "c", pw = 0.9, kids = kids })
+end
+
+-- COMPARISON — N cells (image + caption) side by side, staggered in. data:
+--   { title="...", items = { { image=uri, label="..." }, ... } }
+function widgets.comparison(t, d)
+  d = d or {}
+  local cells = {}
+  for i, it in ipairs(d.items or {}) do
+    local r = anim.rise(t - (i - 1) * 0.12, 0.4)
+    local ck = {}
+    if it.image then ck[#ck + 1] = image{ asset = it.image, growx = true, aspect = true, radius = 10, tint = theme.fade({ 255, 255, 255 }, r) } end
+    if it.label then ck[#ck + 1] = text(it.label, { size = 30, col = theme.fade(theme.dim, r), ta = "c" }) end
+    cells[#cells + 1] = col{ growx = true, gap = 12, ax = "c", kids = ck }
+  end
+  local outer = {}
+  if d.title then outer[#outer + 1] = text(d.title, { size = 48, col = theme.fg, ta = "c" }) end
+  outer[#outer + 1] = row{ gap = 32, ay = "t", growx = true, kids = cells }
+  return center(col{ gap = 28, ax = "c", pw = 0.92, kids = outer })
+end
+
+-- LINEAGE — a horizontal chain of labeled boxes joined by → glyphs, drawn in order. data:
+--   { title="...", nodes = { "A", { label="B", sub="..." }, ... } }
+function widgets.lineage(t, d)
+  d = d or {}
+  local ns = d.nodes or {}
+  local chain = {}
+  for i, n in ipairs(ns) do
+    local r = anim.rise(t - (i - 1) * 0.18, 0.35)
+    local label = (type(n) == "table") and n.label or tostring(n)
+    local sub = (type(n) == "table") and n.sub or nil
+    local bk = { text(label, { size = 34, col = theme.fade(theme.fg, r), ta = "c" }) }
+    if sub then bk[#bk + 1] = text(sub, { size = 22, col = theme.fade(theme.dim, r), ta = "c" }) end
+    chain[#chain + 1] = box{ pad = 20, radius = 12, gap = 4, ax = "c", ay = "c", bg = theme.fade(theme.card, r), kids = bk }
+    if i < #ns then
+      local ar = anim.rise(t - (i - 1) * 0.18 - 0.1, 0.3)
+      chain[#chain + 1] = text("\u{2192}", { size = 44, col = theme.fade(theme.acc, ar) })
+    end
+  end
+  local outer = { row{ gap = 18, ay = "c", kids = chain } }
+  if d.title then table.insert(outer, 1, text(d.title, { size = 44, col = theme.fg, ta = "c" })) end
+  return center(col{ gap = 30, ax = "c", kids = outer })
+end

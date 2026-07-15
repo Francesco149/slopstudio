@@ -5049,6 +5049,7 @@ static std::string          g_sceneErr;                  // last error (drawn as
 // pointer through to the IMAGE render command. A std::deque keeps element addresses stable on push.
 struct SceneImg { ID3D11ShaderResourceView* srv; float u0, v0, u1, v1; Clay_Color tint; float radius; };
 static std::deque<SceneImg>  g_sceneImgs;
+static unsigned long long    g_stdMtime = 0;              // presets/lua/std.lua mtime → hot-reload on save
 
 // Clay measures text in PROJECT px; ImGui scales the 48px atlas (soft at extremes — see doc §9).
 static Clay_Dimensions scene_measure(Clay_StringSlice text, Clay_TextElementConfig* cfg, void* ud) {
@@ -5116,6 +5117,7 @@ static bool scene_lua_init() {
     lua_pushvalue(L, -1); g_sandboxRef = luaL_ref(L, LUA_REGISTRYINDEX);   // keep sandbox (ref); orig stays
     // Load the forkable stdlib into the sandbox env.
     std::string stdpath = g_repoRoot + "/presets/lua/std.lua";
+    g_stdMtime = file_mtime(stdpath.c_str());   // remember it → auto-reload when the file is saved
     std::ifstream sf(stdpath, std::ios::binary);
     if (sf) {
         std::stringstream ss; ss << sf.rdbuf(); std::string src = ss.str();
@@ -5327,10 +5329,14 @@ static void draw_scene_error(ImDrawList* dl, ImVec2 f0, float fw, float fh, floa
     dl->AddText(font, 24 * s, ImVec2(p0.x + 12 * s, p0.y + 8 * s), IM_COL32(255, 176, 182, 255), m.c_str(), nullptr, wrap);
 }
 
+static void scene_request_reload();   // defined below (used by the hot-reload check)
+
 // Draw one scene clip: run its Lua, lay out with Clay, draw the commands. cx,cy = the
 // transformed frame-center (folds in anchor + transform.pos), so the whole graphic
 // shifts with the clip's pos while filling the frame in project px.
 static void draw_scene_clip(ImDrawList* dl, float cx, float cy, float s, Clip& c, int alpha, double t, ImVec2 f0, float fw, float fh) {
+    // hot-reload the stdlib when presets/lua/std.lua is saved (edit a widget → see it live).
+    if (g_sceneL) { std::string sp = g_repoRoot + "/presets/lua/std.lua"; unsigned long long m = file_mtime(sp.c_str()); if (m && m != g_stdMtime) scene_request_reload(); }
     if (!scene_lua_init() || !g_sceneL) { draw_scene_error(dl, f0, fw, fh, s, g_sceneErr.empty() ? "Lua unavailable" : g_sceneErr); return; }
     scene_clay_init();
     std::string src = c.params.is_object() ? c.params.value("script", std::string()) : std::string();

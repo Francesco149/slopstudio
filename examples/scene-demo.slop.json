@@ -12,7 +12,7 @@
     { "id": "tk_v", "name": "Video", "kind": "video", "rows": ["r_scene"] }
   ],
   "rows": {
-    "r_scene": { "type": "scene", "name": "Scene", "params": {}, "clips": ["sc_quote", "sc_stat", "sc_doc"] }
+    "r_scene": { "type": "scene", "name": "Scene", "params": {}, "clips": ["sc_quote", "sc_stat", "sc_doc", "sc_lineage", "sc_compare"] }
   },
   "clips": {
     "sc_quote": {
@@ -48,6 +48,31 @@
             { "rect": [0.01, 0.02, 0.30, 0.30], "hold": 2.2, "tr": "The Media browser — every generated asset and bed, one drag onto the timeline." },
             { "rect": [0.36, 0.10, 0.42, 0.42], "hold": 2.2, "tr": "The live preview: the compositor draws the frame at the playhead, instantly." },
             { "rect": [0.20, 0.58, 0.42, 0.42], "hold": 2.4, "tr": "The timeline — each row is one generation pipeline." }
+          ]
+        }
+      },
+      "transform": { "pos": [0, 0], "scale": [1, 1], "rot": 0, "opacity": 1, "anchor": [0.5, 0.5] },
+      "keyframes": {}
+    },
+    "sc_lineage": {
+      "row": "r_scene", "start": 17.5, "dur": 4.0,
+      "params": {
+        "script": "local t, d = ...\nreturn widgets.lineage(t, d)",
+        "data": { "title": "how a scene renders", "nodes": ["Lua script", "table tree", "Clay layout", "ImDrawList"] }
+      },
+      "transform": { "pos": [0, 0], "scale": [1, 1], "rot": 0, "opacity": 1, "anchor": [0.5, 0.5] },
+      "keyframes": {}
+    },
+    "sc_compare": {
+      "row": "r_scene", "start": 21.5, "dur": 4.0,
+      "params": {
+        "script": "local t, d = ...\nreturn widgets.comparison(t, d)",
+        "data": {
+          "title": "native visuals, all reflowable",
+          "items": [
+            { "image": "docs/hero/code-card.png", "label": "code card" },
+            { "image": "docs/hero/diagram.png", "label": "diagram" },
+            { "image": "docs/hero/footage.png", "label": "footage inset" }
           ]
         }
       },
