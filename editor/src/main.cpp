@@ -5067,10 +5067,15 @@ struct SceneXform { float tx = 0, ty = 0, op = 1; };
 static std::deque<SceneXform> g_sceneXforms;
 static unsigned long long    g_stdMtime = 0;              // presets/lua/std.lua mtime → hot-reload on save
 
+// Pick the scene font by Clay fontId: 1 = monospace (code), else the caption/UI face.
+static ImFont* scene_font(uint16_t fontId) {
+    if (fontId == 1 && g_monoFont) return g_monoFont;
+    return g_captionFont ? g_captionFont : ImGui::GetFont();
+}
 // Clay measures text in PROJECT px; ImGui scales the 48px atlas (soft at extremes — see doc §9).
 static Clay_Dimensions scene_measure(Clay_StringSlice text, Clay_TextElementConfig* cfg, void* ud) {
     (void)ud;
-    ImFont* f = g_captionFont ? g_captionFont : ImGui::GetFont();
+    ImFont* f = scene_font(cfg ? cfg->fontId : 0);
     float sz = (cfg && cfg->fontSize) ? (float)cfg->fontSize : 30.0f;
     ImVec2 m = f->CalcTextSizeA(sz, 1e30f, 0.0f, text.chars, text.chars + text.length);
     Clay_Dimensions d; d.width = m.x; d.height = m.y; return d;
@@ -5097,6 +5102,36 @@ static int scene_lua_log(lua_State* L) {
     int n = lua_gettop(L); std::string s;
     for (int i = 1; i <= n; i++) { if (i > 1) s += "\t"; const char* z = luaL_tolstring(L, i, nullptr); s += z ? z : ""; lua_pop(L, 1); }
     fprintf(stderr, "[scene] %s\n", s.c_str()); return 0;
+}
+// tokenize(src, lang) -> per-line arrays of { s=<text>, c=<class 0..8> } spans covering each line
+// (gaps = whitespace as default-class spans, so monospace columns align). Reuses the code-clip C++
+// lexer so a scene code card is coloured EXACTLY like the native `code` clip (One Dark theme).
+static int scene_lua_tokenize(lua_State* L) {
+    size_t n = 0; const char* src = luaL_checklstring(L, 1, &n);
+    CodeLang lang = lang_of(luaL_optstring(L, 2, "text"));
+    std::vector<std::string> lines; { std::string cur; for (size_t i = 0; i < n; i++) { char ch = src[i]; if (ch == '\n') { lines.push_back(cur); cur.clear(); } else if (ch != '\r') cur += ch; } lines.push_back(cur); }
+    std::vector<CTok> toks; tokenize_code(lines, lang, toks);
+    lua_createtable(L, (int)lines.size(), 0);
+    for (int li = 0; li < (int)lines.size(); li++) {
+        const std::string& ln = lines[li];
+        lua_newtable(L); int spanIdx = 1, col = 0;
+        auto emit = [&](int start, int len, int cls) {
+            if (len <= 0) return;
+            lua_createtable(L, 0, 2);
+            lua_pushlstring(L, ln.c_str() + start, len); lua_setfield(L, -2, "s");
+            lua_pushinteger(L, cls); lua_setfield(L, -2, "c");
+            lua_seti(L, -2, spanIdx++);
+        };
+        for (auto& tk : toks) {
+            if (tk.line != li) continue;
+            if (tk.col > col) emit(col, tk.col - col, TK_DEFAULT);   // whitespace gap
+            emit(tk.col, tk.len, tk.cls);
+            col = tk.col + tk.len;
+        }
+        if (col < (int)ln.size()) emit(col, (int)ln.size() - col, TK_DEFAULT);
+        lua_seti(L, -2, li + 1);
+    }
+    return 1;
 }
 // json (clip params.data) -> a Lua table the script reads.
 static void scene_push_json(lua_State* L, const json& j) {
@@ -5130,6 +5165,7 @@ static bool scene_lua_init() {
     lua_pop(L, 1);                                     // pop _G
     lua_pushcfunction(L, scene_lua_log); lua_setfield(L, -2, "print");
     lua_pushcfunction(L, scene_lua_log); lua_setfield(L, -2, "log");
+    lua_pushcfunction(L, scene_lua_tokenize); lua_setfield(L, -2, "tokenize");   // code syntax highlighting
     lua_pushvalue(L, -1); g_sandboxRef = luaL_ref(L, LUA_REGISTRYINDEX);   // keep sandbox (ref); orig stays
     // Load the forkable stdlib into the sandbox env.
     std::string stdpath = g_repoRoot + "/presets/lua/std.lua";
@@ -5323,6 +5359,7 @@ static void scene_walk(lua_State* L, int idx, const SceneXform* inXf = nullptr) 
         Clay_TextElementConfig tc; memset(&tc, 0, sizeof tc);
         Clay_Color col{ 238, 240, 248, 255 }; lf_color(L, idx, "col", &col); tc.textColor = col;
         tc.fontSize = (uint16_t)lf_num(L, idx, "size", 32);
+        tc.fontId = (lf_str(L, idx, "font", "") == "mono") ? 1 : 0;   // monospace for code
         std::string ta = lf_str(L, idx, "ta", "l");
         tc.textAlignment = ta == "c" ? CLAY_TEXT_ALIGN_CENTER : ta == "r" ? CLAY_TEXT_ALIGN_RIGHT : CLAY_TEXT_ALIGN_LEFT;
         std::string wr = lf_str(L, idx, "wrap", "words");
@@ -5504,7 +5541,6 @@ static void scene_draw_glow(ImDrawList* dl, const SceneImg* si, ImVec2 q0, ImVec
 // may carry a SUBTREE transform via userData (a group slide/fade tagged during the walk); `lop` is
 // the effective per-command opacity, applied through the C() colour helper.
 static void scene_draw_cmds(ImDrawList* dl, Clay_RenderCommandArray cmds, ImVec2 origin, float s, float glob) {
-    ImFont* font = g_captionFont ? g_captionFont : ImGui::GetFont();
     float lop = glob;   // updated per command from its subtree transform's opacity
     auto C = [&](Clay_Color c) -> ImU32 { int a = (int)(c.a * lop + 0.5f); a = a < 0 ? 0 : (a > 255 ? 255 : a); return IM_COL32((int)c.r, (int)c.g, (int)c.b, a); };
     for (int i = 0; i < cmds.length; i++) {
@@ -5522,7 +5558,7 @@ static void scene_draw_cmds(ImDrawList* dl, Clay_RenderCommandArray cmds, ImVec2
                 float w = (float)(br.width.left ? br.width.left : br.width.top);
                 dl->AddRect(p0, p1, C(br.color), br.cornerRadius.topLeft * s, 0, (w > 0 ? w : 1) * s); } break;
             case CLAY_RENDER_COMMAND_TYPE_TEXT: { auto& tx = cmd->renderData.text;
-                dl->AddText(font, tx.fontSize * s, p0, C(tx.textColor), tx.stringContents.chars, tx.stringContents.chars + tx.stringContents.length); } break;
+                dl->AddText(scene_font(tx.fontId), tx.fontSize * s, p0, C(tx.textColor), tx.stringContents.chars, tx.stringContents.chars + tx.stringContents.length); } break;
             case CLAY_RENDER_COMMAND_TYPE_IMAGE: { auto& im = cmd->renderData.image;
                 SceneImg* si = (SceneImg*)im.imageData;
                 if (si && si->srv) {

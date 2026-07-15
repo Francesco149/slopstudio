@@ -1702,6 +1702,9 @@ def cmd_scene_check(a):
         script = c["params"].get("script","")
         data = c["params"].get("data",{})
         harness = ("frame={w=1920,h=1080}\n"
+                   # stub the editor's C `tokenize` binding (one default-class span per line) so a
+                   # code widget validates headlessly — real syntax colours come from the editor.
+                   "function tokenize(src,lang) local r={} for ln in (src..'\\n'):gmatch('([^\\n]*)\\n') do r[#r+1]={{s=ln,c=0}} end return r end\n"
                    f"dofile([==[{std}]==])\n"
                    f"local data={_lua_literal(data)}\n"
                    f"local chunk,err=load([==[\n{script}\n]==],'@scene')\n"

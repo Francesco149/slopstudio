@@ -114,6 +114,15 @@ theme = {
 function theme.accent(a) return { theme.acc[1], theme.acc[2], theme.acc[3], (a or 1) * 255 } end
 function theme.fade(col, a) return { col[1], col[2], col[3], (a or 1) * (col[4] or 255) } end
 
+-- code card palette (One Dark) — matches the native `code` clip so a scene code card looks the same.
+-- cls maps the tokenize() class (0..8) → colour: default/keyword/type/string/number/comment/preproc/func/punct.
+theme.code = {
+  bg = { 22, 24, 32, 255 }, titlebar = { 34, 38, 50, 255 }, border = { 74, 84, 112, 255 },
+  lineno = { 98, 106, 132, 255 }, dots = { { 237, 106, 94 }, { 244, 191, 79 }, { 91, 192, 99 } },
+  cls = { [0] = { 208, 214, 230 }, [1] = { 198, 120, 221 }, [2] = { 86, 182, 194 }, [3] = { 152, 195, 121 },
+          [4] = { 209, 154, 102 }, [5] = { 108, 118, 140 }, [6] = { 224, 108, 117 }, [7] = { 97, 175, 239 }, [8] = { 171, 178, 191 } },
+}
+
 -- node constructors ----------------------------------------------------------
 local function node(k, o) o = o or {}; o.k = k; return o end
 function box(o) return node("box", o) end
@@ -297,27 +306,47 @@ function widgets.drag(t, d)
     tx = (px - 0.5) * W, ty = (py - 0.5) * H, rot = rot, glow = d.glow or 0, mb = mb })
 end
 
--- CODE — a vscode-style code card whose lines reveal one by one (slide up + fade, staggered). The
--- FIRST use of the per-node SUBTREE transform (t_y/t_op on each line text node — a group slide/fade).
--- data: { title="file.lua", lines={...}, step=0.12, dur=0.4, size=32, hi=<1-based line to highlight> }
+-- CODE — a real vscode-style code card: monospace, SYNTAX-HIGHLIGHTED (the C `tokenize` binding →
+-- One Dark colours, same as the native `code` clip), a chrome title bar + line-number gutter, and
+-- the per-line reveal you liked (each line slides up + fades in, staggered via the subtree transform
+-- t_y/t_op). data: { code="...\n..." | lines={...}, lang="lua|c|toml|text", title="file",
+--   size=30, step=0.1, dur=0.38, nums=true, hi=<1-based line to accent> }
 function widgets.code(t, d)
   d = d or {}
-  local lines = d.lines or {}
-  local size = d.size or 32
+  local src = d.code or table.concat(d.lines or {}, "\n")
+  local toklines = tokenize(src, d.lang or "lua")
+  local size = d.size or 30
+  local cc = theme.code
+  local gdig = #tostring(#toklines)                            -- gutter digit count
+  local cellw = size * 0.6                                     -- monospace advance ≈ 0.6em (Consolas)
+  local rows = {}
+  for li, spans in ipairs(toklines) do
+    local e = anim.stagger(t, li, d.step or 0.1, d.dur or 0.38)
+    local cells = {}
+    if d.nums ~= false then
+      cells[#cells + 1] = box{ w = cellw * gdig, kids = {
+        text(string.format("%" .. gdig .. "d", li), { size = size, font = "mono", ta = "r",
+          col = (d.hi == li) and cc.cls[7] or cc.lineno }) } }
+    end
+    local sp = {}
+    for _, s in ipairs(spans) do
+      if s.s ~= "" then sp[#sp + 1] = text(s.s, { size = size, font = "mono", wrap = "none", col = cc.cls[s.c] or cc.cls[0] }) end
+    end
+    if #sp == 0 then sp[1] = text(" ", { size = size, font = "mono" }) end   -- empty line keeps its height
+    cells[#cells + 1] = row{ gap = 0, kids = sp }
+    rows[#rows + 1] = row{ gap = cellw * 1.5, ay = "c", t_y = (1 - e) * 18, t_op = e, kids = cells }
+  end
+  local body = box{ padl = size * 0.9, padr = size * 0.9, padt = size * 0.7, padb = size * 0.7,
+    kids = { col{ gap = size * 0.24, kids = rows } } }
   local kids = {}
-  if d.title then                                             -- a chrome title bar (traffic lights + name)
-    local dot = function(c) return shape{ w = 13, h = 13, shape = "ellipse", fill = c, color = c } end
-    kids[#kids + 1] = row{ gap = 9, ay = "c", padb = 14, kids = {
-      dot{ 255, 95, 86 }, dot{ 255, 189, 46 }, dot{ 39, 201, 63 }, spacer(12, true),
-      text(d.title, { size = size * 0.72, col = theme.dim }) } }
+  if d.title then                                             -- title bar: traffic lights + filename
+    local function dot(c) return box{ w = size * 0.42, h = size * 0.42, kids = { shape{ grow = true, shape = "ellipse", fill = c, color = c } } } end
+    kids[#kids + 1] = row{ growx = true, h = size * 1.85, ay = "c", padl = size * 0.7, gap = size * 0.32, bg = cc.titlebar,
+      kids = { dot(cc.dots[1]), dot(cc.dots[2]), dot(cc.dots[3]), spacer(size * 0.5, true),
+               text(d.title, { size = size * 0.82, font = "mono", col = theme.fade(cc.cls[0], 0.9) }) } }
   end
-  for i, ln in ipairs(lines) do
-    local e = anim.stagger(t, i, d.step or 0.12, d.dur or 0.4)
-    kids[#kids + 1] = text(ln, { size = size, wrap = "none",
-      col = (d.hi == i) and theme.acc or theme.fg,
-      t_y = (1 - e) * 22, t_op = e })                         -- slide up + fade in, staggered per line
-  end
-  return center(box{ pad = 44, radius = 16, bg = { 20, 22, 30, 245 }, gap = 7, kids = kids })
+  kids[#kids + 1] = body
+  return center(col{ radius = 10, bg = cc.bg, bw = 2, bc = cc.border, clip = true, kids = kids })
 end
 
 -- RAYS — an anime sunburst / impact lines behind a subject. `count` wedges radiate from `at` (frame
