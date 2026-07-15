@@ -39,8 +39,21 @@ line/arrow/underline/bracket) → Clay CUSTOM → ImDrawList + `widgets.callout`
 an image); (7) **`slop.py scene`** (author: `--script`/`--script-file`/`--widget` + `--data`) and
 **`slop.py scene-check`** (headless: `dofile` std.lua + run `scene(t,data)` in stock `lua`, precise error
 reporting — the agent loop; flake now ships `lua5.4`). Verified: scene-check passes all 6 demo widgets +
-catches an injected error. Widgets now: quote/stat/document/split/comparison/lineage/callout. **REMAINING P2:**
-only the kirby PNG→scene content swaps (wants owner steer on excerpts/translations). **→ P3**
+catches an injected error. Widgets now: quote/stat/document/split/comparison/lineage/callout.
+**★ P2c — KIRBY CONVERSIONS + easing library (2026-07-15):** (8) a **golden easing library** in `anim`
+(Penner: out_cubic/quint/expo, io_cubic/expo, out_back overshoot, out_elastic, out_bounce; `anim.friction`
+= ease-out "slides to a stop"; `anim.spring_step` = the balatro velocity-spring dangle; `anim.tween(t,dur,name)`
+dispatcher) — grounded in the godot_ui_components cards (cubic-io settles + velocity springs); (9) **`fit="contain"`**
+on image nodes (letterbox wide sources); (10) **`widgets.timeline`** — rebuilds the `lineage.png` solid-bg
+thumb-tool board natively (axis + dated dots + alternating labels + span, transparent/reflowable); (11)
+**kirby conversions validated** (preview `../slopstudio-projects/kirby-tilt-n-tumble/kirby-scenetest.slop.json`,
+scene-check 2/2, feed): `lineage.png`→`widgets.timeline`, `trains-interview.png`→`widgets.document`(contain) with
+EN translations backing the "tested on the bullet train" claim (trans=3). **NOT yet baked into the live kirby cut**
+— awaiting owner review of the previews, then swap b99/b84 (+ emu-comparison/octant/other interviews). **BIG
+ANIMATION WISHLIST from owner** (image reveal w/ inertial slide+straighten+glow · combine-then-rays · vscode code
+reveal · phone typing comment · card flip · pan-zoom-out reveal · balatro cursor-drag) — shared primitives:
+per-node image transform (tx/ty/sc/rot via AddImageQuad), glow (auto-color), motion-blur/screen-shake/rays;
+sequence them next. **→ P3**
 (diagram/chart parity; crisp large text — ImGui 1.91.4 bakes 48px so big text is soft, size-ladder/1.92 fix).
 Self-contained clip → PNG fallback always. **KIRBY:** the quote-clip reuse (tilt-sensor/MBC7 → `style:"quote"`)
 is engine-independent, do anytime; the diagram/card-PNG→transparent-scene swaps come after the remaining P2 widgets.

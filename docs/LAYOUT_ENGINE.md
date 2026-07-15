@@ -206,6 +206,8 @@ Built as stdlib Lua on top of the kernel. Each is transparent, reflowable, and d
 - **`split`** — two panes (image|text, before|after) that reflow to the frame.
 - **`comparison`** — an N-up board (e.g. cart-vs-wiimote, emu-comparison) that lays itself out.
 - **`lineage` / `timeline`** — a chain of labeled nodes (the kirby lineage board).
+- **`timeline`** — dated nodes on a horizontal axis, labels alternating above/below, an optional span
+  bar (rebuilds the kirby `lineage.png` thumb-tool board natively; positioned via floating shapes+labels).
 - **`diagram`** — boxes + arrows / flow chains (parity with `draw_diagram_clip`, then retire it).
 - **`chart`** — line/step/scatter/bar + axes/markers/regions/reveal (parity with `draw_plot_clip`).
 - **`document`** — **the interview case.** `data = { image, source, excerpts:[{rect,hold,

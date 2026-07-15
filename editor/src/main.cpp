@@ -5047,7 +5047,7 @@ static std::map<size_t,int> g_sceneChunks;               // script-hash -> compi
 static std::string          g_sceneErr;                  // last error (drawn as a card)
 // image nodes resolve a texture (srv + crop uv + tint) into this per-frame pool; Clay carries the
 // pointer through to the IMAGE render command. A std::deque keeps element addresses stable on push.
-struct SceneImg { ID3D11ShaderResourceView* srv; float u0, v0, u1, v1; Clay_Color tint; float radius; };
+struct SceneImg { ID3D11ShaderResourceView* srv; float u0, v0, u1, v1; Clay_Color tint; float radius; float aspect; bool contain; };
 static std::deque<SceneImg>  g_sceneImgs;
 // vector shapes (box/ellipse/line/arrow/underline/bracket) drawn within a laid-out box; from/to
 // are fractions 0..1 of that box, so a full-frame floating shape addresses the whole frame.
@@ -5259,6 +5259,8 @@ static void scene_walk(lua_State* L, int idx) {
         lua_pop(L, 1);
         Clay_Color tint{ 255, 255, 255, 255 }; lf_color(L, idx, "tint", &tint); si.tint = tint;
         si.radius = (float)lf_num(L, idx, "radius", 0);
+        si.contain = (lf_str(L, idx, "fit", "cover") == "contain");
+        si.aspect = (tex && tex->h > 0) ? ((si.u1 - si.u0) * tex->w) / ((si.v1 - si.v0) * tex->h) : 1.0f;  // crop-region pixel aspect
         g_sceneImgs.push_back(si);
         Clay_ElementDeclaration d; memset(&d, 0, sizeof d);
         bool grow = lf_bool(L, idx, "grow", false);
@@ -5377,8 +5379,14 @@ static void scene_draw_cmds(ImDrawList* dl, Clay_RenderCommandArray cmds, ImVec2
                 SceneImg* si = (SceneImg*)im.imageData;
                 if (si && si->srv) {
                     ImU32 tint = C(si->tint); ImVec2 uv0(si->u0, si->v0), uv1(si->u1, si->v1);
-                    if (si->radius > 0) dl->AddImageRounded((ImTextureID)(intptr_t)si->srv, p0, p1, uv0, uv1, tint, si->radius * s);
-                    else dl->AddImage((ImTextureID)(intptr_t)si->srv, p0, p1, uv0, uv1, tint);
+                    ImVec2 q0 = p0, q1 = p1;
+                    if (si->contain && si->aspect > 0) {   // letterbox: fit the crop-region aspect inside the box, centered
+                        float bw = p1.x - p0.x, bh = p1.y - p0.y, ba = bw / bh;
+                        if (si->aspect > ba) { float nh = bw / si->aspect, off = (bh - nh) * 0.5f; q0.y = p0.y + off; q1.y = p1.y - off; }
+                        else { float nw = bh * si->aspect, off = (bw - nw) * 0.5f; q0.x = p0.x + off; q1.x = p1.x - off; }
+                    }
+                    if (si->radius > 0) dl->AddImageRounded((ImTextureID)(intptr_t)si->srv, q0, q1, uv0, uv1, tint, si->radius * s);
+                    else dl->AddImage((ImTextureID)(intptr_t)si->srv, q0, q1, uv0, uv1, tint);
                 } else dl->AddRectFilled(p0, p1, IM_COL32(38, 40, 52, (int)(120 * glob)), 6 * s);   // missing-asset placeholder
             } break;
             case CLAY_RENDER_COMMAND_TYPE_SCISSOR_START: dl->PushClipRect(p0, p1, true); break;
