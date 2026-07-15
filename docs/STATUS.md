@@ -2,7 +2,33 @@
 
 Hand-maintained "what's true right now." **Read this first after `CLAUDE.md`** and update it
 in the same change that lands work, so a fresh session reorients in ~60s. Last updated:
-**2026-07-14**. For composing a video as an agent, **`docs/LLM_WORKFLOW.md`**.
+**2026-07-15**. For composing a video as an agent, **`docs/LLM_WORKFLOW.md`**.
+**★★ LAYOUT ENGINE SCOPED (2026-07-15) — the `scene` clip, Lua-first. Full design: `docs/LAYOUT_ENGINE.md`.**
+This is the long-deferred "Phase 4a layout engine": a native, scriptable, **reflowable** motion-graphics
+clip type so any diagram/chart/callout/composed visual is authored natively (transparent, adjustable) with
+minimal PNG baking — the fix for "solid-rectangle" thumb-tool diagrams + the interview pan/zoom-excerpt need.
+**Stack = ImGui to draw · Clay (single-header C flexbox, Zlib) to lay out · Lua 5.4 to script.** A `scene`
+clip's `params.script` is a Lua `scene(t,data)->tree` that builds a table tree; C++ walks it into Clay →
+`ImDrawList` (preview==export, cached, free). Lua only ever builds *data* + does math; all layout/draw is C++
+(tiny binding surface). **Owner pick: Lua-first** — widgets are forkable stdlib Lua, not a declarative tier.
+Confirmed feasible: native visuals already dispatch from one `composite_frame` seam via `ImDrawList` (no
+shaders), and we already reinvent flexbox ad-hoc in 6 places (diagram auto-fit, plot reflow, caption
+corner-avoid, `content_centroid_span`, avatar placement) — Clay unifies them.
+**★ P1 KERNEL SHIPPED (2026-07-15):** Lua 5.4 + Clay (nicbarker/clay, zlib) are source-vendored into the PE
+(flake exposes `$LUA_SRC`; `editor/vendor/clay.h`; `editor/src/clay_impl.c` compiled as C; Makefile gates
+`-DSLOP_SCENE`). A `type:"scene"` clip (`params.script` = Lua `scene(t,data)->tree`, `params.data` = its JSON)
+is dispatched in `composite_frame`; a sandboxed VM (allow-listed globals, no io/os/require, instruction-budget
+hook, per-chunk env) runs the script, C++ walks the returned table tree into Clay (flexbox, text measured via
+ImGui `CalcTextSizeA`) and draws the render commands with `ImDrawList` — transparent, reflowable, preview==export.
+Forkable stdlib at **`presets/lua/std.lua`** (anim/layout/theme + `widgets.quote`/`widgets.stat`). **Proof:**
+`examples/scene-demo.slop.json` renders a centered quote card + a count-up stat on the bare checker (feed montage),
+both time-driven (`anim.rise`/`anim.count`). Clay's C++20 header floor relaxed to C++17 (local patch, noted in
+the header — we use its imperative API, not the macros). **REMAINING P2** (image + custom-shape render commands;
+the `document` pan/zoom-excerpt widget = the interview case; `slop.py scene`/`scene-check` headless lint;
+in-editor Lua editor + hot-reload; then swap kirby's thumb-tool PNGs → scenes) **→ P3** (diagram/chart parity;
+crisp large text — ImGui 1.91.4 bakes 48px so big text is soft, size-ladder/1.92 fix). Self-contained clip →
+PNG fallback always. **KIRBY:** the quote-clip reuse (tilt-sensor/MBC7 → `style:"quote"`) is engine-independent,
+do anytime; the diagram/card-PNG→transparent-scene swaps wait on P2.
 **★★ OWNER LIVE-TEST SESSION (2026-07-14 pm) — 5 fixes, all owner-confirmed:**
 - **Playback perf FIXED** (`d8fd36d`): recettear playback tanked to ~100 ms/frame. Profiled via a new
   **`SLOP_PERF=1` frame profiler** (kept, gated) → the cost was `audio_pump` rebuilding the whole mixer
@@ -58,7 +84,7 @@ in the same change that lands work, so a fresh session reorients in ~60s. Last u
   everything); the noir look drops its own vignette so it isn't doubled + persists independent of the preset.
   Also fixed the gradient inspector's `DragFloat2("anchor")` sharing an ImGui id with the transform anchor
   ("2 items with conflicting id" on click) — renamed to "focus (0..1)##gradanchor".
-**STILL OPEN:** Phase 4a layout engine (deferred, "attempt last").
+**STILL OPEN:** Phase 4a layout engine — now **SCOPED** as the Lua-first `scene` clip (top block · `docs/LAYOUT_ENGINE.md`); build P1 next.
 
 **★ The mouse-driven-UX overhaul + the visual-variety stretch goal — most of it LANDED in an autonomous
 overnight session (2026-07-14 night). Full arc + what remains: `docs/UX_OVERHAUL.md` (top STATUS block).**

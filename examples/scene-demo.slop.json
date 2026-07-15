@@ -1,0 +1,40 @@
+{
+  "schema": "slopstudio.project/1",
+  "meta": {
+    "title": "scene clip demo — the Lua layout engine",
+    "fps": 60,
+    "resolution": [1920, 1080],
+    "bg": "checker",
+    "notes": "Self-demo for docs/LAYOUT_ENGINE.md: two `scene` clips (a reflowable quote card and a count-up stat), each a Lua script over the forkable presets/lua/std.lua stdlib. Transparent, sits on the checker. Render: build/slopstudio.exe examples/scene-demo.slop.json --shot out.png --time 1.5"
+  },
+  "assets": {},
+  "tracks": [
+    { "id": "tk_v", "name": "Video", "kind": "video", "rows": ["r_scene"] }
+  ],
+  "rows": {
+    "r_scene": { "type": "scene", "name": "Scene", "params": {}, "clips": ["sc_quote", "sc_stat"] }
+  },
+  "clips": {
+    "sc_quote": {
+      "row": "r_scene", "start": 0.0, "dur": 4.0,
+      "params": {
+        "script": "local t, d = ...\nreturn widgets.quote(t, { text = d.text, cite = d.cite })",
+        "data": {
+          "text": "The best way to predict the future is to invent it.",
+          "cite": "a reflowable, transparent, native quote card"
+        }
+      },
+      "transform": { "pos": [0, 0], "scale": [1, 1], "rot": 0, "opacity": 1, "anchor": [0.5, 0.5] },
+      "keyframes": {}
+    },
+    "sc_stat": {
+      "row": "r_scene", "start": 4.0, "dur": 4.0,
+      "params": {
+        "script": "local t, d = ...\nreturn widgets.stat(t, { to = d.to, label = d.label, dur = 1.4 })",
+        "data": { "to": 100, "label": "percent native — no baked PNG" }
+      },
+      "transform": { "pos": [0, 0], "scale": [1, 1], "rot": 0, "opacity": 1, "anchor": [0.5, 0.5] },
+      "keyframes": {}
+    }
+  }
+}

@@ -47,6 +47,15 @@
         # library — we only need the checkout. IMGUI_DIR is exported below.
         imguiSrc = pkgs.imgui.src;
 
+        # Lua 5.4 is source-vendored into the editor PE the same way (its C core is
+        # cross-compiled with mingw) for the layout engine's `scene` clip
+        # (docs/LAYOUT_ENGINE.md — Lua builds a table tree, Clay lays it out). We expose
+        # the UNPACKED source dir; editor/Makefile compiles src/*.c minus the CLI mains.
+        luaSrc = pkgs.runCommand "lua-5.4-src" { } ''
+          mkdir -p $out
+          tar xzf ${pkgs.lua5_4.src} --strip-components=1 -C $out
+        '';
+
         # ── Provider Python env ───────────────────────────────────────────
         # Providers are small out-of-process HTTP/WS services wrapping each
         # model (docs/PROVIDER_PROTOCOL.md). Heavy ML deps (torch, comfyui,
@@ -112,6 +121,9 @@
             # Dear ImGui source checkout for the editor's native build.
             export IMGUI_DIR=${imguiSrc}
 
+            # Lua 5.4 source (layout-engine `scene` clip); editor/Makefile cross-compiles it.
+            export LUA_SRC=${luaSrc}
+
             # Header-only editor libs (used by editor/Makefile).
             export NLOHMANN_INC=${pkgs.nlohmann_json}/include
             export STB_INC=${pkgs.stb}/include
@@ -131,6 +143,7 @@
 
             echo "slopstudio dev shell ready"
             echo "  imgui:    $IMGUI_DIR"
+            echo "  lua:      $LUA_SRC (layout engine)"
             echo "  mingw cc: $(command -v $MINGW_CXX || echo '(missing)')"
             echo "  glslang:  $(command -v glslangValidator || echo '(missing)')"
             echo "  libav:    $FFMPEG_CROSS_LIB (in-editor video decode)"

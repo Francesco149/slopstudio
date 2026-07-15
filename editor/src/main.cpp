@@ -49,6 +49,16 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
+// ── layout engine (the `scene` clip) — docs/LAYOUT_ENGINE.md ──────────────────
+// A Lua script `scene(t,data)` builds a tree of tables; we walk it into Clay (a
+// single-header C flexbox lib) for layout, then draw Clay's render commands with
+// ImDrawList — transparent + reflowable, preview==export. Gated by -DSLOP_SCENE
+// (the Makefile sets it when the flake provides $LUA_SRC); a stub renders otherwise.
+#ifdef SLOP_SCENE
+#include "lua.hpp"      // extern "C" wrapper over lua.h / lauxlib.h / lualib.h
+#include "clay.h"       // self-guards its declarations in extern "C" for C++
+#endif
+
 // ordered_json: object key order is preserved on parse→patch→dump, so writing a
 // project back to disk (generate-on-demand lands a new asset entry) keeps the
 // hand-authored field order → clean git diffs, as docs/PROJECT_FORMAT.md promises.
@@ -3539,6 +3549,7 @@ static ImU32 type_color(const std::string& t) {
     if (t == "anchor")  return IM_COL32( 95, 220, 185, 255);   // caption anchor — the caption-move handle
     if (t == "diagram") return IM_COL32(120, 205, 235, 255);
     if (t == "plot")    return IM_COL32(140, 225, 170, 255);   // native chart card (green)
+    if (t == "scene")   return IM_COL32(235, 150, 205, 255);   // Lua-scripted layout-engine graphic (pink)
     if (t == "filler")  return IM_COL32( 90, 110, 130, 255);
     return IM_COL32(150, 150, 150, 255);
 }
@@ -5019,6 +5030,273 @@ static void draw_gradient_clip(ImDrawList* dl, ImVec2 f0, float fw, float fh, Cl
     if (R  > 1) dl->AddRectFilledMultiColor(ImVec2(q1.x - R, q0.y), q1, cZero, cFull, cFull, cZero);
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// scene clip — Lua-scripted, Clay-laid-out native graphic (docs/LAYOUT_ENGINE.md).
+// The script `scene(t,data,ctx)` returns a tree of tables (containers + text); we
+// walk it into Clay for flexbox layout, then draw Clay's render commands with
+// ImDrawList. Deterministic + sandboxed + reflowable; preview==export via the one
+// composite path. Lua only builds DATA + does math — all layout/draw is here in C++.
+// ══════════════════════════════════════════════════════════════════════════════
+#ifdef SLOP_SCENE
+static lua_State*           g_sceneL     = nullptr;      // one shared sandboxed VM
+static int                  g_sandboxRef = LUA_NOREF;    // the shared stdlib env (registry)
+static bool                 g_sceneTried = false;        // init attempted?
+static bool                 g_clayInit   = false;
+static std::vector<char>    g_clayMem;                   // Clay arena backing store
+static std::map<size_t,int> g_sceneChunks;               // script-hash -> compiled-chunk ref
+static std::string          g_sceneErr;                  // last error (drawn as a card)
+
+// Clay measures text in PROJECT px; ImGui scales the 48px atlas (soft at extremes — see doc §9).
+static Clay_Dimensions scene_measure(Clay_StringSlice text, Clay_TextElementConfig* cfg, void* ud) {
+    (void)ud;
+    ImFont* f = g_captionFont ? g_captionFont : ImGui::GetFont();
+    float sz = (cfg && cfg->fontSize) ? (float)cfg->fontSize : 30.0f;
+    ImVec2 m = f->CalcTextSizeA(sz, 1e30f, 0.0f, text.chars, text.chars + text.length);
+    Clay_Dimensions d; d.width = m.x; d.height = m.y; return d;
+}
+static void scene_clay_err(Clay_ErrorData e) {
+    g_sceneErr = std::string("clay: ") + std::string(e.errorText.chars, (size_t)e.errorText.length);
+}
+static void scene_clay_init() {
+    if (g_clayInit) return;
+    uint32_t need = Clay_MinMemorySize();
+    g_clayMem.resize(need);
+    Clay_Arena arena = Clay_CreateArenaWithCapacityAndMemory(need, g_clayMem.data());
+    Clay_Dimensions dim; dim.width = 1920; dim.height = 1080;
+    Clay_ErrorHandler eh; eh.errorHandlerFunction = scene_clay_err; eh.userData = nullptr;
+    Clay_Initialize(arena, dim, eh);
+    Clay_SetMeasureTextFunction(scene_measure, nullptr);
+    g_clayInit = true;
+}
+
+// instruction-budget hook: abort a runaway script (non-fatal → error card).
+static void scene_hook(lua_State* L, lua_Debug* ar) { (void)ar; luaL_error(L, "instruction budget exceeded (infinite loop?)"); }
+// print/log → stderr (script debugging).
+static int scene_lua_log(lua_State* L) {
+    int n = lua_gettop(L); std::string s;
+    for (int i = 1; i <= n; i++) { if (i > 1) s += "\t"; const char* z = luaL_tolstring(L, i, nullptr); s += z ? z : ""; lua_pop(L, 1); }
+    fprintf(stderr, "[scene] %s\n", s.c_str()); return 0;
+}
+// json (clip params.data) -> a Lua table the script reads.
+static void scene_push_json(lua_State* L, const json& j) {
+    if (j.is_object()) { lua_createtable(L, 0, (int)j.size()); for (auto it = j.begin(); it != j.end(); ++it) { scene_push_json(L, it.value()); lua_setfield(L, -2, it.key().c_str()); } }
+    else if (j.is_array()) { lua_createtable(L, (int)j.size(), 0); int i = 1; for (auto& e : j) { scene_push_json(L, e); lua_seti(L, -2, i++); } }
+    else if (j.is_string()) { std::string s = j.get<std::string>(); lua_pushlstring(L, s.data(), s.size()); }
+    else if (j.is_boolean()) lua_pushboolean(L, j.get<bool>());
+    else if (j.is_number_integer()) lua_pushinteger(L, (lua_Integer)j.get<long long>());
+    else if (j.is_number()) lua_pushnumber(L, j.get<double>());
+    else lua_pushnil(L);
+}
+
+static bool scene_lua_init() {
+    if (g_sceneTried) return g_sceneL != nullptr;
+    g_sceneTried = true;
+    lua_State* L = luaL_newstate();
+    if (!L) { g_sceneErr = "luaL_newstate failed"; return false; }
+    // Open ONLY safe libs (no io/os/package/debug/coroutine).
+    static const luaL_Reg safe[] = {
+        { LUA_GNAME, luaopen_base }, { LUA_TABLIBNAME, luaopen_table }, { LUA_STRLIBNAME, luaopen_string },
+        { LUA_MATHLIBNAME, luaopen_math }, { LUA_UTF8LIBNAME, luaopen_utf8 }, { nullptr, nullptr } };
+    for (const luaL_Reg* lib = safe; lib->func; lib++) { luaL_requiref(L, lib->name, lib->func, 1); lua_pop(L, 1); }
+    lua_gc(L, LUA_GCGEN, 0, 0);
+    // Build the sandbox env by ALLOW-LISTING globals (load/dofile/require/etc. are simply omitted).
+    lua_newtable(L);                                   // sandbox
+    lua_pushglobaltable(L);                            // _G
+    static const char* allow[] = { "assert","error","ipairs","pairs","next","select","tonumber","tostring",
+        "type","rawget","rawset","rawequal","rawlen","setmetatable","getmetatable","pcall","xpcall","_VERSION",
+        "math","string","table","utf8", nullptr };
+    for (const char** k = allow; *k; ++k) { lua_getfield(L, -1, *k); if (!lua_isnil(L, -1)) lua_setfield(L, -3, *k); else lua_pop(L, 1); }
+    lua_pop(L, 1);                                     // pop _G
+    lua_pushcfunction(L, scene_lua_log); lua_setfield(L, -2, "print");
+    lua_pushcfunction(L, scene_lua_log); lua_setfield(L, -2, "log");
+    lua_pushvalue(L, -1); g_sandboxRef = luaL_ref(L, LUA_REGISTRYINDEX);   // keep sandbox (ref); orig stays
+    // Load the forkable stdlib into the sandbox env.
+    std::string stdpath = g_repoRoot + "/presets/lua/std.lua";
+    std::ifstream sf(stdpath, std::ios::binary);
+    if (sf) {
+        std::stringstream ss; ss << sf.rdbuf(); std::string src = ss.str();
+        if (luaL_loadbuffer(L, src.data(), src.size(), "@std.lua") != LUA_OK) {
+            g_sceneErr = std::string("std.lua: ") + lua_tostring(L, -1); lua_pop(L, 1);
+        } else {
+            lua_pushvalue(L, -2);                      // sandbox (env)
+            lua_setupvalue(L, -2, 1);                  // chunk._ENV = sandbox
+            if (lua_pcall(L, 0, 0, 0) != LUA_OK) { g_sceneErr = std::string("std.lua: ") + lua_tostring(L, -1); lua_pop(L, 1); }
+        }
+    } else { g_sceneErr = "std.lua not found: " + stdpath; }
+    lua_pop(L, 1);                                     // pop sandbox
+    g_sceneL = L;
+    return true;
+}
+
+// Compile+cache a script chunk with a fresh env whose __index falls through to the shared stdlib.
+static int scene_get_chunk(lua_State* L, const std::string& src) {
+    size_t h = std::hash<std::string>{}(src);
+    auto it = g_sceneChunks.find(h);
+    if (it != g_sceneChunks.end()) return it->second;
+    if (luaL_loadbuffer(L, src.data(), src.size(), "@scene") != LUA_OK) {
+        g_sceneErr = std::string("compile: ") + lua_tostring(L, -1); lua_pop(L, 1);
+        g_sceneChunks[h] = LUA_NOREF; return LUA_NOREF;
+    }
+    lua_newtable(L);                                   // env
+    lua_newtable(L);                                   // meta
+    lua_rawgeti(L, LUA_REGISTRYINDEX, g_sandboxRef);   // sandbox
+    lua_setfield(L, -2, "__index");                    // meta.__index = sandbox
+    lua_setmetatable(L, -2);                           // setmetatable(env, meta)
+    lua_setupvalue(L, -2, 1);                          // chunk._ENV = env (pops env)
+    int ref = luaL_ref(L, LUA_REGISTRYINDEX);          // pops+stores chunk
+    g_sceneChunks[h] = ref; return ref;
+}
+
+// read table fields (balanced: each leaves the stack as it found it) -----------
+static double lf_num(lua_State* L, int idx, const char* k, double def) { lua_getfield(L, idx, k); double r = lua_isnumber(L, -1) ? lua_tonumber(L, -1) : def; lua_pop(L, 1); return r; }
+static bool   lf_bool(lua_State* L, int idx, const char* k, bool def) { lua_getfield(L, idx, k); bool r = lua_isnil(L, -1) ? def : (bool)lua_toboolean(L, -1); lua_pop(L, 1); return r; }
+static std::string lf_str(lua_State* L, int idx, const char* k, const char* def) { lua_getfield(L, idx, k); std::string r = lua_isstring(L, -1) ? lua_tostring(L, -1) : (def ? def : ""); lua_pop(L, 1); return r; }
+static bool lf_color(lua_State* L, int idx, const char* k, Clay_Color* out) {
+    lua_getfield(L, idx, k); bool ok = false;
+    if (lua_istable(L, -1)) {
+        lua_geti(L, -1, 1); float r = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+        lua_geti(L, -1, 2); float g = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+        lua_geti(L, -1, 3); float b = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+        lua_geti(L, -1, 4); float a = lua_isnil(L, -1) ? 255.0f : (float)lua_tonumber(L, -1); lua_pop(L, 1);
+        out->r = r; out->g = g; out->b = b; out->a = a; ok = true;
+    }
+    lua_pop(L, 1); return ok;
+}
+static void scene_sizing(Clay_SizingAxis* ax, double fixed, double pct, bool grow) {
+    if (fixed >= 0) { ax->type = CLAY__SIZING_TYPE_FIXED; ax->size.minMax.min = ax->size.minMax.max = (float)fixed; }
+    else if (pct >= 0) { ax->type = CLAY__SIZING_TYPE_PERCENT; ax->size.percent = (float)pct; }
+    else if (grow) { ax->type = CLAY__SIZING_TYPE_GROW; ax->size.minMax.min = 0; ax->size.minMax.max = 1e30f; }
+    else { ax->type = CLAY__SIZING_TYPE_FIT; ax->size.minMax.min = 0; ax->size.minMax.max = 1e30f; }
+}
+
+// Recursively drive Clay from the node table at absolute index `idx` (stack-balanced).
+static void scene_walk(lua_State* L, int idx) {
+    std::string k = lf_str(L, idx, "k", "box");
+    if (k == "text") {
+        Clay_TextElementConfig tc; memset(&tc, 0, sizeof tc);
+        Clay_Color col{ 238, 240, 248, 255 }; lf_color(L, idx, "col", &col); tc.textColor = col;
+        tc.fontSize = (uint16_t)lf_num(L, idx, "size", 32);
+        std::string ta = lf_str(L, idx, "ta", "l");
+        tc.textAlignment = ta == "c" ? CLAY_TEXT_ALIGN_CENTER : ta == "r" ? CLAY_TEXT_ALIGN_RIGHT : CLAY_TEXT_ALIGN_LEFT;
+        std::string wr = lf_str(L, idx, "wrap", "words");
+        tc.wrapMode = wr == "none" ? CLAY_TEXT_WRAP_NONE : wr == "lines" ? CLAY_TEXT_WRAP_NEWLINES : CLAY_TEXT_WRAP_WORDS;
+        lua_getfield(L, idx, "s"); size_t len = 0; const char* sp = lua_tolstring(L, -1, &len);
+        Clay_String cs; cs.isStaticallyAllocated = false; cs.length = (int32_t)len; cs.chars = sp ? sp : "";
+        Clay__OpenTextElement(cs, Clay__StoreTextElementConfig(tc));
+        lua_pop(L, 1);   // the node table still references the string → its chars stay valid through draw
+        return;
+    }
+    Clay_ElementDeclaration d; memset(&d, 0, sizeof d);
+    d.layout.layoutDirection = (k == "row") ? CLAY_LEFT_TO_RIGHT : CLAY_TOP_TO_BOTTOM;
+    bool grow = lf_bool(L, idx, "grow", false);
+    scene_sizing(&d.layout.sizing.width,  lf_num(L, idx, "w", -1), lf_num(L, idx, "pw", -1), grow || lf_bool(L, idx, "growx", false));
+    scene_sizing(&d.layout.sizing.height, lf_num(L, idx, "h", -1), lf_num(L, idx, "ph", -1), grow || lf_bool(L, idx, "growy", false));
+    double pad = lf_num(L, idx, "pad", -1);
+    d.layout.padding.left   = (uint16_t)std::max(0.0, lf_num(L, idx, "padl", pad >= 0 ? pad : 0));
+    d.layout.padding.right  = (uint16_t)std::max(0.0, lf_num(L, idx, "padr", pad >= 0 ? pad : 0));
+    d.layout.padding.top    = (uint16_t)std::max(0.0, lf_num(L, idx, "padt", pad >= 0 ? pad : 0));
+    d.layout.padding.bottom = (uint16_t)std::max(0.0, lf_num(L, idx, "padb", pad >= 0 ? pad : 0));
+    d.layout.childGap = (uint16_t)std::max(0.0, lf_num(L, idx, "gap", 0));
+    std::string ax = lf_str(L, idx, "ax", "l"), ay = lf_str(L, idx, "ay", "t");
+    d.layout.childAlignment.x = ax == "c" ? CLAY_ALIGN_X_CENTER : ax == "r" ? CLAY_ALIGN_X_RIGHT : CLAY_ALIGN_X_LEFT;
+    d.layout.childAlignment.y = ay == "c" ? CLAY_ALIGN_Y_CENTER : ay == "b" ? CLAY_ALIGN_Y_BOTTOM : CLAY_ALIGN_Y_TOP;
+    Clay_Color bg; if (lf_color(L, idx, "bg", &bg)) d.backgroundColor = bg;
+    double rad = lf_num(L, idx, "radius", 0);
+    d.cornerRadius.topLeft = d.cornerRadius.topRight = d.cornerRadius.bottomLeft = d.cornerRadius.bottomRight = (float)rad;
+    double bw = lf_num(L, idx, "bw", 0);
+    if (bw > 0) { Clay_Color bc{ 255, 255, 255, 255 }; lf_color(L, idx, "bc", &bc); d.border.color = bc;
+        d.border.width.left = d.border.width.right = d.border.width.top = d.border.width.bottom = (uint16_t)bw; }
+    if (lf_bool(L, idx, "clip", false)) { d.clip.horizontal = true; d.clip.vertical = true; }
+    Clay__OpenElement();
+    Clay__ConfigureOpenElement(d);
+    lua_getfield(L, idx, "kids");
+    if (lua_istable(L, -1)) {
+        int kidsIdx = lua_gettop(L);
+        lua_Integer n = (lua_Integer)luaL_len(L, kidsIdx);
+        for (lua_Integer i = 1; i <= n; i++) { lua_geti(L, kidsIdx, i); if (lua_istable(L, -1)) scene_walk(L, lua_gettop(L)); lua_pop(L, 1); }
+    }
+    lua_pop(L, 1);   // pop kids
+    Clay__CloseElement();
+}
+
+// Translate Clay's render commands into ImDrawList calls (glob = clip opacity 0..1).
+static void scene_draw_cmds(ImDrawList* dl, Clay_RenderCommandArray cmds, ImVec2 origin, float s, float glob) {
+    ImFont* font = g_captionFont ? g_captionFont : ImGui::GetFont();
+    auto C = [&](Clay_Color c) -> ImU32 { int a = (int)(c.a * glob + 0.5f); a = a < 0 ? 0 : (a > 255 ? 255 : a); return IM_COL32((int)c.r, (int)c.g, (int)c.b, a); };
+    for (int i = 0; i < cmds.length; i++) {
+        Clay_RenderCommand* cmd = Clay_RenderCommandArray_Get(&cmds, i);
+        Clay_BoundingBox b = cmd->boundingBox;
+        ImVec2 p0(origin.x + b.x * s, origin.y + b.y * s);
+        ImVec2 p1(origin.x + (b.x + b.width) * s, origin.y + (b.y + b.height) * s);
+        switch (cmd->commandType) {
+            case CLAY_RENDER_COMMAND_TYPE_RECTANGLE: { auto& r = cmd->renderData.rectangle;
+                dl->AddRectFilled(p0, p1, C(r.backgroundColor), r.cornerRadius.topLeft * s); } break;
+            case CLAY_RENDER_COMMAND_TYPE_BORDER: { auto& br = cmd->renderData.border;
+                float w = (float)(br.width.left ? br.width.left : br.width.top);
+                dl->AddRect(p0, p1, C(br.color), br.cornerRadius.topLeft * s, 0, (w > 0 ? w : 1) * s); } break;
+            case CLAY_RENDER_COMMAND_TYPE_TEXT: { auto& tx = cmd->renderData.text;
+                dl->AddText(font, tx.fontSize * s, p0, C(tx.textColor), tx.stringContents.chars, tx.stringContents.chars + tx.stringContents.length); } break;
+            case CLAY_RENDER_COMMAND_TYPE_SCISSOR_START: dl->PushClipRect(p0, p1, true); break;
+            case CLAY_RENDER_COMMAND_TYPE_SCISSOR_END:   dl->PopClipRect(); break;
+            default: break;   // IMAGE + CUSTOM (shapes): P2
+        }
+    }
+}
+
+static void draw_scene_error(ImDrawList* dl, ImVec2 f0, float fw, float fh, float s, const std::string& msg) {
+    (void)fh; ImFont* font = g_captionFont ? g_captionFont : ImGui::GetFont();
+    std::string m = "scene: " + msg;
+    float wrap = fw * 0.8f;
+    ImVec2 tm = font->CalcTextSizeA(24 * s, wrap, wrap, m.c_str());
+    ImVec2 p0(f0.x + 40 * s, f0.y + 40 * s);
+    dl->AddRectFilled(p0, ImVec2(p0.x + tm.x + 24 * s, p0.y + tm.y + 16 * s), IM_COL32(58, 20, 26, 220), 8 * s);
+    dl->AddText(font, 24 * s, ImVec2(p0.x + 12 * s, p0.y + 8 * s), IM_COL32(255, 176, 182, 255), m.c_str(), nullptr, wrap);
+}
+
+// Draw one scene clip: run its Lua, lay out with Clay, draw the commands. cx,cy = the
+// transformed frame-center (folds in anchor + transform.pos), so the whole graphic
+// shifts with the clip's pos while filling the frame in project px.
+static void draw_scene_clip(ImDrawList* dl, float cx, float cy, float s, Clip& c, int alpha, double t, ImVec2 f0, float fw, float fh) {
+    if (!scene_lua_init() || !g_sceneL) { draw_scene_error(dl, f0, fw, fh, s, g_sceneErr.empty() ? "Lua unavailable" : g_sceneErr); return; }
+    scene_clay_init();
+    std::string src = c.params.is_object() ? c.params.value("script", std::string()) : std::string();
+    if (src.empty()) { draw_scene_error(dl, f0, fw, fh, s, "empty (set params.script)"); return; }
+    lua_State* L = g_sceneL;
+    g_sceneErr.clear();
+    int ref = scene_get_chunk(L, src);
+    if (ref == LUA_NOREF) { draw_scene_error(dl, f0, fw, fh, s, g_sceneErr); return; }
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ref);            // push chunk
+    double tl = t - c.start;                            // clip-local seconds
+    lua_pushnumber(L, tl);
+    if (c.params.is_object() && c.params.contains("data")) scene_push_json(L, c.params["data"]); else lua_newtable(L);
+    lua_createtable(L, 0, 4);                            // ctx
+    lua_pushnumber(L, c.dur);   lua_setfield(L, -2, "dur");
+    lua_pushnumber(L, fw / s);  lua_setfield(L, -2, "w");
+    lua_pushnumber(L, fh / s);  lua_setfield(L, -2, "h");
+    lua_pushnumber(L, tl);      lua_setfield(L, -2, "t");
+    lua_sethook(L, scene_hook, LUA_MASKCOUNT, 4000000);
+    int rc = lua_pcall(L, 3, 1, 0);
+    lua_sethook(L, nullptr, 0, 0);
+    if (rc != LUA_OK) { const char* e = lua_tostring(L, -1); g_sceneErr = std::string("run: ") + (e ? e : "?"); lua_pop(L, 1); draw_scene_error(dl, f0, fw, fh, s, g_sceneErr); return; }
+    if (!lua_istable(L, -1)) { lua_pop(L, 1); draw_scene_error(dl, f0, fw, fh, s, "script must return a node table"); return; }
+    Clay_Dimensions dim; dim.width = fw / s; dim.height = fh / s;
+    Clay_SetLayoutDimensions(dim);
+    Clay_BeginLayout();
+    scene_walk(L, lua_gettop(L));
+    Clay_RenderCommandArray cmds = Clay_EndLayout();
+    ImVec2 origin(cx - fw * 0.5f, cy - fh * 0.5f);
+    scene_draw_cmds(dl, cmds, origin, s, alpha / 255.0f);
+    lua_pop(L, 1);   // pop root AFTER drawing (its strings back the TEXT commands)
+    if (!g_sceneErr.empty()) draw_scene_error(dl, f0, fw, fh, s, g_sceneErr);
+}
+#else
+static void draw_scene_clip(ImDrawList* dl, float cx, float cy, float s, Clip& c, int alpha, double t, ImVec2 f0, float fw, float fh) {
+    (void)cx; (void)cy; (void)c; (void)alpha; (void)t; (void)fh;
+    ImFont* font = g_captionFont ? g_captionFont : ImGui::GetFont();
+    dl->AddText(font, 24 * s, ImVec2(f0.x + 40 * s, f0.y + 40 * s), IM_COL32(210, 210, 220, 255), "scene: built without Lua (set $LUA_SRC)");
+}
+#endif
+
 // Composite the frame at the playhead into the preview rect [f0, f0+(fw,fh)].
 // Visual clips (image/video/avatar) active at the playhead are drawn bottom-track-first,
 // each at canvas-center + pos (project px), sized native*scale, anchored, opacity-tinted.
@@ -6339,6 +6617,8 @@ static void composite_frame(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0, 
                 if (c.type == "diagram") { draw_diagram_clip(dl, cx, cy, s, c, alpha, st.playhead, f0, fw, fh, fx.sclMul); continue; }
                 // plot: a native line/step/scatter chart (axes + labelled markers + reveal) — the receipts, transparent.
                 if (c.type == "plot") { draw_plot_clip(dl, cx, cy, s, c, alpha, st.playhead, f0, fw, fh, fx.sclMul); continue; }
+                // scene: a Lua-scripted, Clay-laid-out native graphic (the layout engine, docs/LAYOUT_ENGINE.md).
+                if (c.type == "scene") { draw_scene_clip(dl, cx, cy, s, c, alpha, st.playhead, f0, fw, fh); continue; }
                 // gradient/vignette: a full-frame wash to tame a busy bg or fade an edge.
                 if (c.type == "gradient") { draw_gradient_clip(dl, f0, fw, fh, c, alpha, st.playhead); continue; }
                 // filler: a heavily-blurred, cover-scaled backdrop that fills black/empty bg with the
@@ -8807,6 +9087,10 @@ static std::string add_native_clip_at(Project& p, const std::string& type, doubl
     else if (type == "plot")     { dur = 6.0; label = "plot"; params = json::object(); params["title"] = "chart";
                                    json _sr = json::object(); _sr["points"] = json::array({json::array({0,0}), json::array({1,1}), json::array({2,4}), json::array({3,9})});
                                    params["series"] = json::array({_sr}); }
+    else if (type == "scene")    { dur = 6.0; label = "scene";   // Lua-scripted layout-engine graphic
+                                   params = json::object();
+                                   params["script"] = "local t, d = ...\nreturn widgets.quote(t, { text = d.text, cite = d.cite })";
+                                   params["data"] = json{{"text","A real accelerometer. In a Game Boy cartridge."},{"cite","the little pink cart that could"}}; }
     else if (type == "blur")     { dur = 1.5; params = json{{"blur",30.0}}; label = "blur"; t = std::max(0.0, t - dur * 0.5); }  // center the bell on the playhead
     else if (type == "filter")   { dur = 5.0; params = json{{"filter","cinematic"}}; label = "filter"; }   // whole-frame cinematic grade over its span
     else if (type == "filler")   { dur = 5.0; params = json{{"source","auto"},{"blur",30.0},{"dim",0.55}}; label = "bg fill"; }
@@ -8849,7 +9133,7 @@ static std::string place_row_type(const std::string& kind) {
     return kind;   // caption/code/shape/diagram/gradient/blur/filler/anchor
 }
 static double place_default_dur(const std::string& kind) {
-    if (kind == "plot") return 6.0;
+    if (kind == "plot" || kind == "scene") return 6.0;
     if (kind == "diagram") return 5.0;
     if (kind == "code" || kind == "gradient" || kind == "backdrop" || kind == "filler") return 4.0;
     if (kind == "blur")   return 1.5;
