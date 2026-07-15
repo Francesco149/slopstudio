@@ -92,6 +92,33 @@ function anim.spring_step(value, vel, target, dt, stiffness, damping)
   vel = vel + force * dt
   return value + vel * dt, vel
 end
+-- Integrate a 2D velocity-spring FOLLOWING a piecewise-linear `path` of {t,x,y} keyframes up to time
+-- t (the balatro "dangle" — it lags behind and settles). Returns x, y, and the per-step delta dx,dy
+-- (a velocity proxy for lean/motion-blur). Deterministic; O(t·60) but early-outs once settled. The
+-- shared core behind widgets.drag / widgets.slidein / the code slide-in.
+function anim.spring_path(t, path, st, dm)
+  st = st or 90; dm = dm or 12
+  local function target(tt)
+    if tt <= path[1].t then return path[1].x, path[1].y end
+    for i = 2, #path do
+      if tt <= path[i].t then local a, b = path[i - 1], path[i]
+        local f = (tt - a.t) / math.max(1e-4, b.t - a.t); return a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f end
+    end
+    return path[#path].x, path[#path].y
+  end
+  if t <= 0 then local x, y = target(0); return x, y, 0, 0 end
+  local settle = (path.settle or 3.0)              -- assume at rest after this long → skip integration
+  if t > settle then local x, y = target(1e9); return x, y, 0, 0 end
+  local dt = 1 / 60
+  local px, py = target(0); local vx, vy = 0, 0; local ppx, ppy = px, py
+  for i = 1, math.floor(t / dt) do
+    ppx, ppy = px, py
+    local tx, ty = target(i * dt)
+    px, vx = anim.spring_step(px, vx, tx, dt, st, dm)
+    py, vy = anim.spring_step(py, vy, ty, dt, st, dm)
+  end
+  return px, py, (px - ppx), (py - ppy)
+end
 -- a decaying screen-shake offset (dx,dy px) for an impact jolt — deterministic (summed sines, no
 -- RNG): a burst at t=0 that dies out over `dur`. mag = peak px, freq = shakes/sec. Set it as the
 -- returned root node's `ox`/`oy` (the whole scene shifts): `local n=...; n.ox,n.oy=anim.shake(t)`.
@@ -324,6 +351,37 @@ function widgets.drag(t, d)
   local mb = (d.blur ~= false) and { (px - ppx) * W, (py - ppy) * H } or nil
   return center(image{ asset = d.image, pw = d.size or 0.28, aspect = true,
     tx = (px - 0.5) * W, ty = (py - 0.5) * H, rot = rot, glow = d.glow or 0, mb = mb })
+end
+
+-- SLIDE-IN — one or more objects each slide in from off-frame to a rest spot with the balatro
+-- velocity-spring dangle (lag + settle + lean into the motion, motion-blurred), each with an optional
+-- label (a year) that FOLLOWS it. The opening "cart vs wiimote" reveal. data:
+--   { items = { { image=uri, from={x,y}(0..1, off-frame ok), to={x,y}(0..1 rest), delay=sec, pw=0..1,
+--       label="2000", label_col={r,g,b}, label_dy=0..1(below), label_size, glow, stiffness, damping,
+--       lean }, ... } }   -- a SINGLE object: pass those fields at the top level (items defaults to {d}).
+function widgets.slidein(t, d)
+  d = d or {}
+  local W, H = (frame and frame.w) or 1920, (frame and frame.h) or 1080
+  local kids = {}
+  for _, it in ipairs(d.items or { d }) do
+    local lt = t - (it.delay or 0)
+    local frm, to = it.from or { -0.4, 0.5 }, it.to or { 0.5, 0.5 }
+    local path = { { t = 0, x = frm[1], y = frm[2] }, { t = 0.02, x = to[1], y = to[2] }, { t = 30, x = to[1], y = to[2] } }
+    local x, y, dx, dy = anim.spring_path(lt, path, it.stiffness or 80, it.damping or 11)
+    local rot = anim.clamp(dx * (it.lean or 26), -14, 14)
+    local mb = (it.blur ~= false) and { dx * W * 0.6, dy * H * 0.6 } or nil
+    -- floating elements need a CONCRETE size (Clay % doesn't resolve for floats) → px width from pw
+    kids[#kids + 1] = image{ asset = it.image, w = math.floor((it.pw or 0.3) * W), aspect = true, float = "c",
+      tx = (x - 0.5) * W, ty = (y - 0.5) * H, rot = rot, glow = it.glow or 0, mb = mb }
+    if it.label then
+      local le = anim.rise(lt - 0.15, 0.5)
+      local lw = math.floor(W * 0.3)
+      kids[#kids + 1] = box{ float = "tl", fx = x * W - lw * 0.5, fy = (y + (it.label_dy or 0.3)) * H,
+        w = lw, kids = { text(it.label, { size = it.label_size or 60, ta = "c",
+          col = theme.fade(it.label_col or theme.acc, le) }) } }
+    end
+  end
+  return box{ growx = true, growy = true, kids = kids }
 end
 
 -- CODE — a real vscode-style code card: monospace, SYNTAX-HIGHLIGHTED (the C `tokenize` binding →
