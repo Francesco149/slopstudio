@@ -58,10 +58,15 @@ regardless of the source's own brightness — a tinted dark card would just read
 **`widgets.reveal`** (inertial slide-in + straighten w/ overshoot + glow bloom) and **`widgets.cardflip`** (squash
 1→0→1, face swaps at edge-on), and **`widgets.drag`** (the balatro cursor-drag — a card dragged along a `path` of
 cursor keyframes, lagging behind with a velocity spring `anim.spring_step` + leaning into the horizontal velocity;
-pure Lua, no engine change). Proof: `examples/scene-anim.slop.json` (scene-check 4/4; two montages on the feed). This
-is the first of the **BIG ANIMATION WISHLIST** shared enablers (pan-zoom-out is already via `crop`). **NEXT enablers:** motion-blur (velocity
-ghosts) · screen-shake · light-rays · a per-node transform for CONTAINERS/TEXT (transform a whole Clay subtree,
-not just images). Then sequence the remaining moves (combine-then-rays · vscode code reveal · phone comment). **→ P3**
+pure Lua, no engine change). Proof: `examples/scene-anim.slop.json` (scene-check 5/5; montages on the feed).
+**Owner (2026-07-15): "easing + smoothness exactly right; glow looked banded + horizontally wider."** GLOW REWORKED
+→ a uniform-width feathered **gradient ring** (additive px margin, not a multiplicative scale → even on every side;
+per-vertex-alpha trapezoids via the ImDrawList prim API → smooth, no banding). **★ Then anim BATCH 2 (same session):**
+**motion-blur** (image `mb`={dx,dy}+`mb_n` → velocity ghost smear; folded into reveal/drag; reads best on fast/small
+motion) · **screen-shake** (root `ox`/`oy` + `anim.shake` decaying jolt; reveal fires it on landing) · **light-rays**
+(`shape="rays"` gradient sunburst + `widgets.rays` burst envelope → the **combine-then-rays** dramatic reveal).
+**NEXT enabler:** a per-node transform for CONTAINERS/TEXT (transform a whole Clay subtree, not just images) — unblocks
+vscode-code-reveal · phone-typing-comment · perspective card-flip. **→ P3**
 (diagram/chart parity; crisp large text — ImGui 1.91.4 bakes 48px so big text is soft, size-ladder/1.92 fix).
 Self-contained clip → PNG fallback always. **KIRBY:** the quote-clip reuse (tilt-sensor/MBC7 → `style:"quote"`)
 is engine-independent, do anytime; the diagram/card-PNG→transparent-scene swaps come after the remaining P2 widgets.

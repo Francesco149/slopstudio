@@ -152,8 +152,10 @@ Clay element per node, and after `Clay.EndLayout()` translates the render comman
 |---|---|---|
 | `row` / `col` / `box` | `gap pad align justify w h grow wrap bg radius border clip children` | Clay container (+ optional rect/border) |
 | `text` | `s` (string, req) `font size color wrap align weight` | Clay text (measured via ImGui) |
-| `image` | `asset`/`uri` (req) `fit`(cover/contain) `crop`(x,y,w,h 0..1) `tint opacity radius`; **per-node transform** `tx ty`(px) `sc`\|`scx scy` `rot`(deg); **glow** `glow`(0..1) `glow_col` | Clay image → `AddImageQuad` at its rect (transformed about center; glow = solid-color halo behind) |
-| `shape` | `kind`(box/line/arrow/ellipse/bracket) `color thickness fill from to` | Clay **custom** element → `draw_shape` at its rect |
+| `image` | `asset`/`uri` (req) `fit`(cover/contain) `crop`(x,y,w,h 0..1) `tint opacity radius`; **per-node transform** `tx ty`(px) `sc`\|`scx scy` `rot`(deg); **glow** `glow`(0..1) `glow_col`; **motion-blur** `mb`={dx,dy}(per-frame px) `mb_n` | Clay image → `AddImageQuad` at its rect (transformed about center; glow = gradient-ring halo; mb = trailing ghost smear) |
+| `shape` | `kind`(box/line/arrow/ellipse/bracket/**rays**) `color thickness fill from to`; rays: `count phase`(rad) `duty` | Clay **custom** element → `draw_shape` at its rect |
+
+The returned **root** node may also carry `ox`/`oy` (project px) — a scene-level offset for **screen-shake** (drive it from `anim.shake(t,…)`).
 | `rule` / `spacer` | `size color` | thin rect / empty gap |
 
 - **Sizing:** `w`/`h` in project px, or `grow` (flex-grow), or omitted (fit content). Clay
@@ -218,6 +220,9 @@ Built as stdlib Lua on top of the kernel. Each is transparent, reflowable, and d
 - **`drag`** — the Balatro cursor-drag: a card dragged along a `path` of cursor keyframes, lagging
   behind with a velocity spring (`anim.spring_step`) and leaning into the horizontal velocity.
   `data = { image, path:[{t,x,y}], stiffness, damping, lean, size, glow }`.
+- **`rays`** — an anime sunburst / impact lines radiating from `at`, fading to the tips, optionally
+  rotating (`spin`) and bursting (`burst`). Put the subject image after it (a higher-z float) to sit
+  on top → the "combine-then-rays" dramatic reveal. `data = { at, count, color, spin, burst, duty }`.
 - **`document`** — **the interview case.** `data = { image, source, excerpts:[{rect,hold,
   translation,note}] }`. Sequences pan/zoom (eased Ken-Burns between excerpt rects so the active
   excerpt fills ~60% of frame), drops each `translation` in a card on whichever side has room
@@ -302,10 +307,12 @@ Built as stdlib Lua on top of the kernel. Each is transparent, reflowable, and d
   Widgets on it: `reveal` (inertial slide + straighten + bloom), `cardflip` (squash + face swap), and
   `drag` (the balatro cursor-drag — velocity spring lag + lean). Proof: `examples/scene-anim.slop.json`
   (feed). Pan-zoom-out is already available via `crop`.
-- **NEXT enablers:** motion-blur (velocity ghosts), screen-shake, light-rays (radial streaks), a
-  per-node transform for *containers/text* (transform the whole Clay subtree, not just images).
-- **Then the moves:** combine-then-white-rays · vscode code reveal (line highlight/blur) · phone
-  typing comment · card flip w/ perspective. Sequence from the enablers above.
+- ✓ **Motion-blur, screen-shake, light-rays (DONE 2026-07-15, batch 2).** Image `mb`={dx,dy}+`mb_n`
+  (velocity ghost smear; reads best on fast/small motion) · root `ox`/`oy` + `anim.shake` (a decaying
+  jolt) · `shape="rays"` sunburst (gradient wedges) + `widgets.rays` (burst envelope) → the
+  "combine-then-rays" reveal. Motion-blur folded into `reveal`/`drag`; shake fires on the reveal landing.
+- **NEXT enabler:** a per-node transform for *containers/text* (transform the whole Clay subtree, not
+  just images) — unblocks the vscode-code-reveal, phone-typing-comment, and perspective card-flip moves.
 
 **P3 — parity + migration + polish.**
 - `widgets.diagram`/`widgets.chart` at parity → retire the C++ `diagram`/`plot` draw paths (or
