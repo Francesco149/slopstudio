@@ -3,7 +3,7 @@
 Phased so each phase lands a robust, usable slice on a solid core — not an MVP we throw
 away. Acceptance criteria are concrete and demoable. Mirrors the session task list.
 
-## Phase 0 — Foundation ✅ (in progress)
+## Phase 0 — Foundation ✅
 Repo scaffold, MIT license, Nix flake (validated: mingw-w64 + ImGui + glslang + ffmpeg +
 python provider env all resolve), and the durable design: `ARCHITECTURE.md`,
 `RESEARCH.md`, this file, plus the two contracts `PROJECT_FORMAT.md` and

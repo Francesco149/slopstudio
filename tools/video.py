@@ -12,6 +12,8 @@ the dev shell:  nix develop --command python tools/video.py <cmd>
   video.py build <name>              (re)compile the skeleton → .slop.json
   video.py voice <name>              generate VO + visemes + retime            (needs lame)
   video.py lint  <name>              gaps / repeats / stale VO / missing assets / overlaps
+  video.py scene-check <name>        validate every Lua scene animation headlessly
+  video.py animations                list reusable scene widgets and authoring syntax
   video.py look  <name> [--n 6]      render frames across the cut → montage → llm-feed
   video.py export <name> [--final]   render to mp4 (--final = 1080p60)
   video.py show  <name>              compact timeline (slop.py overview)
@@ -183,7 +185,19 @@ def cmd_voice(a):
 
 
 def cmd_lint(a):
-    slop("lint", rel(find_one(a.name, ".slop.json")))
+    cut=rel(find_one(a.name, ".slop.json"))
+    r1=slop("lint", cut)
+    r2=slop("critique", cut)
+    if r1.returncode or r2.returncode: sys.exit(1)
+
+
+def cmd_scene_check(a):
+    slop("scene-check", rel(find_one(a.name, ".slop.json")), check=True)
+
+
+def cmd_animations(a):
+    slop("scene-widgets")
+    print(dim("\nRecipes and data fields: docs/SCENE_COOKBOOK.md"))
 
 
 def cmd_show(a):
@@ -321,6 +335,8 @@ def main():
     s = sub.add_parser("build"); s.add_argument("name")
     s = sub.add_parser("voice"); s.add_argument("name"); s.add_argument("--force", action="store_true")
     s = sub.add_parser("lint"); s.add_argument("name")
+    s = sub.add_parser("scene-check"); s.add_argument("name")
+    sub.add_parser("animations")
     s = sub.add_parser("look"); s.add_argument("name"); s.add_argument("--n", type=int, default=6)
     s = sub.add_parser("export"); s.add_argument("name"); s.add_argument("--final", action="store_true")
     s = sub.add_parser("transcript"); s.add_argument("name"); s.add_argument("--srt", action="store_true", help="copy SRT (timed) instead of plain text")
@@ -329,7 +345,8 @@ def main():
     s.add_argument("--no-open", action="store_true", help="don't auto-open the browser")
     a = ap.parse_args()
     {"doctor": cmd_doctor, "wake": cmd_wake, "new": cmd_new, "status": cmd_status, "build": cmd_build,
-     "voice": cmd_voice, "lint": cmd_lint, "look": cmd_look, "export": cmd_export, "transcript": cmd_transcript,
+     "voice": cmd_voice, "lint": cmd_lint, "scene-check": cmd_scene_check, "animations": cmd_animations,
+     "look": cmd_look, "export": cmd_export, "transcript": cmd_transcript,
      "show": cmd_show, "dashboard": cmd_dashboard}[a.cmd](a)
 
 

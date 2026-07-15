@@ -135,6 +135,8 @@ the licensing rationale.
 |---|---|
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | how it all fits together |
 | [`docs/LLM_WORKFLOW.md`](docs/LLM_WORKFLOW.md) | compose a video as an agent |
+| [`docs/VIDEO_RUNBOOK.md`](docs/VIDEO_RUNBOOK.md) | compose and finish a video by hand |
+| [`docs/SCENE_COOKBOOK.md`](docs/SCENE_COOKBOOK.md) | reusable animated scenes for humans and agents |
 | [`docs/PROJECT_FORMAT.md`](docs/PROJECT_FORMAT.md) | the `*.slop.json` schema |
 | [`docs/PROVIDER_PROTOCOL.md`](docs/PROVIDER_PROTOCOL.md) | how the editor talks to models |
 | [`docs/RESEARCH.md`](docs/RESEARCH.md) | model survey + licensing rationale |

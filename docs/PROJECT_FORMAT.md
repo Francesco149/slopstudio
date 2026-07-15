@@ -54,7 +54,7 @@ by `start`.
 **Project-global settings** (all optional; edited in the editor's docked **Project** tab,
 persisted here). **`format`** picks the default bundle — `"1080p"` (the default; the locked
 full-length-video conventions: built-in SFX off, speech 1.0x) or `"portrait"` (shorts:
-1080x1920 canvas when no explicit `resolution`, built-in SFX on, speech ~1.3x, faster
+1080x1920 canvas when no explicit `resolution`, built-in SFX on, speech 1.0x, faster
 pacing in `slop.py skeleton`). Explicit keys always win over the format's defaults:
 - **`sfx`** (bool) — the BUILT-IN transition one-shots (`library/sfx/`, regenerate with
   `tools/gen-sfx.py`): `pop.wav` (a low mouth-pop) on the default pop entrance (incl.
@@ -154,8 +154,9 @@ Video tracks composite top-of-list over bottom-of-list; audio tracks mix.
 }
 ```
 `type` selects the pipeline; `params` are row-level defaults (e.g. the voice preset).
-Pipeline types: `tts · avatar · image · video · music · caption · effect · capture ·
-group`. New types/params are discovered from provider `/capabilities` — the editor builds
+Pipeline types: `tts · avatar · image · video · music · caption · code · shape · diagram ·
+plot · scene · blur · filter · filler · anchor · effect · capture · group`. New
+generation-provider types/params are discovered from provider `/capabilities` — the editor builds
 the param UI from the schema, so adding a model needs no editor change.
 
 ## §clips — time-ranged units
@@ -217,12 +218,25 @@ the param UI from the schema, so adding a model needs no editor change.
   - The **left** keyframe's `interp` drives each segment. A trailing `spring` keeps settling
     past its target (overshoot → rest); `v` is a scalar or a vec2 matching the param.
 
-## §native compositing clips (code · caption · shape · diagram)
+## §native compositing clips (code · caption · shape · diagram · plot · scene)
 
-Three clip types render **live in the compositor** (no provider, no generation) — instant,
-keyframe-animatable overlays built for technical videos (`docs/video/001-luckymaster.md`).
+These clip types render **live in the compositor** (no provider, no generation) — instant,
+keyframe-animatable overlays built for technical videos.
 The row `type` selects the renderer; the params live on the clip. Place/scale with the
 `transform`; animate any numeric param via `keyframes`.
+
+**`scene`** — a transparent reflowable motion-graphics tree. `params.script` is Lua that
+receives `(t, data, frame)` and returns a node tree; `params.data` is JSON content. Prefer
+the reusable widgets in `presets/lua/std.lua` so content remains editable without touching
+Lua. `slop.py scene-widgets` lists the live catalogue, `slop.py scene-check` validates every
+scene headlessly, and `docs/SCENE_COOKBOOK.md` contains copyable recipes.
+
+```json
+"params": {
+  "script": "local t,d=...\nreturn widgets.stat(t,d)",
+  "data": {"from":160,"to":400,"unit":"%","label":"defender strength"}
+}
+```
 
 **`code`** — a syntax-highlighted source/decompilation card. Self-sizes to its content.
 ```json

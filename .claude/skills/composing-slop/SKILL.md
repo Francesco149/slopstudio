@@ -16,7 +16,7 @@ session**). The reference cut + all conventions are in `docs/LLM_WORKFLOW.md`; f
 2. **Beats** — write `<name>.skeleton.json` (`{line, emotion, visual}` beats). Visuals HOLD until changed.
 3. **Compile** — `slop.py skeleton <skel> --out <proj>` → a full project. DEFAULTS the compiler now applies
    (owner-tuned, override per-beat): a whole-video **noir "basic look"** — the filter clip is the TOPMOST track
-   so it grades EVERYTHING, at strength 0.25 · **vignette 0.5** (`look:false` to drop it); **insets sit on the
+   so it grades EVERYTHING, at strength 0.25; the project-wide radial **vignette is 0.10** (`look:false` drops the grade); **insets sit on the
    bare checker** (`blur_fill:true` opts a nice photo into the blurred backdrop); a **fullscreen video beat
    solos** (no host over wide footage); **fullscreen SCREENSHOTS become framed insets on the checker,
    alternating** hosted-beside ↔ centered-solo card (`cover:true`/`host:true` opt out) — a HOSTED inset
@@ -66,8 +66,8 @@ session**). The reference cut + all conventions are in `docs/LLM_WORKFLOW.md`; f
 ## Editing existing cuts
 Use the CLI verbs (`overview` to read the timeline; `add`/`insert`/`ripple`/`rebase`/`retime`/`bed`/
 `transcript`/`anchor`), NOT hand-written JSON — extend the CLI rather than one-off scripts. `overview` is the
-LLM-facing timeline view today (a compact `digest` is planned). After any take swap, **run `retime`** (it's
-the canonical follow-up — durs must be ÷speech_rate for 1.3× shorts, or you leave a dead gap).
+LLM-facing timeline view today (a compact `digest` is planned). After any take swap, **run `retime`**
+(it is the canonical follow-up; durations remain rate-aware when a project or clip explicitly speeds a take up).
 **Moving captions over a time range** = a caption-anchor clip (`slop.py anchor <proj> --beat b04 --pos 0,442`),
 NEVER per-chunk pos nudges — `transcript` regen wipes chunk transforms but anchors survive (their own row).
 

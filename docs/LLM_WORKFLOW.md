@@ -97,9 +97,11 @@ so the project-relative `assets/…` uris keep resolving. Same skeleton→genvo�
 with the portrait profile on top:
 
 - **Skeleton header:** `"format": "portrait"` → 1080x1920 canvas, built-in transition
-  SFX ON (`meta.sfx`), speech ~**1.3x** (`meta.speech_rate` — the editor/export/retime
+  SFX ON (`meta.sfx`), speech **1.0x by default** (`meta.speech_rate` — the editor/export/retime
   all inherit it; per-clip `params.rate` overrides), tighter beat gaps + shorter act
-  cards, geometry squeeze-mapped to the tall frame. Override with `"speech_rate": N`.
+  cards, geometry squeeze-mapped to the tall frame. Target about 180 measured WPM
+  (roughly 175–190). A Short derived from a long-form cut uses the same speech rate as
+  that cut; portrait mode never adds a second speed-up.
 - **Reuse the video's material:** `slop.py adopt --src $P/<video>.slop.json` pulls the
   tuned VO takes + viseme tracks by text match — keep lines VERBATIM where you can
   (free reuse), REWRITE terser where the long-form pacing drags (genvo fills those).

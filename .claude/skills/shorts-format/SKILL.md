@@ -1,6 +1,6 @@
 ---
 name: shorts-format
-description: The portrait/Shorts conventions for slopstudio (1080×1920, 1.3× speech, bottom-band host, cover backdrops, animated transcript, reverse structure, loop). Use when cutting a YouTube Short — a portrait project or a short clipped from a long-form cut.
+description: The portrait/Shorts conventions for slopstudio (1080×1920, natural-rate speech, bottom-band host, cover backdrops, animated transcript, reverse structure, loop). Use when cutting a YouTube Short — a portrait project or a short clipped from a long-form cut.
 ---
 
 # Shorts format (portrait)
@@ -10,8 +10,11 @@ via `slop.py skeleton` with `"format":"portrait"`. Shorts recipe + the landscape
 `docs/LLM_WORKFLOW.md`. Retention rules: the `retention-editing` skill (shorts section).
 
 ## Render defaults (portrait)
-- **1080×1920, speech ~1.3×** (`meta.speech_rate`; mixer/export/retime/lint are all rate-aware — a clip's
+- **1080×1920, speech 1.0× by default** (`meta.speech_rate`; mixer/export/retime/lint are all rate-aware — a clip's
   played dur = raw ÷ rate). Gap 0.35→0.2. Short act cards.
+- Target about 180 measured WPM (roughly 175–190). Urgency comes from reverse structure,
+  captions, and visual cadence. Match the source long-form cut's rate; portrait mode must
+  not apply an additional multiplier.
 - **Host = bottom-band presenter** (or solo-BIG room-shot when nothing else is on screen: sized to the middle
   band, horns below the top status strip, body above the bottom controls strip). Content = TOP band; the
   **animated transcript** rides just under it (room scenes) or center (code beats, y=0).

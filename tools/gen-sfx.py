@@ -25,6 +25,11 @@ full-length videos get them too; the editor ducks the music around them):
   boom.wav    — "Vine Boom (Slowed)": ~45 Hz sub thump, instant attack, soft-
                 clipped harmonics, ~2.4 s reverb-ish tail. For ominous outros.
 
+Restrained long-form motion cues (authored explicitly, normally -12 to -18 dB):
+  soft-swish.wav  — airy low movement for a card/document entrance.
+  soft-settle.wav — warm, short landing tone for a comparison/reveal settling.
+  soft-tick.wav   — muted UI tick for a stat change or small annotation.
+
 Ships in the stock pack (tools/pack-stock-assets.py); *.wav stays gitignored.
 """
 import math, os, random, struct, wave
@@ -172,6 +177,39 @@ def gen_whoosh_sharp(dur=0.42):
     return out
 
 
+def gen_soft_swish(dur=0.62):
+    """Long-form movement: broad low-passed air with no bright whistle or impact."""
+    n=int(dur*SR); out=[]; lp=0.0; lp2=0.0
+    for i in range(n):
+        u=i/max(1,n-1); env=math.sin(math.pi*u)**1.7
+        x=rng.random()*2-1
+        lp += 0.055*(x-lp); lp2 += 0.018*(lp-lp2)
+        out.append((lp*0.55+lp2*1.3)*env)
+    return out
+
+
+def gen_soft_settle(dur=0.34):
+    """Long-form landing: a quiet rounded 260→180 Hz body plus a tiny upper chime."""
+    n=int(dur*SR); out=[]; p1=p2=0.0
+    for i in range(n):
+        t=i/SR; u=t/dur
+        p1 += 2*math.pi*(180+80*math.exp(-t*18))/SR
+        p2 += 2*math.pi*620/SR
+        a=(1-math.exp(-t/0.008))*math.exp(-t*11)
+        out.append((math.sin(p1)*0.8+math.sin(p2)*0.12)*a)
+    return out
+
+
+def gen_soft_tick(dur=0.085):
+    """Muted interface tick: short wooden 520 Hz knock, intentionally non-clicky."""
+    n=int(dur*SR); out=[]; phase=0.0
+    for i in range(n):
+        t=i/SR; phase += 2*math.pi*(520-130*t/dur)/SR
+        a=(1-math.exp(-t/0.0025))*math.exp(-t*58)
+        out.append(math.sin(phase)*a)
+    return out
+
+
 def gen_awkward(dur=2.2):
     """'Awkward Moment': a muffled cough-thud up front, then an awkward-silence
     bed — faint 750 Hz room tone + cricket chirp bursts (~4.4 kHz carrier gated
@@ -240,6 +278,9 @@ def main():
     write_wav("pop-blip.wav", gen_pop_blip(), peak=0.6)    # minecraft-style alt
     write_wav("whoosh.wav", gen_whoosh(), peak=0.7)        # soft low swing (default)
     write_wav("whoosh-sharp.wav", gen_whoosh_sharp())      # the sharper arc swish (alt)
+    write_wav("soft-swish.wav", gen_soft_swish(), peak=0.46)
+    write_wav("soft-settle.wav", gen_soft_settle(), peak=0.46)
+    write_wav("soft-tick.wav", gen_soft_tick(), peak=0.42)
     write_wav("awkward.wav", gen_awkward(), peak=0.6)
     write_wav("boom.wav", gen_boom(), peak=0.95)
     print("done.")

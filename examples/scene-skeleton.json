@@ -1,0 +1,33 @@
+{
+  "title": "Scene widget skeleton smoke test",
+  "look": false,
+  "beats": [
+    {
+      "line": "The counter is the argument.",
+      "solo": true,
+      "visual": {
+        "scene": {
+          "widget": "stat",
+          "data": {
+            "value": 49900,
+            "label": "crowns handed to the AI",
+            "prefix": "+"
+          }
+        }
+      }
+    },
+    {
+      "line": "And the source is allowed to move while you read it.",
+      "solo": true,
+      "visual": {
+        "scene": {
+          "widget": "quote",
+          "data": {
+            "text": "The rules change with the difficulty.",
+            "cite": "capture notes"
+          }
+        }
+      }
+    }
+  ]
+}

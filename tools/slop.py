@@ -327,6 +327,10 @@ def cmd_overview(p, args):
 #       {"line": "...", "visual": {"plot": {"series":[{"points":[[x,y],...],"kind":"line"}],  // NATIVE chart (no baked PNG):
 #            "x":{"label":"tilt","ticks":[-90,0,90],"fmt":"int"}, "y":{"fmt":"hex","label":"register"}, // line|step|scatter|bar,
 #            "markers":[{"x":0,"y":33648,"label":"flat = 0x8370"}], "reveal":1}}},   // markers/regions annotate; reveal draws it in
+#       {"line": "...", "visual": {"scene":{"widget":"stat","data":{"value":49900,
+#            "label":"crowns handed to the AI"}}}},                    // animated Lua widget from presets/lua/std.lua
+#       {"line": "...", "visual": {"scene":{"script":"local t,d=...\\nreturn ...",
+#            "data":{...}}}},                                          // custom scene; prefer a widget when one fits
 #       {"line": "...", "solo": true, "visual": {...}},                  // no host this beat (readable full-width shots)
 #       {"section": "Act 2"},                                            // blur-swap scene cut
 #       {"pause": 0.8} ] }
@@ -428,7 +432,7 @@ def cmd_skeleton(a):
     portrait = sk.get("format")=="portrait"
     res = sk.get("resolution") or ([1080,1920] if portrait else [1920,1080])
     portrait = portrait or res[1] > res[0]
-    rate = float(sk.get("speech_rate", 1.3 if portrait else 1.0))
+    rate = float(sk.get("speech_rate", 1.0))
     gap = 0.2 if portrait else GAP
     sx, sy = res[0]/1920.0, res[1]/1080.0    # landscape-authored geometry → this canvas
     def _n(v):
@@ -450,7 +454,7 @@ def cmd_skeleton(a):
     # (the host draws OVER side-showcase images AND code/diagram cards — she overlaps content,
     # content never covers her; only captions/plates and the gag arrow sit above her)
     # r_overlay sits ABOVE the host (a bottom reaction meme draws over her lower body, face still shows)
-    for rid in ("r_filter","r_cap","r_gag","r_shape","r_overlay","r_av","r_code","r_diagram","r_plot","r_img","r_video","r_blur","r_bg","r_fill","r_vo"):
+    for rid in ("r_filter","r_cap","r_gag","r_shape","r_overlay","r_av","r_scene","r_code","r_diagram","r_plot","r_img","r_video","r_blur","r_bg","r_fill","r_vo"):
         if rid=="r_filter":   # whole-frame cinematic grade over everything (the default channel 'basic look')
             p["rows"][rid]=OD([("type","filter"),("name","Filter"),("params",OD()),("clips",[])])
             p["tracks"].append(OD([("id","tk_filter"),("name","Filter"),("kind","video"),("rows",[rid])]))
@@ -556,6 +560,8 @@ def cmd_skeleton(a):
             if b.get("sound"):
                 p["clips"][cv]["params"]["sfx_cue"]=b["sound"]
                 if "sound_at" in b: p["clips"][cv]["params"]["sfx_at"]=float(b["sound_at"])
+                if "sound_gain_db" in b: p["clips"][cv]["params"]["sfx_gain_db"]=float(b["sound_gain_db"])
+                if "sound_duck" in b: p["clips"][cv]["params"]["sfx_duck"]=bool(b["sound_duck"])
             _vis=b.get("visual")   # a quote CARD owns the frame (a centred receipt) → no full host over it (auto-solo)
             _quote_solo=isinstance(_vis,dict) and _vis.get("style")=="quote"
             # FULLSCREEN VIDEO owns the frame too: wide footage would be tiny if scaled to sit beside the host,
@@ -564,7 +570,7 @@ def cmd_skeleton(a):
             _fs_video=isinstance(_vis,dict) and "video" in _vis and _vis.get("layout")=="fullscreen"
             # CODE beats go SOLO + centred (owner: "code segments look cleaner centered on the checkerboard,
             # no host") — the card owns the frame; `host:true` forces her back.
-            _is_code=isinstance(_vis,dict) and "code" in _vis
+            _is_code=isinstance(_vis,dict) and ("code" in _vis or "scene" in _vis)
             # A fullscreen SCREENSHOT reads better as a framed INSET on the checker than bleeding
             # edge-to-edge with the host cornered over it (owner). Alternate for variety: even → host
             # presenting BESIDE the card (layout "inset"); odd → a clean CENTERED solo card
@@ -680,6 +686,20 @@ def cmd_skeleton(a):
                 cid=new_clip(p,"plot","r_plot",at,vdur,OD(v["plot"]),f"{pref}{sfx}_plot")
                 _set_xform(p["clips"][cid],S(0,-40))    # centered; auto-fits width; a host beside it goes small
                 fill=False   # NO filler — the chart card sits on the BARE bright grid (like code cards)
+            elif "scene" in v:
+                spec=v["scene"]
+                if isinstance(spec,str): spec=OD([("widget",spec)])
+                if not isinstance(spec,dict):
+                    raise ValueError(f"{pref}: visual.scene must be a widget name or object")
+                widget=spec.get("widget")
+                script=spec.get("script")
+                if not script and widget:
+                    script=f"local t, d = ...\nreturn widgets.{widget}(t, d)"
+                if not script:
+                    raise ValueError(f"{pref}: visual.scene needs `widget` or `script`")
+                prm=OD([("script",script), ("data",spec.get("data",OD()))])
+                cid=new_clip(p,"scene","r_scene",at,vdur,prm,f"{pref}{sfx}_scene")
+                fill=False   # scenes are transparent/reflowable and intentionally sit on the checker
             if cid and zoom!=1.0:
                 tf=p["clips"][cid]["transform"]; tf["scale"]=[tf["scale"][0]*zoom, tf["scale"][1]*zoom]
             # place:"bottom" = a bottom reaction OVERLAY (a meme) — over the host, ~width_frac wide,
@@ -740,7 +760,7 @@ def cmd_skeleton(a):
                         if fill and not cap_only and not scene:      # a scene beat's backdrop IS the room
                             open_fill=new_clip(p,"filler","r_fill",at,vdur,OD(),f"{pref}{sfx}_fill")
                     at=round(at+vdur,3)
-                held_kind = "card" if any(k in v for v in seq for k in ("code","diagram","plot","stack")) else "media"
+                held_kind = "card" if any(k in v for v in seq for k in ("code","diagram","plot","stack","scene")) else "media"
                 # code sections get the strict-teacher pose on the beat that reveals the card
                 if line and not b.get("solo") and any("code" in v for v in seq) and f"{pref}_av" in p["clips"]:
                     p["clips"][f"{pref}_av"]["params"]["emotion"]="teaching"
@@ -836,8 +856,10 @@ def cmd_skeleton(a):
         # otherwise crushes the checker to near-black. The filter's 0.3s edge-ease fades the grade out as the
         # card comes in and back after. Holes come from the placed r_code clips (est time; the holes + these
         # segments warp TOGETHER through retime, staying aligned). No code → one full-length clip as before.
+        graphic_ids=(p["rows"].get("r_code",{}).get("clips",[])
+                     + p["rows"].get("r_scene",{}).get("clips",[]))
         holes=sorted((p["clips"][cid]["start"], p["clips"][cid]["start"]+p["clips"][cid]["dur"])
-                     for cid in p["rows"].get("r_code",{}).get("clips",[]))
+                     for cid in graphic_ids)
         segs=[]; cur=0.0
         for h0,h1 in holes:
             if h0>cur+0.35: segs.append((cur,min(h0,tot)))
@@ -1002,6 +1024,81 @@ def cmd_lint(p, a):
     for w in warn: print("WARN ",w)
     for i in info: print("info ",i)
     print(f"lint: {len(warn)} warnings, {len(info)} notes  ({len(p['clips'])} clips, {tot:.1f}s)")
+    return 1 if warn else 0
+
+def _words(s):
+    return re.findall(r"[A-Za-z0-9]+(?:['’][A-Za-z]+)?", s or "")
+
+def cmd_scriptlint(a):
+    """Cheap pre-VO checks over a skeleton. These deliberately report beat-local facts;
+    semantic taste stays in the script-doctor review, but common pacing/filler failures
+    should not survive until a ten-minute voice generation."""
+    sk=load(a.skeleton); beats=sk.get("beats",[]); warn=[]; info=[]
+    fillers=("basically","actually","just","really","very","literally")
+    last_visual=None; held_spoken=0; spoken=[]
+    for i,b in enumerate(beats,1):
+        if not isinstance(b,dict) or not b.get("line"): continue
+        line=b["line"]; spoken.append(line); ws=_words(line); low=" "+line.lower()+" "
+        hits=[x for x in fillers if re.search(rf"\b{re.escape(x)}\b",low)]
+        if hits: info.append(f"beat {i}: review possible filler {', '.join(hits)} — {line[:72]}")
+        if re.search(r"\band then\b",line,re.I): warn.append(f"beat {i}: inert 'and then' connector (use consequence/reversal or cut)")
+        if len(ws)>38: warn.append(f"beat {i}: {len(ws)} words in one TTS line (split to one idea/take)")
+        if b.get("visual") is not None:
+            last_visual=i; held_spoken=0
+        else:
+            held_spoken+=1
+            if held_spoken==5: warn.append(f"beat {i}: same visual held across >4 spoken beats (last change beat {last_visual or 'none'})")
+    if spoken:
+        first=_words(spoken[0])
+        info.append(f"opening line: {len(first)} words; first 30s total {sum(len(_words(x)) for x in spoken[:6])} words (first 6 lines proxy)")
+    rate=float(sk.get("speech_rate",1.0))
+    est=sum(est_dur(x,rate) for x in spoken); nw=sum(len(_words(x)) for x in spoken)
+    if est: info.append(f"estimated narration: {nw/(est/60):.1f} WPM at speech_rate {rate:.2f}x (house center ~180; verify from generated audio)")
+    for w in warn: print("WARN ",w)
+    for x in info: print("info ",x)
+    print(f"scriptlint: {len(warn)} warnings  ({len(spoken)} spoken beats)")
+    return 1 if warn else 0
+
+def cmd_critique(p,a):
+    """Deterministic retention/composition signals over the compiled timeline."""
+    warn=[]; info=[]
+    vos=[]
+    for cid,c in p.get("clips",{}).items():
+        if p["rows"].get(c.get("row",""),{}).get("type")=="tts" and c.get("params",{}).get("text"):
+            vos.append((c["start"],cid,c))
+    vos.sort(); nw=sum(len(_words(c[2].get("params",{}).get("text",""))) for c in vos)
+    speech=sum(c[2].get("dur",0) for c in vos)
+    if speech:
+        wpm=nw/(speech/60); info.append(f"narration {wpm:.1f} WPM across {len(vos)} voiced lines")
+        target=(175,190) if p.get("meta",{}).get("format")=="portrait" else (175,195)
+        if not target[0] <= wpm <= target[1]: warn.append(f"PACE {wpm:.1f} WPM outside {target[0]}–{target[1]}")
+    # Count spoken beats between changes to a primary content visual. Background, avatar,
+    # filter and captions do not reset the counter; a new receipt/card/clip does.
+    changes=[]
+    for cid,c in p.get("clips",{}).items():
+        rt=p["rows"].get(c.get("row",""),{}).get("type")
+        if rt in ("image","video","code","diagram","plot","scene") and c.get("row") not in ("r_bg","r_fill"):
+            changes.append((c["start"],cid))
+    changes.sort()
+    prev=0.0
+    for at,cid in changes:
+        n=sum(1 for s,_,_ in vos if prev-1e-3 <= s < at-1e-3)
+        if n>4: warn.append(f"HOLD {prev:.2f}-{at:.2f}: {n} spoken beats before visual change {cid}")
+        prev=at
+    # A self-labeling scene plus a plate commonly duplicates hierarchy and collides (the
+    # first lotr2 animated smoke caught this). Flag the combination for an explicit review.
+    scenes=[(cid,c) for cid,c in p.get("clips",{}).items() if p["rows"].get(c.get("row",""),{}).get("type")=="scene"]
+    caps=[(cid,c) for cid,c in p.get("clips",{}).items() if p["rows"].get(c.get("row",""),{}).get("type")=="caption"]
+    self_labeling=("stat","quote","comparison","split","lineage","timeline","chart","dcm","octant","table","youtube_comment")
+    for sid,sc in scenes:
+        script=sc.get("params",{}).get("script","")
+        if not any(f"widgets.{name}" in script for name in self_labeling): continue
+        for cid,cc in caps:
+            if min(sc["start"]+sc["dur"],cc["start"]+cc["dur"])-max(sc["start"],cc["start"])>0.5:
+                warn.append(f"DOUBLE-LABEL {sid} + {cid}: scene and caption overlap; keep one hierarchy unless intentionally complementary")
+    for w in warn: print("WARN ",w)
+    for x in info: print("info ",x)
+    print(f"critique: {len(warn)} warnings  ({len(vos)} voiced lines, {len(changes)} content changes)")
     return 1 if warn else 0
 
 # ── transcript: automated animated on-screen transcript (the shorts convention) ──
@@ -1728,6 +1825,21 @@ def cmd_scene_check(a):
     print(f"scene-check: {len(clips)-bad}/{len(clips)} ok")
     return 1 if bad else 0
 
+def cmd_scene_widgets(a):
+    """List the reusable scene widgets shipped in std.lua. This is intentionally read from
+    the source of truth so the CLI catalogue cannot drift when a widget is added."""
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    std = os.path.join(repo, "presets", "lua", "std.lua")
+    src = open(std, encoding="utf-8").read()
+    names = re.findall(r"^function\s+widgets\.([A-Za-z_][A-Za-z0-9_]*)\s*\(", src, re.M)
+    if a.json:
+        print(json.dumps(names, indent=2))
+    else:
+        print("scene widgets (presets/lua/std.lua):")
+        for name in names: print(f"  {name}")
+        print("\nSkeleton: {\"visual\":{\"scene\":{\"widget\":\"NAME\",\"data\":{...}}}}")
+        print("CLI:      slop.py scene PROJECT --widget NAME --data '{...}' --at T --dur D")
+
 def main():
     ap=argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub=ap.add_subparsers(dest="cmd", required=True)
@@ -1777,6 +1889,9 @@ def main():
     s=sub.add_parser("skeleton", help="compile a beat-list skeleton into a full project")
     s.add_argument("skeleton"); s.add_argument("--out", required=True)
     s=sub.add_parser("lint", help="catch gaps / repeats / stale VO / missing assets / overlaps"); common(s)
+    s=sub.add_parser("scriptlint", help="pre-VO skeleton checks: filler, line length, visual holds, estimated WPM")
+    s.add_argument("skeleton")
+    s=sub.add_parser("critique", help="compiled-cut retention/composition checks: WPM, visual holds, double labels"); common(s)
     s=sub.add_parser("adopt", help="reuse generated VO/viseme assets from another project by text match"); common(s)
     s.add_argument("--src", required=True, help="project to adopt generated assets from")
     s=sub.add_parser("retime", help="snap the timeline to real generated VO durations (time-warp)"); common(s)
@@ -1804,7 +1919,7 @@ def main():
     s=sub.add_parser("scene", help="author/edit a `scene` layout-engine clip (a Lua scene(t,data) script + JSON data)"); common(s)
     s.add_argument("--script", default=None, help="the Lua script inline (else --script-file / --widget)")
     s.add_argument("--script-file", dest="script_file", default=None, help="read the Lua script from a file")
-    s.add_argument("--widget", default=None, help="shorthand: write `return widgets.NAME(t,d)` (quote/stat/document/split/comparison/lineage/callout)")
+    s.add_argument("--widget", default=None, help="shorthand: write `return widgets.NAME(t,d)`; see `scene-widgets` for the catalogue")
     s.add_argument("--data", default=None, help="the JSON data body inline")
     s.add_argument("--data-file", dest="data_file", default=None, help="read the JSON data from a file")
     s.add_argument("--row", default=None); s.add_argument("--id", default=None, help="clip id (existing id = EDIT that clip's script/data)")
@@ -1813,16 +1928,21 @@ def main():
     s.add_argument("--pos", default=None, help="transform pos 'x,y'")
     s=sub.add_parser("scene-check", help="headlessly validate scene clips' Lua (run scene(t,data) in `lua`, report errors)")
     s.add_argument("project"); s.add_argument("--clip", default=None, help="check just this clip id (default: all scene clips)")
+    s=sub.add_parser("scene-widgets", help="list reusable Lua scene widgets from the live std.lua source")
+    s.add_argument("--json", action="store_true", help="machine-readable name list")
     a=ap.parse_args()
 
     if a.cmd=="skeleton": cmd_skeleton(a); return
+    if a.cmd=="scriptlint": sys.exit(cmd_scriptlint(a))
     if a.cmd=="genvo": cmd_genvo(a); return
     if a.cmd=="scene-check": sys.exit(cmd_scene_check(a))
+    if a.cmd=="scene-widgets": cmd_scene_widgets(a); return
     p=load(a.project); out=a.out or a.project
 
     if a.cmd=="scene": cmd_scene(p,a); return
 
     if a.cmd=="lint": sys.exit(cmd_lint(p,a))
+    if a.cmd=="critique": sys.exit(cmd_critique(p,a))
     if a.cmd=="adopt": cmd_adopt(p,a); return
     if a.cmd=="retime": cmd_retime(p,a); return
     if a.cmd=="anchor": cmd_anchor(p,a); return

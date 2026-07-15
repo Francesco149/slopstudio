@@ -110,7 +110,7 @@ struct Project {
     double vignette = 0;  // scene-level edge vignette 0..1 (unify bg + host); meta.vignette
     // project-global settings (meta; edited in the docked Project panel). `format` picks the
     // DEFAULT bundle — "1080p" = the locked full-length-video conventions (built-in SFX off,
-    // speech 1.0x), "portrait" = shorts (1080x1920 canvas, SFX on, ~1.3x speech). Explicit
+    // speech 1.0x), "portrait" = shorts (1080x1920 canvas, SFX on, natural-rate speech). Explicit
     // meta.sfx / meta.speech_rate / meta.resolution always win over the format's defaults.
     std::string format = "1080p";
     bool sfx = false;        // built-in transition SFX one-shots (meta.sfx)
@@ -198,7 +198,7 @@ static Project parse_project_json(json j, const std::string& path) {
         }
         p.sfx = meta.value("sfx", portrait);                      // 1080p: built-in SFX OFF by default
         p.masterGainDb = meta.value("gain_db", 0.0);
-        p.speechRate = meta.value("speech_rate", portrait ? 1.3 : 1.0);
+        p.speechRate = meta.value("speech_rate", 1.0);
         p.speechGainDb = meta.value("speech_gain_db", 12.0);      // global speech boost (+12 default)
         p.songCredits = meta.value("song_credits", true);         // auto on-screen now-playing chip
         p.bgStyle = meta.value("bg", std::string("checker"));      // default frame background style (behind content)
@@ -11023,11 +11023,11 @@ static void draw_project_settings(Project& p) {
         p.width = por ? 1080 : 1920; p.height = por ? 1920 : 1080;
         meta["resolution"] = json::array({(int)p.width, (int)p.height});
         if (!meta.contains("sfx")) p.sfx = por;                        // re-derive unpinned defaults
-        if (!meta.contains("speech_rate")) p.speechRate = por ? 1.3 : 1.0;
+        if (!meta.contains("speech_rate")) p.speechRate = 1.0;
         g_undoDirty = true;
     }
     ImGui::TextDisabled(p.format == "portrait"
-        ? "shorts defaults: built-in SFX on, ~1.3x speech, fast pace"
+        ? "shorts defaults: built-in SFX on, natural-rate speech, fast visual pace"
         : "full-video defaults: built-in SFX off, 1.0x speech");
     // ── background: what fills the frame BEHIND content (dead space behind an inset / host / card) ──
     ImGui::SeparatorText("background");
@@ -11878,7 +11878,7 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
             // ── SFX cue: an authored one-shot (boom/awkward/…) fired at clip.start + `at`; the music
             // DUCKS around it. Any clip type. Also shows/moves via the orange flag on the timeline clip. ──
             {
-                static const char* SFX_OPTS[] = {"(none)", "boom", "awkward", "pop", "pop-blip", "whoosh", "whoosh-sharp"};
+                static const char* SFX_OPTS[] = {"(none)", "soft-swish", "soft-settle", "soft-tick", "boom", "awkward", "pop", "pop-blip", "whoosh", "whoosh-sharp"};
                 std::string cur = c.params.is_object() ? jstr(c.params, "sfx_cue") : std::string();
                 int idx = 0; for (int i = 1; i < IM_ARRAYSIZE(SFX_OPTS); i++) if (cur == SFX_OPTS[i]) { idx = i; break; }
                 ImGui::SeparatorText("SFX cue");

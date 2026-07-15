@@ -15,6 +15,33 @@ nix develop --command python tools/video.py <cmd>      # everything runs in the 
 The gold path in one line:
 **package → research → outline → script → `build` → `voice` → `lint`/`look` → tune → thumbnail → `export` → publish.**
 
+## No frontier LLM available?
+
+Nothing in the gold path requires one. Slash-skills are optional reviewers; use these
+written gates instead:
+
+1. **Package:** write one sentence, “This video proves ___ by showing ___.” Draft three
+   titles that promise that fact and three thumbnail sketches with one focal subject and
+   at most four words. Pick the pair that makes the same promise.
+2. **Outline:** each act answers one question, ends in one reveal, and names the visual
+   receipt that proves it. If an act has no receipt, research or cut it.
+3. **Script:** one idea/sentence per beat. Every line must hook, teach, or land a joke.
+   Replace “and then” with a consequence/reversal; verify every claim with an exact source,
+   filmable demo, or explicit pointer. Run `slop.py scriptlint <skeleton>` before voice.
+4. **Compose:** say-it/show-it in the same beat; change the visual every 2–4 spoken beats;
+   use `vid animations` and `docs/SCENE_COOKBOOK.md` for stats, comparisons, receipts, and
+   charts. A self-labeling scene does not also need a term plate.
+5. **Review:** `vid lint` runs structural lint plus pacing/composition critique. Watch once
+   muted (hierarchy/captions), once audio-only (script/voice), then normally (sync/tone).
+   Check the first 30 seconds, every act boundary, and the final payoff separately.
+6. **Voice:** keep a pronunciation list, regenerate only the bad line, and compare takes
+   blind at matched loudness. See `docs/TTS_EVALUATION.md` for the stable-engine test suite.
+
+Before hand-tuning the compiled cut, commit the skeleton and cut and mark the skeleton
+frozen in its notes. Rebuilding replaces generated composition; after that checkpoint use
+the editor or `slop.py set/mv/trim` and do not rebuild without intentionally discarding
+those adjustments.
+
 ---
 
 ## 0. Is my machine ready?
@@ -39,7 +66,10 @@ vid new <name> [--portrait]     # creates ../slopstudio-projects/<name>/ with:
                                 #   <name>.skeleton.json  (template beats)
                                 #   docs/research-<name>.md   docs/<name>-packaging.md
 ```
-`--portrait` = a 1080×1920 Short (1.3× speech, bottom-band host); omit for 16:9.
+`--portrait` = a 1080×1920 Short (natural-rate speech, bottom-band host); omit for 16:9.
+Shorts get their urgency from structure, captions, and visual cadence—not an extra format
+multiplier. Target about 180 WPM (roughly 175–190); if the long-form voice preset needs
+1.15× to reach that register, use the same rate for its Shorts rather than accelerating again.
 
 ## 3. Research → 4. Outline → 5. Script
 

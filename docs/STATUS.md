@@ -142,7 +142,8 @@ is engine-independent, do anytime; the diagram/card-PNG→transparent-scene swap
   everything); the noir look drops its own vignette so it isn't doubled + persists independent of the preset.
   Also fixed the gradient inspector's `DragFloat2("anchor")` sharing an ImGui id with the transform anchor
   ("2 items with conflicting id" on click) — renamed to "focus (0..1)##gradanchor".
-**STILL OPEN:** Phase 4a layout engine — now **SCOPED** as the Lua-first `scene` clip (top block · `docs/LAYOUT_ENGINE.md`); build P1 next.
+**Historical note (superseded):** this block predates the shipped Lua-first `scene` engine
+documented at the top of this file and in `docs/LAYOUT_ENGINE.md`.
 
 **★ The mouse-driven-UX overhaul + the visual-variety stretch goal — most of it LANDED in an autonomous
 overnight session (2026-07-14 night). Full arc + what remains: `docs/UX_OVERHAUL.md` (top STATUS block).**

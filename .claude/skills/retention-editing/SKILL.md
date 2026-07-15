@@ -36,7 +36,7 @@ reference corpus** (5 top explainers, 246k–1M views — metrics + patterns:
 - **Callback close + fast exit:** echo the cold open (phrase/location/metaphor), CTA woven
   into the theme, end within ~30s of the payoff. Bloopers ride after the end card.
 
-## Shorts (portrait, 1.3× speech)
+## Shorts (portrait, natural-rate speech)
 - **Hook ≤2.5s**, first frame high-contrast/in-focus/moving. **Reverse-structure** (payoff
   first, then explain).
 - Cut every 2–4s; 6–12 visual changes per 20s; captions always. Author the **first 3s +
