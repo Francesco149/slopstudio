@@ -11903,8 +11903,13 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
         if (ImGui::IsKeyPressed(ImGuiKey_A) && !ImGui::GetIO().WantTextInput && !ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyAlt)
             g_placeType = (g_placeType == "__generic__") ? std::string() : std::string("__generic__");   // A = generic add mode
         ImGui::SameLine();
+        // Reserve a FIXED width for the time readout: the UI font is proportional, so the digits
+        // changing (642.99 → 888.88) would otherwise re-measure wider/narrower and nudge every
+        // SameLine item after it (the +/A/type buttons) left and right. Place them at a stable x.
+        float timeX0 = ImGui::GetCursorPosX();
         ImGui::Text("%6.2f / %.2f s", st.playhead, dur);
-        ImGui::SameLine();
+        float timeW = ImGui::CalcTextSize("8888.88 / 8888.88 s").x;   // worst case → constant
+        ImGui::SameLine(timeX0 + timeW + ImGui::GetStyle().ItemSpacing.x);
         ImGui::TextDisabled("(space = play/pause)");
         // ── placement palette: A = generic (match neighbours); or arm a type, then click empty timeline ──
         ImGui::SameLine(); ImGui::TextDisabled("  +");
