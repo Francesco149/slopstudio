@@ -5456,8 +5456,11 @@ static void draw_scene_clip(ImDrawList* dl, float cx, float cy, float s, Clip& c
     Clay_BeginLayout();
     scene_walk(L, lua_gettop(L));
     Clay_RenderCommandArray cmds = Clay_EndLayout();
-    ImVec2 origin(cx - fw * 0.5f, cy - fh * 0.5f);
-    scene_draw_cmds(dl, cmds, origin, s, alpha / 255.0f);
+    // honor the clip's transform scale (around cx,cy) so a scene can sit as an inset beside the host
+    float sclX = (float)anim_xform(c, "transform.scale", 0, t, c.tx_scale[0]);
+    if (sclX <= 0.001f) sclX = 1.0f;
+    ImVec2 origin(cx - fw * 0.5f * sclX, cy - fh * 0.5f * sclX);
+    scene_draw_cmds(dl, cmds, origin, s * sclX, alpha / 255.0f);
     lua_pop(L, 1);   // pop root AFTER drawing (its strings back the TEXT commands)
     if (!g_sceneErr.empty()) draw_scene_error(dl, f0, fw, fh, s, g_sceneErr);
 }
@@ -6028,7 +6031,7 @@ static void content_centroid_span(const Project& p, double t0, double t1,
             auto rit = p.rows.find(rid);
             if (rit == p.rows.end()) continue;
             const std::string& rt = rit->second.type;   // code/diagram cards count as content too (the host must dodge them)
-            if (rt != "image" && rt != "video" && rt != "code" && rt != "diagram" && rt != "plot") continue;
+            if (rt != "image" && rt != "video" && rt != "code" && rt != "diagram" && rt != "plot" && rt != "scene") continue;
             for (auto& cid : rit->second.clips) {
                 auto cit = p.clips.find(cid);
                 if (cit == p.clips.end()) continue;
@@ -6058,7 +6061,7 @@ static bool span_has_content(const Project& p, double t0, double t1) {
             auto rit = p.rows.find(rid);
             if (rit == p.rows.end()) continue;
             const std::string& rt = rit->second.type;
-            if (rt != "image" && rt != "video" && rt != "code" && rt != "diagram" && rt != "plot") continue;
+            if (rt != "image" && rt != "video" && rt != "code" && rt != "diagram" && rt != "plot" && rt != "scene") continue;
             for (auto& cid : rit->second.clips) {
                 auto cit = p.clips.find(cid);
                 if (cit == p.clips.end()) continue;
@@ -6086,6 +6089,13 @@ static bool span_has_fullscreen_content(const Project& p, double t0, double t1) 
             auto rit = p.rows.find(rid);
             if (rit == p.rows.end()) continue;
             const std::string& rt = rit->second.type;
+            if (rt == "scene") {   // a scene is a full-frame native graphic → the host corners over it, like footage
+                for (auto& cid : rit->second.clips) {
+                    auto cit = p.clips.find(cid);
+                    if (cit != p.clips.end() && cit->second.start < t1 && cit->second.start + cit->second.dur > t0) return true;
+                }
+                continue;
+            }
             if (rt != "image" && rt != "video") continue;
             for (auto& cid : rit->second.clips) {
                 auto cit = p.clips.find(cid);

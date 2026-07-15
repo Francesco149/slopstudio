@@ -152,22 +152,26 @@ function widgets.document(t, d)
   d = d or {}
   local ex = d.excerpts or {}
   local trans = d.trans or 3.0            -- owner: pans default slow (heavy inertia); set d.trans lower to speed up
+  local intro = d.intro or 1.3            -- the opening: a QUICK scroll over the whole article to excerpt 1 (for show)
   local function rectof(i) local e = ex[i]; return (e and e.rect) or { 0, 0, 1, 1 } end
-  -- which excerpt are we in? accumulate (trans + hold) per excerpt; hold on the last.
+  local function tdur(i) return (i == 1) and intro or trans end
+  -- which excerpt are we in? accumulate (pan-dur + hold) per excerpt; hold on the last.
   local idx, tprev, acc = 1, 0, 0
   for i = 1, #ex do
-    local seg = trans + (ex[i].hold or 2.5)
+    local seg = tdur(i) + (ex[i].hold or 2.5)
     if t < acc + seg or i == #ex then idx = i; tprev = acc; break end
     acc = acc + seg
   end
   local lt = t - tprev
-  local from = (idx > 1) and rectof(idx - 1) or (d.from or { 0, 0, 1, 1 })
+  local from = (idx > 1) and rectof(idx - 1) or (d.from or { 0, 0, 1, 1 })   -- excerpt 1 opens from the WHOLE article
   local to = rectof(idx)
-  local e = anim.pan(lt, trans, d.damp)                       -- dampened camera pan/zoom (inertia)
+  local dur = tdur(idx)
+  -- intro rushes in and settles (friction); later pans are slow + inertial (camera weight)
+  local e = (idx == 1) and anim.friction(lt, dur) or anim.pan(lt, dur, d.damp)
   local crop = { from[1] + (to[1] - from[1]) * e, from[2] + (to[2] - from[2]) * e,
                  from[3] + (to[3] - from[3]) * e, from[4] + (to[4] - from[4]) * e }
   local cur = ex[idx] or {}
-  local shown = anim.clamp((lt - trans * 0.55) / 0.4, 0, 1)   -- translation fades in as the pan settles
+  local shown = anim.clamp((lt - dur * 0.55) / 0.4, 0, 1)     -- translation fades in as the pan settles
   local W = (frame and frame.w) or 1920
   local kids = { image{ asset = d.image, grow = true, crop = crop, fit = d.fit } }
   if cur.tr and cur.tr ~= "" then
