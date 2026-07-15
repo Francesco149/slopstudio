@@ -5052,7 +5052,14 @@ static std::string          g_sceneErr;                  // last error (drawn as
 // glow draws enlarged silhouette-following copies behind it (auto-colored from the image mean).
 struct SceneImg { ID3D11ShaderResourceView* srv; float u0, v0, u1, v1; Clay_Color tint; float radius; float aspect; bool contain;
                   float tx = 0, ty = 0, scx = 1, scy = 1, rot = 0, glow = 0; Clay_Color glowCol{ 255, 255, 255, 255 };
-                  float mbx = 0, mby = 0; int mbn = 0; };   // motion-blur: per-frame motion delta (px) + ghost count
+                  float mbx = 0, mby = 0; int mbn = 0;      // motion-blur: per-frame motion delta (px) + ghost count
+                  // 3D PERSPECTIVE (angled view): rx/ry tilt about the horizontal/vertical axis (rad),
+                  // foreshortened by `persp` (0 = orthographic). Drawn perspective-correct via a grid mesh.
+                  float rx = 0, ry = 0, persp = 0;
+                  // DEPTH OF FIELD: cross-fade each mesh cell to `dofSrv` (a cached gaussian-blurred copy)
+                  // by its distance from the focus point — sharp within `focusR`, blurring at `dofRate`.
+                  ID3D11ShaderResourceView* dofSrv = nullptr;
+                  float focusX = 0.5f, focusY = 0.5f, focusR = 0.2f, dofRate = 0; };
 static std::deque<SceneImg>  g_sceneImgs;
 static bool image_mean_rgb(const std::string& uri, float& r, float& g, float& b);   // auto glow color (defined below)
 // vector shapes (box/ellipse/line/arrow/underline/bracket) drawn within a laid-out box; from/to
@@ -5133,6 +5140,20 @@ static int scene_lua_tokenize(lua_State* L) {
     }
     return 1;
 }
+// measure_text(s, size, wrap_w, mono) -> width, height (project px). The SAME measurement path Clay
+// uses (CalcTextSizeA), so a widget can reserve the EXACT space text will occupy — e.g. center a
+// comment block by its FINAL height while a typewriter reveals it (no vertical drift). wrap_w<=0 =
+// single line (no wrap); mono = true measures in the monospace face.
+static int scene_lua_measure_text(lua_State* L) {
+    size_t n = 0; const char* s = luaL_checklstring(L, 1, &n);
+    float size = (float)luaL_optnumber(L, 2, 32);
+    float wrap = (float)luaL_optnumber(L, 3, 0);
+    bool mono = lua_toboolean(L, 4);
+    ImFont* f = scene_font(mono ? 1 : 0);
+    ImVec2 m = f->CalcTextSizeA(size, 1e30f, wrap > 0 ? wrap : 0.0f, s, s + n);
+    lua_pushnumber(L, m.x); lua_pushnumber(L, m.y);
+    return 2;
+}
 // json (clip params.data) -> a Lua table the script reads.
 static void scene_push_json(lua_State* L, const json& j) {
     if (j.is_object()) { lua_createtable(L, 0, (int)j.size()); for (auto it = j.begin(); it != j.end(); ++it) { scene_push_json(L, it.value()); lua_setfield(L, -2, it.key().c_str()); } }
@@ -5166,6 +5187,7 @@ static bool scene_lua_init() {
     lua_pushcfunction(L, scene_lua_log); lua_setfield(L, -2, "print");
     lua_pushcfunction(L, scene_lua_log); lua_setfield(L, -2, "log");
     lua_pushcfunction(L, scene_lua_tokenize); lua_setfield(L, -2, "tokenize");   // code syntax highlighting
+    lua_pushcfunction(L, scene_lua_measure_text); lua_setfield(L, -2, "measure_text");   // reserve exact text space
     lua_pushvalue(L, -1); g_sandboxRef = luaL_ref(L, LUA_REGISTRYINDEX);   // keep sandbox (ref); orig stays
     // Load the forkable stdlib into the sandbox env.
     std::string stdpath = g_repoRoot + "/presets/lua/std.lua";
@@ -5340,6 +5362,21 @@ static void scene_walk(lua_State* L, int idx, const SceneXform* inXf = nullptr) 
         // from its own motion; we smear faint trailing copies along -mb. `mb_n` = ghost count.
         float mb[2] = { 0, 0 };
         if (lf_xy(L, idx, "mb", mb)) { si.mbx = mb[0]; si.mby = mb[1]; si.mbn = (int)lf_num(L, idx, "mb_n", 6); }
+        // 3D perspective tilt (rx/ry deg -> rad) + foreshortening strength. persp unset defaults to a
+        // moderate 0.5 when a tilt is present (a bare `rx` should look 3D, not orthographic-squashed).
+        si.rx = (float)(lf_num(L, idx, "rx", 0.0) * 3.14159265358979 / 180.0);
+        si.ry = (float)(lf_num(L, idx, "ry", 0.0) * 3.14159265358979 / 180.0);
+        double persp = lf_num(L, idx, "persp", -1.0);
+        si.persp = (float)(persp >= 0 ? persp : ((si.rx != 0 || si.ry != 0) ? 0.5 : 0.0));
+        // depth of field: `dof` (>0) is the blur-growth RATE beyond the in-focus radius; resolve a
+        // gaussian-blurred copy at `dof_max` sigma now (param-hash cached) — cross-faded per mesh cell.
+        si.dofRate = (float)lf_num(L, idx, "dof", 0.0);
+        if (si.dofRate > 0.0001f && !uri.empty()) {
+            float foc[2] = { 0.5f, 0.5f }; lf_xy(L, idx, "focus", foc);
+            si.focusX = foc[0]; si.focusY = foc[1];
+            si.focusR = (float)lf_num(L, idx, "focus_r", 0.2);
+            si.dofSrv = get_processed_srv(uri, (float)lf_num(L, idx, "dof_max", 22.0), 1.0f, 1.0f);
+        }
         si.aspect = (tex && tex->h > 0) ? ((si.u1 - si.u0) * tex->w) / ((si.v1 - si.v0) * tex->h) : 1.0f;  // crop-region pixel aspect
         g_sceneImgs.push_back(si);
         Clay_ElementDeclaration d; memset(&d, 0, sizeof d);
@@ -5464,15 +5501,26 @@ static void scene_draw_shape(ImDrawList* dl, SceneShape* sh, ImVec2 p0, ImVec2 p
                 scene_prim_tri(dl, uv, ctr, b1, b2, cin, cout, cout);
             }
             break; }
-        case 7: { // heart (two lobes + a point) — a "like"
+        case 7: { // heart — a filled parametric heart curve (clean silhouette), the YouTube "like"
             ImU32 fc = sh->hasFill ? C(sh->fill) : col;
-            float cx = (p0.x + p1.x) * 0.5f, r = w * 0.27f, lobeY = p0.y + h * 0.34f;
-            ImVec2 lc(cx - r * 0.66f, lobeY), rc(cx + r * 0.66f, lobeY);
-            dl->AddCircleFilled(lc, r, fc, 24);
-            dl->AddCircleFilled(rc, r, fc, 24);
-            dl->AddTriangleFilled(ImVec2(cx - r * 1.30f, lobeY + r * 0.18f),
-                                  ImVec2(cx + r * 1.30f, lobeY + r * 0.18f),
-                                  ImVec2(cx, p1.y - h * 0.06f), fc);
+            const int N = 48;
+            ImVec2 pts[N]; float rx[N], ry[N];
+            float minx = 1e9f, maxx = -1e9f, miny = 1e9f, maxy = -1e9f;
+            for (int i = 0; i < N; i++) {   // classic heart: x=16sin³t, y=13cos t−5cos2t−2cos3t−cos4t
+                float a = (float)i / N * 6.28318531f, st = sinf(a), ct = cosf(a);
+                float x = 16.0f * st * st * st;
+                float y = 13.0f * ct - 5.0f * cosf(2 * a) - 2.0f * cosf(3 * a) - cosf(4 * a);
+                rx[i] = x; ry[i] = y;
+                minx = std::min(minx, x); maxx = std::max(maxx, x);
+                miny = std::min(miny, y); maxy = std::max(maxy, y);
+            }
+            float rw = maxx - minx, rh = maxy - miny;
+            float pad = 0.04f, sfit = std::min(w * (1 - 2 * pad) / rw, h * (1 - 2 * pad) / rh);
+            float dw = rw * sfit, dh = rh * sfit;
+            float ox = p0.x + (w - dw) * 0.5f, oy = p0.y + (h - dh) * 0.5f;
+            for (int i = 0; i < N; i++)
+                pts[i] = ImVec2((rx[i] - minx) * sfit + ox, (maxy - ry[i]) * sfit + oy);   // flip Y: lobes up, point down
+            dl->AddConcavePolyFilled(pts, N, fc);
             break; }
     }
 }
@@ -5547,6 +5595,85 @@ static void scene_draw_glow(ImDrawList* dl, const SceneImg* si, ImVec2 q0, ImVec
     }
 }
 
+// One textured quad with PER-VERTEX color (p/uv/col are TL,TR,BR,BL). The caller must have bound the
+// intended texture (PushTextureID) — used so ALL cells of a mesh pass share ONE texture binding (one
+// draw command) and so a DoF cell can ramp alpha across its corners (a smooth CoC, not a flat step).
+static inline void scene_img_quad_va(ImDrawList* dl, const ImVec2 p[4], const ImVec2 uv[4], const ImU32 col[4]) {
+    dl->PrimReserve(6, 4);
+    unsigned int b = dl->_VtxCurrentIdx;
+    for (int i = 0; i < 4; i++) dl->PrimWriteVtx(p[i], uv[i], col[i]);
+    dl->PrimWriteIdx((ImDrawIdx)b); dl->PrimWriteIdx((ImDrawIdx)(b + 1)); dl->PrimWriteIdx((ImDrawIdx)(b + 2));
+    dl->PrimWriteIdx((ImDrawIdx)b); dl->PrimWriteIdx((ImDrawIdx)(b + 2)); dl->PrimWriteIdx((ImDrawIdx)(b + 3));
+}
+
+// Draw an image as a subdivided textured MESH — the enabler for two effects a single flat quad can't
+// express:
+//   (1) 3D PERSPECTIVE — the quad tilted about its horizontal (rx) / vertical (ry) axis and
+//       foreshortened by `persp`. Perspective-CORRECT because each small cell is mapped affinely and
+//       the error vanishes as the grid refines (a plain AddImageQuad shows the bent-diagonal affine
+//       warp on a steep tilt).
+//   (2) DEPTH OF FIELD — the mesh is overdrawn with a pre-blurred copy (`dofSrv`) whose per-vertex
+//       alpha = blur amount: sharp within `focusR` of the focus point, ramping in at rate `dofRate`.
+// Composes with the in-plane 2D transform (rot/scx/scy, tx/ty). `glob` = effective opacity.
+static void scene_draw_image_mesh(ImDrawList* dl, const SceneImg* si, ImVec2 q0, ImVec2 q1, float s, float glob) {
+    constexpr int G = 18, V = G + 1;                    // grid cells / verts per axis
+    ImVec2 c((q0.x + q1.x) * 0.5f, (q0.y + q1.y) * 0.5f);
+    float hx = (q1.x - q0.x) * 0.5f * si->scx, hy = (q1.y - q0.y) * 0.5f * si->scy;
+    float ca = cosf(si->rot), sa = sinf(si->rot);       // in-plane (z) rotation
+    float cX = cosf(si->rx), sX = sinf(si->rx), cY = cosf(si->ry), sY = sinf(si->ry);
+    float ox = si->tx * s, oy = si->ty * s;
+    float focal = si->persp > 0.0001f ? std::max(hx, hy) / si->persp : 0.0f;   // shorter focal = stronger foreshortening
+    auto project = [&](float u, float v) -> ImVec2 {    // grid uv (0..1) -> screen through tilt + perspective
+        float lx = (u - 0.5f) * 2.0f * hx, ly = (v - 0.5f) * 2.0f * hy;
+        float xr = lx * ca - ly * sa, yr = lx * sa + ly * ca;          // z-rot
+        float x1 = xr * cY, z1 = -xr * sY, y1 = yr;                     // y-rot -> depth z1
+        float y2 = y1 * cX - z1 * sX, z2 = y1 * sX + z1 * cX;           // x-rot
+        float ps = 1.0f;
+        if (focal > 0.0001f) { float den = focal - z2; if (den < focal * 0.25f) den = focal * 0.25f; ps = focal / den; }
+        return ImVec2(c.x + x1 * ps + ox, c.y + y2 * ps + oy);
+    };
+    bool hasDof = si->dofRate > 0.0001f && si->dofSrv;
+    ImVec2 P[V * V]; float B[V * V];
+    for (int j = 0; j < V; j++)
+        for (int i = 0; i < V; i++) {
+            float u = (float)i / G, v = (float)j / G;
+            P[j * V + i] = project(u, v);
+            if (hasDof) { float du = u - si->focusX, dv = v - si->focusY, b = (sqrtf(du * du + dv * dv) - si->focusR) * si->dofRate;
+                          B[j * V + i] = b < 0 ? 0 : (b > 1 ? 1 : b); }
+        }
+    auto suv = [&](float u, float v) { return ImVec2(si->u0 + (si->u1 - si->u0) * u, si->v0 + (si->v1 - si->v0) * v); };
+    int ta = (int)(si->tint.a * glob + 0.5f); ta = ta < 0 ? 0 : (ta > 255 ? 255 : ta);
+    ImU32 tint = IM_COL32((int)si->tint.r, (int)si->tint.g, (int)si->tint.b, ta);
+    auto bc = [&](float bb) { int a = (int)(si->tint.a * glob * bb + 0.5f); a = a < 0 ? 0 : (a > 255 ? 255 : a);
+                              return IM_COL32((int)si->tint.r, (int)si->tint.g, (int)si->tint.b, a); };
+    // SHARP pass — every cell from the crisp texture, one texture binding for the whole mesh
+    dl->PushTextureID((ImTextureID)(intptr_t)si->srv);
+    for (int j = 0; j < G; j++)
+        for (int i = 0; i < G; i++) {
+            float u0 = (float)i / G, u1 = (float)(i + 1) / G, v0 = (float)j / G, v1 = (float)(j + 1) / G;
+            ImVec2 p[4] = { P[j*V+i], P[j*V+i+1], P[(j+1)*V+i+1], P[(j+1)*V+i] };
+            ImVec2 uv[4] = { suv(u0, v0), suv(u1, v0), suv(u1, v1), suv(u0, v1) };
+            ImU32 col[4] = { tint, tint, tint, tint };
+            scene_img_quad_va(dl, p, uv, col);
+        }
+    dl->PopTextureID();
+    // DoF pass — the blurred copy over the top, per-vertex alpha = blur amount (smooth CoC gradient)
+    if (hasDof) {
+        dl->PushTextureID((ImTextureID)(intptr_t)si->dofSrv);
+        for (int j = 0; j < G; j++)
+            for (int i = 0; i < G; i++) {
+                float b00 = B[j*V+i], b10 = B[j*V+i+1], b11 = B[(j+1)*V+i+1], b01 = B[(j+1)*V+i];
+                if (b00 + b10 + b11 + b01 < 0.004f) continue;   // fully-sharp cell → skip the overlay
+                float u0 = (float)i / G, u1 = (float)(i + 1) / G, v0 = (float)j / G, v1 = (float)(j + 1) / G;
+                ImVec2 p[4] = { P[j*V+i], P[j*V+i+1], P[(j+1)*V+i+1], P[(j+1)*V+i] };
+                ImVec2 uv[4] = { suv(u0, v0), suv(u1, v0), suv(u1, v1), suv(u0, v1) };
+                ImU32 col[4] = { bc(b00), bc(b10), bc(b11), bc(b01) };
+                scene_img_quad_va(dl, p, uv, col);
+            }
+        dl->PopTextureID();
+    }
+}
+
 // Translate Clay's render commands into ImDrawList calls (glob = clip opacity 0..1). Each command
 // may carry a SUBTREE transform via userData (a group slide/fade tagged during the walk); `lop` is
 // the effective per-command opacity, applied through the C() colour helper.
@@ -5580,6 +5707,11 @@ static void scene_draw_cmds(ImDrawList* dl, Clay_RenderCommandArray cmds, ImVec2
                         if (si->aspect > ba) { float nh = bw / si->aspect, off = (bh - nh) * 0.5f; q0.y = p0.y + off; q1.y = p1.y - off; }
                         else { float nw = bh * si->aspect, off = (bw - nw) * 0.5f; q0.x = p0.x + off; q1.x = p1.x - off; }
                     }
+                    // 3D perspective tilt (rx/ry) or depth-of-field needs the subdivided MESH path;
+                    // the flat / 2D-transform fast paths below can express neither.
+                    if (si->rx != 0 || si->ry != 0 || (si->dofRate > 0.0001f && si->dofSrv)) {
+                        scene_draw_image_mesh(dl, si, q0, q1, s, lop);
+                    } else {
                     bool xf = si->rot != 0 || si->scx != 1 || si->scy != 1 || si->tx != 0 || si->ty != 0;
                     // glow: a soft SOLID-color feathered ring behind the (transformed) quad. Solid —
                     // not a tinted texture copy — so it blooms regardless of the source's own brightness
@@ -5608,6 +5740,7 @@ static void scene_draw_cmds(ImDrawList* dl, Clay_RenderCommandArray cmds, ImVec2
                             ImVec2(uv0.x, uv0.y), ImVec2(uv1.x, uv0.y), ImVec2(uv1.x, uv1.y), ImVec2(uv0.x, uv1.y), tint);
                     } else if (si->radius > 0) dl->AddImageRounded(tid, q0, q1, uv0, uv1, tint, si->radius * s);
                     else dl->AddImage(tid, q0, q1, uv0, uv1, tint);
+                    }   // end else (non-mesh flat / 2D-transform path)
                 } else dl->AddRectFilled(p0, p1, IM_COL32(38, 40, 52, (int)(120 * lop)), 6 * s);   // missing-asset placeholder
             } break;
             case CLAY_RENDER_COMMAND_TYPE_SCISSOR_START: dl->PushClipRect(p0, p1, true); break;
