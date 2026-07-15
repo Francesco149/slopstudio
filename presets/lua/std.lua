@@ -334,7 +334,9 @@ function widgets.code(t, d)
     end
     if #sp == 0 then sp[1] = text(" ", { size = size, font = "mono" }) end   -- empty line keeps its height
     cells[#cells + 1] = row{ gap = 0, kids = sp }
-    rows[#rows + 1] = row{ gap = cellw * 1.5, ay = "c", t_y = (1 - e) * 18, t_op = e, kids = cells }
+    local hl = d.hi == li and #toklines > 1                    -- current-line highlight bar (needs a sibling to size the col)
+    rows[#rows + 1] = row{ gap = cellw * 1.5, ay = "c", growx = hl or nil, bg = hl and { 255, 214, 90, 24 } or nil,
+      t_y = (1 - e) * 18, t_op = e, kids = cells }
   end
   local body = box{ padl = size * 0.9, padr = size * 0.9, padt = size * 0.7, padb = size * 0.7,
     kids = { col{ gap = size * 0.24, kids = rows } } }
