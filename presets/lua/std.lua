@@ -84,6 +84,16 @@ function anim.spring_step(value, vel, target, dt, stiffness, damping)
   vel = vel + force * dt
   return value + vel * dt, vel
 end
+-- a decaying screen-shake offset (dx,dy px) for an impact jolt — deterministic (summed sines, no
+-- RNG): a burst at t=0 that dies out over `dur`. mag = peak px, freq = shakes/sec. Set it as the
+-- returned root node's `ox`/`oy` (the whole scene shifts): `local n=...; n.ox,n.oy=anim.shake(t)`.
+function anim.shake(t, mag, dur, freq)
+  mag = mag or 22; dur = dur or 0.5; freq = freq or 22
+  if t < 0 or t >= dur then return 0, 0 end
+  local decay = (1 - t / dur) ^ 2
+  local w = freq * 2 * PI
+  return math.sin(t * w) * mag * decay, math.sin(t * w * 1.37 + 1.1) * mag * decay
+end
 
 -- brand tokens (subset — the locked palette lives in gemma-brand; wire fully in P2) --
 theme = {
@@ -213,15 +223,21 @@ end
 function widgets.reveal(t, d)
   d = d or {}
   local dur = d.dur or 0.9
-  local e = anim.out_expo(t / dur)                                  -- fast in, long friction settle
-  local dx = (d.dx or -460) * (1 - e)
-  local dy = (d.dy or 40) * (1 - e)
+  local function slide(tt)                                          -- the slide offset at time tt
+    local ee = anim.out_expo(tt / dur)                             -- fast in, long friction settle
+    return (d.dx or -460) * (1 - ee), (d.dy or 40) * (1 - ee)
+  end
+  local dx, dy = slide(t)
   local rot = (d.rot or -7) * (1 - anim.out_back(t / (dur * 1.15)))  -- straighten past 0 then back
   local gin = anim.rise(t, dur * 0.6)
   local gout = 1 - anim.clamp((t - dur * 1.05) / 0.5, 0, 1)
   local glow = (d.glow or 0.85) * gin * gout
-  return center(image{ asset = d.image, pw = d.size or 0.66, aspect = true,
-    tx = dx, ty = dy, rot = rot, glow = glow, glow_col = d.glow_col, radius = d.radius or 0 })
+  local mb = nil                                                     -- motion blur from the slide velocity
+  if d.blur ~= false then local px, py = slide(t - 1 / 60); mb = { dx - px, dy - py } end
+  local n = center(image{ asset = d.image, pw = d.size or 0.66, aspect = true,
+    tx = dx, ty = dy, rot = rot, glow = glow, glow_col = d.glow_col, radius = d.radius or 0, mb = mb })
+  if d.shake then n.ox, n.oy = anim.shake(t - dur, d.shake_mag or 16, d.shake_dur or 0.45) end   -- jolt on landing
+  return n
 end
 
 -- CARDFLIP — a 2D card flip: horizontal squash 1->0->1, the face swapping at the edge-on midpoint
@@ -258,16 +274,41 @@ function widgets.drag(t, d)
   local dt = 1 / 60
   local px, py = target(0)
   local vx, vy = 0, 0
+  local ppx, ppy = px, py                                     -- position one step back (for motion blur)
   local st, dm = d.stiffness or 90, d.damping or 12
   for i = 1, math.floor(t / dt) do
+    ppx, ppy = px, py
     local tx, ty = target(i * dt)
     px, vx = anim.spring_step(px, vx, tx, dt, st, dm)
     py, vy = anim.spring_step(py, vy, ty, dt, st, dm)
   end
   local W, H = (frame and frame.w) or 1920, (frame and frame.h) or 1080
   local rot = anim.clamp(vx * (d.lean or 26), -16, 16)       -- lean into the horizontal velocity
+  local mb = (d.blur ~= false) and { (px - ppx) * W, (py - ppy) * H } or nil
   return center(image{ asset = d.image, pw = d.size or 0.28, aspect = true,
-    tx = (px - 0.5) * W, ty = (py - 0.5) * H, rot = rot, glow = d.glow or 0 })
+    tx = (px - 0.5) * W, ty = (py - 0.5) * H, rot = rot, glow = d.glow or 0, mb = mb })
+end
+
+-- RAYS — an anime sunburst / impact lines behind a subject. `count` wedges radiate from `at` (frame
+-- fraction), fading to the tips; optionally rotate (`spin` rad/s) and burst (grow then fade over
+-- `burst` sec — the impact flash). Put the subject image AFTER it so it sits on top. data:
+--   { at={x,y}, count, color={r,g,b,a}, spin, burst, duty }
+function widgets.rays(t, d)
+  d = d or {}
+  local at = d.at or { 0.5, 0.5 }
+  local W, H = (frame and frame.w) or 1920, (frame and frame.h) or 1080
+  local col = d.color or { 255, 246, 224, 210 }
+  local env = 1.0
+  if d.burst then                                             -- fast grow, slow fade (an impact flash)
+    env = anim.out_cubic(anim.clamp(t / (d.burst * 0.28), 0, 1)) *
+          (1 - anim.clamp((t - d.burst * 0.45) / (d.burst * 0.55), 0, 1))
+  end
+  -- a plain (non-growing) wrapper so the floating shape adds NO layout space — it overlays cleanly
+  -- when stacked with other content (like widgets.callout does), rather than splitting a column.
+  return box{ kids = {
+    shape{ float = "tl", fx = 0, fy = 0, w = W, h = H, shape = "rays", from = at,
+           count = d.count or 16, phase = (d.spin or 0.5) * t, duty = d.duty or 0.5,
+           color = { col[1], col[2], col[3], (col[4] or 210) * env } } } }
 end
 
 -- COMPARISON — N cells (image + caption) side by side, staggered in. data:

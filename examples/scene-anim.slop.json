@@ -12,14 +12,15 @@
     { "id": "tk_v", "name": "Video", "kind": "video", "rows": ["r_scene"] }
   ],
   "rows": {
-    "r_scene": { "type": "scene", "name": "Scene", "params": {}, "clips": ["sc_reveal", "sc_flip", "sc_spin", "sc_drag"] }
+    "r_scene": { "type": "scene", "name": "Scene", "params": {}, "clips": ["sc_reveal", "sc_flip", "sc_spin", "sc_drag", "sc_rays"] }
   },
   "clips": {
     "sc_reveal": {
       "row": "r_scene", "start": 0.0, "dur": 4.0,
       "params": {
         "script": "local t, d = ...\nreturn widgets.reveal(t, d)",
-        "data": { "image": "docs/hero/code-card.png", "dx": -520, "dy": 60, "rot": -8, "glow": 0.9, "dur": 0.95, "size": 0.62, "radius": 16 }
+        "data": { "image": "docs/hero/code-card.png", "dx": -520, "dy": 60, "rot": -8, "glow": 0.9, "dur": 0.95, "size": 0.62, "radius": 16, "shake": 22 },
+        "transition": false
       },
       "transform": { "pos": [0, 0], "scale": [1, 1], "rot": 0, "opacity": 1, "anchor": [0.5, 0.5] },
       "keyframes": {}
@@ -62,6 +63,16 @@
             { "t": 6.0, "x": 0.5, "y": 0.5 }
           ]
         }
+      },
+      "transform": { "pos": [0, 0], "scale": [1, 1], "rot": 0, "opacity": 1, "anchor": [0.5, 0.5] },
+      "keyframes": {}
+    },
+    "sc_rays": {
+      "row": "r_scene", "start": 18.0, "dur": 4.0,
+      "params": {
+        "script": "local t, d = ...\nlocal pop = anim.out_back(anim.clamp(t / 0.55, 0, 1))\nlocal W = (frame and frame.w) or 1920\nlocal n = box{ growx = true, growy = true, kids = {\n  widgets.rays(t, { count = 22, spin = 0.5, burst = 1.6, color = { 255, 242, 214, 225 } }),\n  image{ asset = d.image, w = math.floor(W * 0.42), aspect = true, glow = 0.55, radius = 14, sc = pop, float = \"c\", z = 4 } } }\nn.ox, n.oy = anim.shake(t, 20, 0.4)\nreturn n",
+        "data": { "image": "docs/hero/code-card.png" },
+        "transition": false
       },
       "transform": { "pos": [0, 0], "scale": [1, 1], "rot": 0, "opacity": 1, "anchor": [0.5, 0.5] },
       "keyframes": {}

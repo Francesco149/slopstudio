@@ -5051,12 +5051,14 @@ static std::string          g_sceneErr;                  // last error (drawn as
 // script can slide/scale/spin an image within its reserved slot (image-reveal, card-flip, drag);
 // glow draws enlarged silhouette-following copies behind it (auto-colored from the image mean).
 struct SceneImg { ID3D11ShaderResourceView* srv; float u0, v0, u1, v1; Clay_Color tint; float radius; float aspect; bool contain;
-                  float tx = 0, ty = 0, scx = 1, scy = 1, rot = 0, glow = 0; Clay_Color glowCol{ 255, 255, 255, 255 }; };
+                  float tx = 0, ty = 0, scx = 1, scy = 1, rot = 0, glow = 0; Clay_Color glowCol{ 255, 255, 255, 255 };
+                  float mbx = 0, mby = 0; int mbn = 0; };   // motion-blur: per-frame motion delta (px) + ghost count
 static std::deque<SceneImg>  g_sceneImgs;
 static bool image_mean_rgb(const std::string& uri, float& r, float& g, float& b);   // auto glow color (defined below)
 // vector shapes (box/ellipse/line/arrow/underline/bracket) drawn within a laid-out box; from/to
 // are fractions 0..1 of that box, so a full-frame floating shape addresses the whole frame.
-struct SceneShape { int kind; Clay_Color color, fill; bool hasFill; float thickness, round, ax, ay, bx, by; };
+struct SceneShape { int kind; Clay_Color color, fill; bool hasFill; float thickness, round, ax, ay, bx, by;
+                    float count, phase, duty; };   // rays: wedge count, rotation (rad), ray/gap duty 0..1
 static std::deque<SceneShape> g_sceneShapes;
 static unsigned long long    g_stdMtime = 0;              // presets/lua/std.lua mtime → hot-reload on save
 
@@ -5230,11 +5232,14 @@ static void scene_walk(lua_State* L, int idx) {
     if (k == "shape") {
         SceneShape sh; memset(&sh, 0, sizeof sh);
         std::string kind = lf_str(L, idx, "shape", "box");
-        sh.kind = kind == "ellipse" ? 1 : kind == "line" ? 2 : kind == "arrow" ? 3 : kind == "underline" ? 4 : kind == "bracket" ? 5 : 0;
+        sh.kind = kind == "ellipse" ? 1 : kind == "line" ? 2 : kind == "arrow" ? 3 : kind == "underline" ? 4 : kind == "bracket" ? 5 : kind == "rays" ? 6 : 0;
         Clay_Color col{ 255, 214, 90, 255 }; lf_color(L, idx, "color", &col); sh.color = col;
         Clay_Color fill{ 0, 0, 0, 0 }; sh.hasFill = lf_color(L, idx, "fill", &fill); sh.fill = fill;
         sh.thickness = (float)lf_num(L, idx, "thickness", 4);
         sh.round = (float)lf_num(L, idx, "round", 8);
+        sh.count = (float)lf_num(L, idx, "count", 16);   // rays
+        sh.phase = (float)lf_num(L, idx, "phase", 0);
+        sh.duty  = (float)lf_num(L, idx, "duty", 0.5);
         float a[2] = { 0, 0.5f }, b[2] = { 1, 0.5f };   // default: a horizontal center line/arrow
         lf_xy(L, idx, "from", a); lf_xy(L, idx, "to", b);
         sh.ax = a[0]; sh.ay = a[1]; sh.bx = b[0]; sh.by = b[1];
@@ -5282,6 +5287,10 @@ static void scene_walk(lua_State* L, int idx) {
             }
         }
         si.glowCol = gcol;
+        // motion blur: `mb`={dx,dy} is the per-frame motion delta (px) the script finite-differences
+        // from its own motion; we smear faint trailing copies along -mb. `mb_n` = ghost count.
+        float mb[2] = { 0, 0 };
+        if (lf_xy(L, idx, "mb", mb)) { si.mbx = mb[0]; si.mby = mb[1]; si.mbn = (int)lf_num(L, idx, "mb_n", 6); }
         si.aspect = (tex && tex->h > 0) ? ((si.u1 - si.u0) * tex->w) / ((si.v1 - si.v0) * tex->h) : 1.0f;  // crop-region pixel aspect
         g_sceneImgs.push_back(si);
         Clay_ElementDeclaration d; memset(&d, 0, sizeof d);
@@ -5344,6 +5353,15 @@ static void scene_walk(lua_State* L, int idx) {
     Clay__CloseElement();
 }
 
+// One flat-shaded gradient triangle (per-vertex color) via the ImDrawList primitive API — for
+// light-ray wedges that fade from a bright apex to transparent tips.
+static inline void scene_prim_tri(ImDrawList* dl, ImVec2 uv, ImVec2 a, ImVec2 b, ImVec2 c, ImU32 ca, ImU32 cb, ImU32 cc) {
+    dl->PrimReserve(3, 3);
+    unsigned int i0 = dl->_VtxCurrentIdx;
+    dl->PrimWriteVtx(a, uv, ca); dl->PrimWriteVtx(b, uv, cb); dl->PrimWriteVtx(c, uv, cc);
+    dl->PrimWriteIdx((ImDrawIdx)i0); dl->PrimWriteIdx((ImDrawIdx)(i0 + 1)); dl->PrimWriteIdx((ImDrawIdx)(i0 + 2));
+}
+
 // Draw a vector shape within its laid-out box [p0,p1]; from/to are fractions of that box.
 static void scene_draw_shape(ImDrawList* dl, SceneShape* sh, ImVec2 p0, ImVec2 p1, float s, float glob) {
     auto C = [&](Clay_Color c) -> ImU32 { int a = (int)(c.a * glob + 0.5f); a = a < 0 ? 0 : (a > 255 ? 255 : a); return IM_COL32((int)c.r, (int)c.g, (int)c.b, a); };
@@ -5377,6 +5395,22 @@ static void scene_draw_shape(ImDrawList* dl, SceneShape* sh, ImVec2 p0, ImVec2 p
             dl->AddLine(ImVec2(p0.x, p1.y), ImVec2(p0.x + cap, p1.y), col, th);
             dl->AddLine(ImVec2(p1.x, p0.y), ImVec2(p1.x - cap, p0.y), col, th);
             dl->AddLine(ImVec2(p1.x, p1.y), ImVec2(p1.x - cap, p1.y), col, th); break; }
+        case 6: { // rays — an anime sunburst / impact lines radiating from `from`, fading to the tips
+            ImVec2 ctr = pt(sh->ax, sh->ay);
+            float R = sqrtf(w * w + h * h);                 // reach past the box corners
+            int n = (int)(sh->count + 0.5f); if (n < 2) n = 2; if (n > 240) n = 240;
+            float duty = sh->duty <= 0 ? 0.5f : (sh->duty > 1 ? 1 : sh->duty);
+            ImVec2 uv = ImGui::GetIO().Fonts->TexUvWhitePixel;
+            ImU32 cin = col;                                 // bright at the center
+            ImU32 cout = IM_COL32((int)sh->color.r, (int)sh->color.g, (int)sh->color.b, 0);  // transparent tips
+            float step = 6.28318531f / n, hw = step * 0.5f * duty;
+            for (int i = 0; i < n; i++) {
+                float ang = sh->phase + i * step;
+                ImVec2 b1(ctr.x + cosf(ang - hw) * R, ctr.y + sinf(ang - hw) * R);
+                ImVec2 b2(ctr.x + cosf(ang + hw) * R, ctr.y + sinf(ang + hw) * R);
+                scene_prim_tri(dl, uv, ctr, b1, b2, cin, cout, cout);
+            }
+            break; }
     }
 }
 
@@ -5462,6 +5496,22 @@ static void scene_draw_cmds(ImDrawList* dl, Clay_RenderCommandArray cmds, ImVec2
                     // (a tinted dark card just reads as a shadow); a uniform-width gradient ring so it's
                     // even on every side (aspect-independent) and smooth (no banding). See scene_draw_glow.
                     if (si->glow > 0.001f) scene_draw_glow(dl, si, q0, q1, s, glob);
+                    // motion blur: faint trailing copies of the (transformed) quad along -mb (the recent
+                    // motion), behind the crisp main image → a velocity smear that vanishes at rest.
+                    // Reads best on fast / small motion (on a big opaque card the ghosts mostly hide
+                    // behind it — only the trailing edge peeks out). Skipped below a ~2px smear.
+                    if (si->mbn > 0 && (fabsf(si->mbx) + fabsf(si->mby)) * s > 2.0f) {
+                        ImVec2 base[4]; scene_image_quad(si, q0, q1, s, 0.0f, base);
+                        ImVec2 ua(uv0.x, uv0.y), ub(uv1.x, uv0.y), uc(uv1.x, uv1.y), ud(uv0.x, uv1.y);
+                        for (int gi = si->mbn; gi >= 1; gi--) {
+                            float f = (float)gi / (float)(si->mbn + 1);           // 0..1 back along the trail
+                            float ox = -si->mbx * f * s, oy = -si->mby * f * s;
+                            int a = (int)(glob * 255.0f * 0.30f * (1.0f - f) + 0.5f); a = a < 0 ? 0 : (a > 255 ? 255 : a);
+                            dl->AddImageQuad(tid, ImVec2(base[0].x + ox, base[0].y + oy), ImVec2(base[1].x + ox, base[1].y + oy),
+                                                  ImVec2(base[2].x + ox, base[2].y + oy), ImVec2(base[3].x + ox, base[3].y + oy),
+                                                  ua, ub, uc, ud, IM_COL32(255, 255, 255, a));
+                        }
+                    }
                     if (xf) {   // transformed → quad (AddImageQuad has no rounding; transforms rarely want it)
                         ImVec2 qq[4]; scene_image_quad(si, q0, q1, s, 0.0f, qq);
                         dl->AddImageQuad(tid, qq[0], qq[1], qq[2], qq[3],
@@ -5532,15 +5582,19 @@ static void draw_scene_clip(ImDrawList* dl, float cx, float cy, float s, Clip& c
     lua_sethook(L, nullptr, 0, 0);
     if (rc != LUA_OK) { const char* e = lua_tostring(L, -1); g_sceneErr = std::string("run: ") + (e ? e : "?"); lua_pop(L, 1); draw_scene_error(dl, f0, fw, fh, s, g_sceneErr); return; }
     if (!lua_istable(L, -1)) { lua_pop(L, 1); draw_scene_error(dl, f0, fw, fh, s, "script must return a node table"); return; }
+    // scene-level SCREEN-SHAKE: the root node may carry `ox`/`oy` (project px) — the whole graphic
+    // shifts by it. The script drives it off `anim.shake(t,...)` for an impact jolt that decays.
+    int rootIdx = lua_gettop(L);
+    float shx = (float)lf_num(L, rootIdx, "ox", 0), shy = (float)lf_num(L, rootIdx, "oy", 0);
     Clay_Dimensions dim; dim.width = fw / s; dim.height = fh / s;
     Clay_SetLayoutDimensions(dim);
     Clay_BeginLayout();
-    scene_walk(L, lua_gettop(L));
+    scene_walk(L, rootIdx);
     Clay_RenderCommandArray cmds = Clay_EndLayout();
     // honor the clip's transform scale (around cx,cy) so a scene can sit as an inset beside the host
     float sclX = (float)anim_xform(c, "transform.scale", 0, t, c.tx_scale[0]);
     if (sclX <= 0.001f) sclX = 1.0f;
-    ImVec2 origin(cx - fw * 0.5f * sclX, cy - fh * 0.5f * sclX);
+    ImVec2 origin(cx - fw * 0.5f * sclX + shx * s * sclX, cy - fh * 0.5f * sclX + shy * s * sclX);
     scene_draw_cmds(dl, cmds, origin, s * sclX, alpha / 255.0f);
     lua_pop(L, 1);   // pop root AFTER drawing (its strings back the TEXT commands)
     if (!g_sceneErr.empty()) draw_scene_error(dl, f0, fw, fh, s, g_sceneErr);
