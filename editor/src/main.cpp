@@ -12872,6 +12872,7 @@ int main(int argc, char** argv) {
     std::string shotPath, shotFramePath, configPath, genClip, exportPlan, splitClip, delClip, dupClip, selectClip, libSelect;
     int seqN = 1;   // --seq-n: render N consecutive frames from --time in ONE process (verify eased motion)
     bool exportStream = false, maskModeAuto = false;   // --mask-mode: open the Viewer's paint tool (for shots)
+    bool dumpSfx = false;   // --dump-sfx: print the scheduled SFX one-shots and exit
     int shotFrames = 5;
     double initialTime = 0.0, splitTime = 0.0;
     std::string addAvatarRig; double addAvatarTime = 0.0;   // --add-avatar <rig> [time] (headless place-from-scratch)
@@ -12903,6 +12904,7 @@ int main(int argc, char** argv) {
         else if (a == "--config" && i + 1 < argc) configPath = argv[++i];
         else if (a == "--generate" && i + 1 < argc) genClip = argv[++i];
         else if (a == "--select" && i + 1 < argc) selectClip = argv[++i];  // pre-select a clip (inspector shots)
+        else if (a == "--dump-sfx") dumpSfx = true;
         else if (a == "--lib-select" && i + 1 < argc) libSelect = argv[++i];  // focus a library item in the Viewer (shots)
         else if (a == "--mask-mode") maskModeAuto = true;                       // open the Viewer paint tool (shots)
         else if (a == "--split" && i + 2 < argc) { splitClip = argv[++i]; splitTime = atof(argv[++i]); }
@@ -12953,6 +12955,22 @@ int main(int argc, char** argv) {
         int cnt = sprite_export_to_library(src, w, h, (kc >> 16) & 255, (kc >> 8) & 255, kc & 255, fuzz, rects, prefix);
         fprintf(stderr, "sprite-cut: wrote %d/%d sprites → %s/images/%s-NN.png\n", cnt, (int)rects.size(), g_libraryDir.c_str(), prefix.c_str());
         return cnt > 0 ? 0 : 1;
+    }
+
+    // Headless dump of the scheduled SFX one-shots (pop/whoosh/authored cues) — the audio path
+    // isn't run during --shot, so this is how an agent audits "what makes sound when". --dump-sfx
+    if (dumpSfx) {
+        Project dp = load_project(projectPath);
+        if (!dp.ok) { fprintf(stderr, "dump-sfx: load failed: %s\n", dp.error.c_str()); return 1; }
+        auto evs = collect_sfx_events(dp);
+        for (auto& e : evs) {
+            // which clip is responsible (nearest visual clip whose start == e.t, else the cue owner)
+            std::string who;
+            for (auto& kv : dp.clips) if (std::fabs(kv.second.start - e.t) < 0.02 || std::fabs(kv.second.start + kv.second.dur*0 - e.t) < 0.02) { who = kv.first + "(" + kv.second.type + "/" + kv.second.row + ")"; break; }
+            fprintf(stderr, "SFX %8.2f  %-14s %+5.1fdB  %s\n", e.t, e.wav.c_str(), e.gainDb, who.c_str());
+        }
+        fprintf(stderr, "dump-sfx: %zu events (meta.sfx=%s)\n", evs.size(), dp.sfx ? "on" : "off");
+        return 0;
     }
 
     // Headless clip resize (verify + agent use; no window/D3D — native px via stbi/libav, then the

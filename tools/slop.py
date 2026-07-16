@@ -612,6 +612,15 @@ def cmd_skeleton(a):
                 if "sound_at" in b: p["clips"][cv]["params"]["sfx_at"]=float(b["sound_at"])
                 if "sound_gain_db" in b: p["clips"][cv]["params"]["sfx_gain_db"]=float(b["sound_gain_db"])
                 if "sound_duck" in b: p["clips"][cv]["params"]["sfx_duck"]=bool(b["sound_duck"])
+            else:
+                # DOC-ZOOM beats swish BY DEFAULT — the camera pan onto each excerpt reads with a
+                # soft swish (like the forum-post reveal). Convention; override with an explicit "sound".
+                _sv=b.get("visual"); _sc=_sv.get("scene") if isinstance(_sv,dict) else None
+                _sw=(_sc if isinstance(_sc,str) else (_sc.get("widget") if isinstance(_sc,dict) else None))
+                if _sw=="document":
+                    p["clips"][cv]["params"]["sfx_cue"]="soft-swish"
+                    p["clips"][cv]["params"]["sfx_gain_db"]=-15.0
+                    p["clips"][cv]["params"]["sfx_duck"]=False
             _vis=b.get("visual")   # a quote CARD owns the frame (a centred receipt) → no full host over it (auto-solo)
             _quote_solo=isinstance(_vis,dict) and _vis.get("style")=="quote"
             # FULLSCREEN VIDEO owns the frame too: wide footage would be tiny if scaled to sit beside the host,

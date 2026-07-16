@@ -556,9 +556,12 @@ function widgets.dragin(t, d)
     local lt = t - (it.delay or 0)
     local path = it.path or { { t = 0, x = -0.5, y = 0.6 }, { t = 0.3, x = 0.5, y = 0.45 } }
     path.settle = it.settle or 3.0
-    local x, y, dx, dy = anim.spring_path(lt, path, it.stiffness or 80, it.damping or 11)
-    local rot = anim.clamp(dx * (it.lean or 26), -14, 14)
-    local mb = (it.blur ~= false) and { dx * W * 0.6, dy * H * 0.6 } or nil
+    -- the PROVEN balatro dangle: a soft velocity-spring lags the card behind the cursor and it
+    -- swings (leans) into the horizontal velocity. Softer stiffness/lower damping = more visible
+    -- swing/overshoot (the "dangle") than a stiff snap.
+    local x, y, dx, dy = anim.spring_path(lt, path, it.stiffness or 66, it.damping or 9)
+    local rot = anim.clamp(dx * (it.lean or 44), -18, 18)
+    local mb = (it.blur ~= false) and { dx * W * 0.7, dy * H * 0.7 } or nil
     local cw = math.floor((it.w or 0.34) * W)
     local asp = it.img_aspect or d.img_aspect or (4 / 3)
     local crop = it.crop
@@ -583,23 +586,17 @@ function widgets.dragin(t, d)
     end
     kids[#kids + 1] = box{ float = "tl", fx = x * W - cw * 0.5, fy = y * H, w = cw,
       kids = { col{ gap = 14, ax = "c", t_rot = rot, kids = ck } } }
-    -- the cursor "holding" this card: leads the spring (rides the raw path target), visible
-    -- from just before this card's entry until it settles, then eases off toward the top-right
-    if d.cursor_img then
-      local function target(tt)
-        if tt <= path[1].t then return path[1].x, path[1].y end
-        for i = 2, #path do
-          if tt <= path[i].t then local a, b = path[i - 1], path[i]
-            local f = (tt - a.t) / math.max(1e-4, b.t - a.t); return a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f end
-        end
-        return path[#path].x, path[#path].y
-      end
-      local grabdur = (path[#path].t or 0.4) + (it.cursor_hold or 0.9)
-      if lt >= -0.01 and lt < grabdur + 0.8 then
-        local tx, ty = target(lt)
-        local ex = anim.tween(lt - grabdur, 0.6, "in_cubic")
-        local cx = tx * W + ex * (W - tx * W + 160)
-        local cy = ty * H - 26 - ex * 220
+    -- the cursor HOLDS the card at its top-center (the grab point) and moves WITH the spring — so
+    -- the card visibly dangles BELOW the cursor rather than the cursor racing ahead. Once the card
+    -- settles it FLIES OFF-SCREEN (so a two-card scene never shows two cursors at once).
+    if d.cursor_img and it.cursor ~= false then
+      local leave = it.cursor_leave or ((path[#path].t or 0.4) + (it.cursor_hold or 0.6))
+      if lt >= -0.05 and lt < leave + 1.0 then
+        local ex = anim.tween(lt - leave, 0.5, "in_cubic")           -- fly up-and-right after settle
+        local gx = x * W + rot * 1.6                                  -- grab point rides the card top, tilting with the swing
+        local gy = y * H - 20
+        local cx = gx + ex * (W + 220 - gx)
+        local cy = gy - ex * 300
         kids[#kids + 1] = image{ asset = d.cursor_img, w = 46, aspect = true, float = "tl", fx = cx, fy = cy }
       end
     end
