@@ -1,0 +1,20 @@
+# Browser inspection/capture for this trusted project. Codex loads this
+# project-scoped MCP declaration when a session starts in the repository.
+[mcp_servers.playwright]
+command = "nix"
+args = [
+  "run", ".#playwright-mcp", "--",
+  "--headless",
+  "--no-sandbox",
+  "--viewport-size", "1920x1080",
+  "--user-data-dir", ".playwright-mcp/profile",
+  "--output-dir", ".playwright-mcp",
+  "--caps", "vision,pdf",
+  "--timeout-navigation", "90000",
+  "--timeout-action", "10000",
+]
+enabled = true
+required = false
+startup_timeout_sec = 30
+tool_timeout_sec = 120
+default_tools_approval_mode = "auto"

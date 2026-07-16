@@ -78,6 +78,11 @@
           pytest
           pytest-xdist
         ]);
+
+        # Browser capture is deliberately isolated from the editor shell: it pulls
+        # a full Chromium closure, but gives every project one pinned, reproducible
+        # way to make high-DPI document sources with provenance sidecars.
+        webcapturePython = pkgs.python3.withPackages (ps: [ ps.playwright ]);
       in {
         devShells.default = pkgs.mkShell {
           name = "slopstudio-dev";
@@ -184,6 +189,25 @@
             echo "  build:   make -C tools/xp/win           # iexec.exe + winrect.exe"
             echo "  boot:    python tools/xp/xpvm.py boot --disk cache/xp/xp.qcow2 --fresh"
           '';
+        };
+
+        # High-DPI webpage/document capture (tools/capture-web.py).
+        #   nix develop .#webcapture --command python tools/capture-web.py URL out.png
+        devShells.webcapture = pkgs.mkShell {
+          name = "slopstudio-webcapture";
+          packages = [ webcapturePython pkgs.playwright-driver.browsers ];
+          shellHook = ''
+            export PLAYWRIGHT_BROWSERS_PATH=${pkgs.playwright-driver.browsers}
+            echo "slopstudio web-capture shell (Chromium + Playwright)"
+          '';
+        };
+
+        # Codex/ChatGPT desktop browser-control server.  Keeping the app in this
+        # locked flake makes .codex/config.toml reproducible instead of relying on
+        # an ambient npx install or a versionless global package.
+        apps.playwright-mcp = {
+          type = "app";
+          program = "${pkgs.playwright-mcp}/bin/playwright-mcp";
         };
 
         formatter = pkgs.nixfmt-rfc-style;

@@ -40,6 +40,12 @@ run from this repo root with relative paths.
      change every 2–4 beats; `"host"` clears content for solo/reaction beats.
    - Never reuse an asset more than ~3 times (lint flags it). Retrieve/capture more
      material instead — real screenshots/footage beat generated filler for software topics.
+     Every asset needs a one-line **claim match** in the research/shot ledger: the exact
+     noun, action, number, or UI state visible in frame that proves the narration. A merely
+     topical image is filler and does not count as coverage.
+   - A side inset is a two-subject composition. Use it only with `"host":true` on that
+     same beat. Without a host, screenshots compile centered so an empty presenter-shaped
+     hole cannot appear before the avatar arrives.
    - Code beats = the typewriter (the strongest primitive — lean on it); diagrams for
      architecture; a caption for a punchline; `layout: fullscreen` for hero footage.
 5. **Compile + generate + lint** (all inside `nix develop`; `P=../slopstudio-projects/<name>`):
@@ -80,7 +86,17 @@ run from this repo root with relative paths.
   **jp_lesson** big-centered for JP readings; diagrams only when a flow genuinely needs
   boxes-and-arrows (weakest primitive).
 - **Real captures over generated filler**: XP harness footage, CRT phone footage,
-  archived pages via Playwright — every claim's visual is sourced.
+  archived pages via Playwright — every claim's visual is sourced and its claim match is
+  recorded. Search-result pages and uncropped “something about the topic” screenshots fail.
+  For a webpage that will be zoomed, use `nix develop .#webcapture --command python
+  tools/capture-web.py URL assets/web/source/name.png --dismiss "Reject All"`. The default
+  is a 1920x1080 CSS viewport at DPR 2 (3840x2160 output) and writes a URL/time/hash
+  provenance sidecar. Keep the whole high-DPI source and animate editorial crops with
+  `widgets.document`; do not bake a low-resolution crop into the only source image.
+  For interactive source inspection, this repo also declares the pinned Playwright MCP
+  server in `.codex/config.toml`; after restarting the Codex/ChatGPT host, use its browser
+  tools to navigate, inspect text and choose excerpts. Use `capture-web.py` for the final
+  deterministic bitmap and provenance sidecar.
 - **Pre-outro "minimal recreation" section**: rebuild the topic's core trick in a few
   code cards + a github CTA plate, then the **outro on the desk bg** — thanks, a "send
   me strange software" ask, and the fufu~ sign-off.

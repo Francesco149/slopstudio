@@ -2,6 +2,9 @@
 # slopstudio is MIT + open source. Real endpoints + API keys live in config.toml
 # (copied from config.example.toml) and are machine-specific. Keep them out of git.
 config.toml
+# The project-scoped Codex browser server is reproducible tooling, not local
+# credentials; keep this one explicit exception to the basename rule above.
+!/.codex/config.toml
 config.local.toml
 *.local.toml
 .env

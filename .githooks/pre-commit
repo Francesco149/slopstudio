@@ -10,7 +10,7 @@ while IFS= read -r f; do
   case "$f" in
     # allowed roots (the tool + its stock pack + repo meta)
     editor/*|thumbtool/*|tools/*|providers/*|deploy/*|docs/*|examples/*|presets/*|library/*| \
-    assets-src/fonts/*|.claude/*|.github/*|.githooks/*| \
+    assets-src/fonts/*|.claude/*|.codex/*|.github/*|.githooks/*| \
     README.md|CLAUDE.md|LICENSE|flake.nix|flake.lock|config.example.toml|.gitignore|.gitattributes) ;;
     *) say "'$f' is outside the tools-repo allowlist — video content → ../slopstudio-projects, gemma/brand/social → ../gemma-branding";;
   esac
