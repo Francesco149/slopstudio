@@ -6481,6 +6481,18 @@ static void draw_filter_post(ImDrawList* dl, ImVec2 a, ImVec2 b, const FilterSpe
     dl->PopClipRect();
 }
 
+// Layout is a shot-level decision, not a per-sample collision test.  A clip that only grazes
+// another clip for one or two output frames (commonly a float-rounded contiguous seam) must not
+// resize/reposition the other shot for its entire duration.  Three frames is long enough to be an
+// authored overlap; <=2 frames is transition residue.  Keep this predicate shared by every span
+// query below so host size, host side, and inset ownership cannot disagree.
+static bool meaningful_layout_overlap(const Project& p, const Clip& c,
+                                      double t0, double t1) {
+    const double overlap = std::min(c.start + c.dur, t1) - std::max(c.start, t0);
+    const double twoFrames = 2.0 / (double)std::max(1, p.fps);
+    return overlap > twoFrames + 1e-9;
+}
+
 // CONTENT side over a TIME SPAN (not a single instant): scale-weighted screen-x of OFF-CENTER
 // image/video clips (screenshots, insets, the CRT — not the centered full-frame bg plate) whose
 // span OVERLAPS [t0,t1). Used to decide a host clip's presenter alignment ONCE for its whole span:
@@ -6500,7 +6512,7 @@ static void content_centroid_span(const Project& p, double t0, double t1,
                 auto cit = p.clips.find(cid);
                 if (cit == p.clips.end()) continue;
                 const Clip& c = cit->second;
-                if (c.start + c.dur <= t0 || c.start >= t1) continue;   // span overlap, NOT "active at playhead"
+                if (!meaningful_layout_overlap(p, c, t0, t1)) continue;
                 std::string lay = jstr(c.params, "layout");             // layout places at render time — mirror it here
                 if (lay == "fullscreen" || lay == "fit") continue;      // full-frame → bg, not side content
                 float px = (float)c.tx_pos[0] * s;                      // screen-x offset from center
@@ -6530,7 +6542,7 @@ static bool span_has_content(const Project& p, double t0, double t1) {
                 auto cit = p.clips.find(cid);
                 if (cit == p.clips.end()) continue;
                 const Clip& c = cit->second;
-                if (c.start + c.dur <= t0 || c.start >= t1) continue;
+                if (!meaningful_layout_overlap(p, c, t0, t1)) continue;
                 if (jstr(c.params, "layout") == "cover") continue;   // backdrop, not content
                 if (c.params.value("overlay", false)) continue;      // a bottom reaction overlay (meme) — host stays solo-big
                 return true;
@@ -6556,7 +6568,7 @@ static bool span_has_fullscreen_content(const Project& p, double t0, double t1) 
             if (rt == "scene") {   // a scene is a full-frame native graphic → the host corners over it, like footage
                 for (auto& cid : rit->second.clips) {
                     auto cit = p.clips.find(cid);
-                    if (cit != p.clips.end() && cit->second.start < t1 && cit->second.start + cit->second.dur > t0) return true;
+                    if (cit != p.clips.end() && meaningful_layout_overlap(p, cit->second, t0, t1)) return true;
                 }
                 continue;
             }
@@ -6565,7 +6577,7 @@ static bool span_has_fullscreen_content(const Project& p, double t0, double t1) 
                 auto cit = p.clips.find(cid);
                 if (cit == p.clips.end()) continue;
                 const Clip& c = cit->second;
-                if (c.start + c.dur <= t0 || c.start >= t1) continue;
+                if (!meaningful_layout_overlap(p, c, t0, t1)) continue;
                 if (jstr(c.params, "layout") == "fullscreen") return true;
             }
         }
@@ -6591,7 +6603,7 @@ static bool span_has_inset_content(const Project& p, double t0, double t1) {
                 auto cit = p.clips.find(cid);
                 if (cit == p.clips.end()) continue;
                 const Clip& c = cit->second;
-                if (c.start + c.dur <= t0 || c.start >= t1) continue;
+                if (!meaningful_layout_overlap(p, c, t0, t1)) continue;
                 std::string lay = jstr(c.params, "layout");
                 // inset-center normally OWNS the frame solo (no host) — but this fn is ONLY consulted while
                 // PLACING a host, so an active inset-center here means the card is HELD under a host beat
@@ -6616,7 +6628,7 @@ static bool span_has_host(const Project& p, double t0, double t1) {
                 auto cit = p.clips.find(cid);
                 if (cit == p.clips.end()) continue;
                 const Clip& c = cit->second;
-                if (c.start + c.dur <= t0 || c.start >= t1) continue;
+                if (!meaningful_layout_overlap(p, c, t0, t1)) continue;
                 return true;
             }
         }
