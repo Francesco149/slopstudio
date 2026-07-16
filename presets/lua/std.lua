@@ -450,6 +450,70 @@ function widgets.codewall(t, d)
     kids[#kids + 1] = box{ float = "tr", fx = -28, fy = 28, pad = 12, radius = 10,
       bg = theme.fade(theme.bg, 0.8), kids = { text(d.title, { size = 24, col = theme.accent(1) }) } }
   end
+  local root = box{ growx = true, growy = true, kids = kids }
+  -- EXIT slide: starting at clip-local `exit_at`, over `exit` seconds the whole wall accelerates
+  -- down off-frame (in_cubic), revealing whatever sits behind it (the host on the backdrop) — a
+  -- clean curtain-drop handoff into the next beat.
+  if d.exit_at and d.exit and d.exit > 0 then
+    local H = (frame and frame.h) or 1080
+    local se = anim.tween(t - d.exit_at, d.exit, "in_cubic")
+    root.t_y = se * (H + 80)
+  end
+  return root
+end
+
+-- BATTLEGRID — the determinism proof done natively in the layout engine: ONE battle frame tiled
+-- into a grid that GROWS with smooth eased reflow (1 fitted → 2 → 3 → 2×3), each new tile popping
+-- in with an out_back overshoot while the existing tiles ease to their new slots. Every tile is the
+-- identical frame, synced (that IS the point: same sim, same result, every run). A shared gentle
+-- ken-burns keeps them alive without breaking the "identical" read. data:
+--   { image=uri, cap="caption", tb, tc, td (phase-boundary times, clip-local), trans=0.6 (reflow ease) }
+function widgets.battlegrid(t, d)
+  d = d or {}
+  local W, H = (frame and frame.w) or 1920, (frame and frame.h) or 1080
+  local tb, tc, td = d.tb or 3.5, d.tc or 6.0, d.td or 8.6
+  local tr = d.trans or 0.6
+  -- per-tile slot keyframes {t, cx, cy, w} (center + width; h = 3/4 w). Reading order left→right,
+  -- top→bottom. Tile 1 lives through every phase; 2 joins at tb; 3 at tc; 4–6 at td.
+  local tiles = {
+    { app = 0.0,       ks = { {0,960,540,1000}, {tb,530,540,820}, {tc,370,540,580}, {td,370,312,580} } },
+    { app = tb,        ks = { {tb,1390,540,820}, {tc,960,540,580}, {td,960,312,580} } },
+    { app = tc,        ks = { {tc,1550,540,580}, {td,1550,312,580} } },
+    { app = td,        ks = { {td,370,768,580} } },
+    { app = td + 0.15, ks = { {td+0.15,960,768,580} } },
+    { app = td + 0.30, ks = { {td+0.30,1550,768,580} } },
+  }
+  local function slot(ks)                                        -- eased (cx,cy,w) at time t
+    if t <= ks[1][1] then return ks[1][2], ks[1][3], ks[1][4] end
+    for i = 2, #ks do
+      if t <= ks[i][1] + tr then
+        local a, b = ks[i-1], ks[i]
+        local e = anim.tween(t - b[1], tr, "io_cubic")            -- ease from prev slot into this one
+        return a[2]+(b[2]-a[2])*e, a[3]+(b[3]-a[3])*e, a[4]+(b[4]-a[4])*e
+      end
+    end
+    local L = ks[#ks]; return L[2], L[3], L[4]
+  end
+  local kb = 1 + 0.018 * math.sin(t * 0.7)                       -- shared ken-burns breath (identical on all)
+  local kids = {}
+  for _, tl in ipairs(tiles) do
+    if t >= tl.app - 0.01 then
+      local cx, cy, w = slot(tl.ks)
+      local pop = anim.tween(t - tl.app, 0.42, "out_back")        -- pop-in overshoot
+      local op = anim.rise(t - tl.app, 0.3)
+      local sc = (0.6 + 0.4 * pop) * kb
+      local ww = w * sc; local hh = ww * 0.75
+      kids[#kids + 1] = box{ float = "tl", fx = cx - ww/2, fy = cy - hh/2, w = ww, h = hh,
+        radius = 10, clip = true, t_op = op,
+        kids = { image{ asset = d.image, grow = true, fit = "cover", radius = 10 } } }
+    end
+  end
+  if d.cap and d.cap ~= "" then
+    local ce = anim.rise(t - 0.4, 0.4)
+    kids[#kids + 1] = box{ float = "tc", fy = 40, pad = 14, radius = 12, t_op = ce,
+      bg = theme.fade(theme.bg, 0.9 * ce),
+      kids = { text(d.cap, { size = 44, col = theme.fade(theme.acc, ce), ta = "c" }) } }
+  end
   return box{ growx = true, growy = true, kids = kids }
 end
 

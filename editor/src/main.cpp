@@ -6255,6 +6255,9 @@ static std::vector<SfxEvent> collect_sfx_events(Project& p) {
     for (auto& kv : p.clips) {
         Clip& c = kv.second;
         if (!vrows.count(c.row)) continue;
+        if (c.type == "avatar") continue;                 // HOST transitions are silent (owner): no pop on the
+                                                          // giggle snap-in, no whoosh on pose-swaps. Content pop
+                                                          // reveals + authored sfx_cue (the doc-zoom swish) stay.
         if (c.params.is_object() && c.params.contains("sfx") &&
             c.params["sfx"].is_boolean() && !c.params["sfx"].get<bool>()) continue;   // per-clip opt-out
         TransInfo ti = clip_trans_info(p, c);
