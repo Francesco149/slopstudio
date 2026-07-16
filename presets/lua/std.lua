@@ -445,29 +445,49 @@ function widgets.codewall(t, d)
   cx = anim.clamp(cx, cw * 0.5, 1 - cw * 0.5)
   cy = anim.clamp(cy, ch * 0.5, 1 - ch * 0.5)
   local crop = { cx - cw * 0.5, cy - ch * 0.5, cw, ch }
-  local kids = { image{ asset = d.image, grow = true, crop = crop, fit = "cover" } }
+  local H = (frame and frame.h) or 1080
+  local Wf = (frame and frame.w) or 1920
+  -- EXIT: at clip-local `exit_at`, over `exit` seconds the wall clears to reveal the host behind it.
+  -- exit_style "melt" (default) = a DOOM-style column melt (vertical strips drip down at staggered
+  -- speeds); "slide" = the whole wall drops as one. Either way it uncovers the backdrop beneath.
+  local me = (d.exit_at and d.exit and d.exit > 0) and anim.clamp((t - d.exit_at) / d.exit, 0, 1) or 0
+  local kids
+  if me > 0 and (d.exit_style or "melt") == "melt" then
+    kids = {}
+    local N = d.melt_cols or 30
+    local function rnd(i, s) local v = math.sin(i * 12.9898 + s * 78.233) * 43758.5; return v - math.floor(v) end
+    for j = 0, N - 1 do
+      local sx = crop[1] + (j / N) * crop[3]                       -- this column's source x-slice
+      local delay = 0.42 * rnd(j + 1, 1)                          -- staggered start per column
+      local speed = 0.75 + 0.7 * rnd(j + 1, 2)                    -- and a varied fall speed
+      local p = anim.clamp((me - delay) / math.max(0.05, 1 - delay), 0, 1)
+      local yoff = (p * p) * H * 1.4 * speed                      -- accelerating drip
+      -- the crop already bounds each column exactly, so no clip container is needed (many clip
+      -- containers overflow Clay's scroll array → the "out of bounds" internal error).
+      kids[#kids + 1] = box{ float = "tl", fx = math.floor(j / N * Wf), fy = 0,
+        w = math.ceil(Wf / N) + 1, h = H, t_y = yoff,
+        kids = { image{ asset = d.image, grow = true, fit = "cover",
+          crop = { sx, crop[2], crop[3] / N, crop[4] } } } }
+    end
+    return box{ growx = true, growy = true, kids = kids }
+  end
+  kids = { image{ asset = d.image, grow = true, crop = crop, fit = "cover" } }
   if d.title and d.title ~= "" then
     kids[#kids + 1] = box{ float = "tr", fx = -28, fy = 28, pad = 12, radius = 10,
       bg = theme.fade(theme.bg, 0.8), kids = { text(d.title, { size = 24, col = theme.accent(1) }) } }
   end
   local root = box{ growx = true, growy = true, kids = kids }
-  -- EXIT slide: starting at clip-local `exit_at`, over `exit` seconds the whole wall accelerates
-  -- down off-frame (in_cubic), revealing whatever sits behind it (the host on the backdrop) — a
-  -- clean curtain-drop handoff into the next beat.
-  if d.exit_at and d.exit and d.exit > 0 then
-    local H = (frame and frame.h) or 1080
-    local se = anim.tween(t - d.exit_at, d.exit, "in_cubic")
-    root.t_y = se * (H + 80)
-  end
+  if me > 0 then root.t_y = anim.tween(t - d.exit_at, d.exit, "in_cubic") * (H + 80) end   -- slide fallback
   return root
 end
 
--- BATTLEGRID — the determinism proof done natively in the layout engine: ONE battle frame tiled
--- into a grid that GROWS with smooth eased reflow (1 fitted → 2 → 3 → 2×3), each new tile popping
--- in with an out_back overshoot while the existing tiles ease to their new slots. Every tile is the
--- identical frame, synced (that IS the point: same sim, same result, every run). A shared gentle
--- ken-burns keeps them alive without breaking the "identical" read. data:
---   { image=uri, cap="caption", tb, tc, td (phase-boundary times, clip-local), trans=0.6 (reflow ease) }
+-- BATTLEGRID — the determinism proof done natively in the layout engine: ONE LIVE battle video
+-- tiled into a grid that GROWS with smooth eased reflow (1 fitted → 2 → 3 → 2×3), each new tile
+-- popping in with an out_back overshoot while the existing tiles ease to their new slots. Every
+-- tile plays the SAME source frame (all pass the same `vt` → one decode, drawn N times) — the point
+-- is that the sim is bit-identical every run. data:
+--   { video=<src uri>, image=<poster fallback>, cap="caption", tb, tc, td (phase-boundary times,
+--     clip-local), trans=0.6 (reflow ease), vdur=source-loop-seconds (default no loop) }
 function widgets.battlegrid(t, d)
   d = d or {}
   local W, H = (frame and frame.w) or 1920, (frame and frame.h) or 1080
@@ -494,18 +514,19 @@ function widgets.battlegrid(t, d)
     end
     local L = ks[#ks]; return L[2], L[3], L[4]
   end
-  local kb = 1 + 0.018 * math.sin(t * 0.7)                       -- shared ken-burns breath (identical on all)
+  local vt = d.video and (d.vdur and (t % d.vdur) or t) or nil   -- source time (looped) — SAME for every tile
   local kids = {}
   for _, tl in ipairs(tiles) do
     if t >= tl.app - 0.01 then
       local cx, cy, w = slot(tl.ks)
       local pop = anim.tween(t - tl.app, 0.42, "out_back")        -- pop-in overshoot
       local op = anim.rise(t - tl.app, 0.3)
-      local sc = (0.6 + 0.4 * pop) * kb
+      local sc = 0.6 + 0.4 * pop
       local ww = w * sc; local hh = ww * 0.75
+      local tile = d.video and image{ video = d.video, vt = vt, grow = true, fit = "cover", radius = 10 }
+                            or  image{ asset = d.image, grow = true, fit = "cover", radius = 10 }
       kids[#kids + 1] = box{ float = "tl", fx = cx - ww/2, fy = cy - hh/2, w = ww, h = hh,
-        radius = 10, clip = true, t_op = op,
-        kids = { image{ asset = d.image, grow = true, fit = "cover", radius = 10 } } }
+        radius = 10, clip = true, t_op = op, kids = { tile } }
     end
   end
   if d.cap and d.cap ~= "" then

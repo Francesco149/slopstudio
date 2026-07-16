@@ -5102,6 +5102,7 @@ static void scene_clay_err(Clay_ErrorData e) {
 }
 static void scene_clay_init() {
     if (g_clayInit) return;
+    Clay_SetMaxElementCount(32768);   // headroom for many-node scenes (e.g. the codewall column melt)
     uint32_t need = Clay_MinMemorySize();
     g_clayMem.resize(need);
     Clay_Arena arena = Clay_CreateArenaWithCapacityAndMemory(need, g_clayMem.data());
@@ -5357,8 +5358,28 @@ static void scene_walk(lua_State* L, int idx, const SceneXform* inXf = nullptr) 
     if (k == "image") {
         std::string uri = lf_str(L, idx, "asset", "");
         if (uri.empty()) uri = lf_str(L, idx, "uri", "");
-        Tex* tex = uri.empty() ? nullptr : get_texture(uri);
-        SceneImg si; si.srv = tex ? tex->srv : nullptr; si.u0 = 0; si.v0 = 0; si.u1 = 1; si.v1 = 1;
+        // LIVE VIDEO in a scene: `image{ video=<src uri>, vt=<source seconds> }` decodes one frame
+        // via the SAME libav leaf the video compositor uses. `vt` loops over the source, so N tiles
+        // that pass the SAME vt share one decode (frame-locked) — the battlegrid determinism grid.
+        std::string vsrc = lf_str(L, idx, "video", "");
+        ID3D11ShaderResourceView* srv = nullptr; int srcW = 0, srcH = 0;
+        if (!vsrc.empty()) {
+#ifdef SLOP_LIBAV
+            VideoDecoder* vd = get_decoder(resolve_asset(vsrc));
+            if (vd && vd->fps > 0) {
+                double vt = lf_num(L, idx, "vt", 0.0);
+                int fi = (int)std::llround(vt * vd->fps);
+                if (vd->frames > 0) fi = ((fi % vd->frames) + vd->frames) % vd->frames;   // loop
+                else if (fi < 0) fi = 0;
+                FrameTex* ft = get_decoded_frame_tex(vsrc, fi, vd);
+                if (ft) { srv = ft->srv; srcW = ft->w; srcH = ft->h; }
+            }
+#endif
+        } else if (!uri.empty()) {
+            Tex* tex = get_texture(uri);
+            if (tex) { srv = tex->srv; srcW = tex->w; srcH = tex->h; }
+        }
+        SceneImg si; si.srv = srv; si.u0 = 0; si.v0 = 0; si.u1 = 1; si.v1 = 1;
         lua_getfield(L, idx, "crop");   // {x,y,w,h} as fractions 0..1 of the source → the pan/zoom window
         if (lua_istable(L, -1)) {
             lua_geti(L, -1, 1); float cx = (float)lua_tonumber(L, -1); lua_pop(L, 1);
@@ -5407,13 +5428,13 @@ static void scene_walk(lua_State* L, int idx, const SceneXform* inXf = nullptr) 
             si.focusR = (float)lf_num(L, idx, "focus_r", 0.2);
             si.dofSrv = get_processed_srv(uri, (float)lf_num(L, idx, "dof_max", 22.0), 1.0f, 1.0f);
         }
-        si.aspect = (tex && tex->h > 0) ? ((si.u1 - si.u0) * tex->w) / ((si.v1 - si.v0) * tex->h) : 1.0f;  // crop-region pixel aspect
+        si.aspect = (srcH > 0) ? ((si.u1 - si.u0) * srcW) / ((si.v1 - si.v0) * srcH) : 1.0f;  // crop-region pixel aspect
         g_sceneImgs.push_back(si);
         Clay_ElementDeclaration d; memset(&d, 0, sizeof d);
         bool grow = lf_bool(L, idx, "grow", false);
         scene_sizing(&d.layout.sizing.width,  lf_num(L, idx, "w", -1), lf_num(L, idx, "pw", -1), grow || lf_bool(L, idx, "growx", false));
         scene_sizing(&d.layout.sizing.height, lf_num(L, idx, "h", -1), lf_num(L, idx, "ph", -1), grow || lf_bool(L, idx, "growy", false));
-        if (tex && tex->h > 0 && lf_bool(L, idx, "aspect", false)) d.aspectRatio.aspectRatio = (float)tex->w / (float)tex->h;
+        if (srcH > 0 && lf_bool(L, idx, "aspect", false)) d.aspectRatio.aspectRatio = (float)srcW / (float)srcH;
         d.image.imageData = &g_sceneImgs.back();
         d.backgroundColor = tint;
         d.cornerRadius.topLeft = d.cornerRadius.topRight = d.cornerRadius.bottomLeft = d.cornerRadius.bottomRight = si.radius;
