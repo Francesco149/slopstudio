@@ -34,6 +34,9 @@ run from this repo root with relative paths.
    the whole script top-to-bottom and check every "this/that/it" still points at what's
    on screen. Emotions from the deadpan set (neutral/deadpan/smug/explaining/teaching/
    pointing/thinking/confused/annoyed) — no theatrics.
+   The opener is a locked exception: write exactly `Heh~ Welcome back, mortals.` (or set
+   `"signature": true`) and the compiler copies the complete LuckyMas take from
+   `presets/voice-snips/gemma-welcome-back-mortals.wav`. Never regenerate or split it.
 4. **Author the skeleton** (`*.skeleton.json`, format in `tools/slop.py` — beats of
    `{line, emotion, visual}`). Visual rules:
    - A visual HOLDS until you set the next one — so only author *changes*. Aim for a
@@ -46,7 +49,8 @@ run from this repo root with relative paths.
    - A side inset is a two-subject composition. Use it only with `"host":true` on that
      same beat. Without a host, screenshots compile centered so an empty presenter-shaped
      hole cannot appear before the avatar arrives.
-   - Code beats = the typewriter (the strongest primitive — lean on it); diagrams for
+   - Code beats default to Kirby's animated VS Code scene (One Dark syntax, line reveal,
+     and mouse cursor); `style:"native"` is the explicit legacy escape hatch. Diagrams for
      architecture; a caption for a punchline; `layout: fullscreen` for hero footage.
 5. **Compile + generate + lint** (all inside `nix develop`; `P=../slopstudio-projects/<name>`):
    ```
@@ -82,7 +86,8 @@ run from this repo root with relative paths.
 - **The clueless gag:** a `term` caption + a yellow arrow (`shape:arrow` + `grow`
   sweep) pointed at the host's forehead when she says something self-owning. Sparingly
   — twice per video.
-- **Code beats = the typewriter card** (the strongest primitive), host in `teaching`;
+- **Code beats = the Kirby VS Code card** (One Dark, line reveal, mouse carry-in; the
+  strongest primitive), normally solo so the code owns the frame;
   **jp_lesson** big-centered for JP readings; diagrams only when a flow genuinely needs
   boxes-and-arrows (weakest primitive).
 - **Real captures over generated filler**: XP harness footage, CRT phone footage,

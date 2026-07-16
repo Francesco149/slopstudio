@@ -347,6 +347,8 @@ def est_dur(text, rate=1.0):
 # signature giggle; see the gemma-fufu-signature note). Explicit `"laugh": true|false` on a beat
 # overrides the auto-detect.
 GEMMA_HEH = "presets/voice-snips/gemma-heh.wav"
+GEMMA_SIGNATURE = "presets/voice-snips/gemma-welcome-back-mortals.wav"
+DEFAULT_CURSOR = "presets/ui/cursor.png"
 # a real laugh has a trailing 'h' (heh/hah) or repetition (hehe/fufu) — NOT bare "he"/"ha"/"fu" (which are
 # words / word-starts: "He cheats", "Full moon"). This distinction stops _split_laugh eating real speech.
 _LAUGH_TOK = (r"(?:(?:he){2,}h?|heh+|(?:ha){2,}h?|hah+|(?:fu){2,}|(?:ku){2,}|ふ{2,}|へ{2,}|"
@@ -385,6 +387,21 @@ def _laugh_asset(p):
         p.setdefault("assets", OD())[lk] = OD([("provider", "preset"), ("type", "speech"), ("status", "ready"),
             ("uri", GEMMA_HEH), ("meta", OD([("duration", hold), ("sample_rate", sr)]))])
     return lk, p["assets"][lk]["meta"]["duration"]
+
+def _signature_asset(p):
+    """Register the locked LuckyMas opener.  Unlike the short giggle snip this is the
+    complete, owner-approved “Heh~ Welcome back, mortals.” take; it must never pass
+    through an unstable TTS provider."""
+    lk = "snip_gemma_signature"
+    if lk not in p.get("assets", {}):
+        try:
+            import soundfile as _sf; _si = _sf.info(GEMMA_SIGNATURE)
+            adur = round(_si.frames / _si.samplerate, 3); sr = int(_si.samplerate)
+        except Exception:
+            adur, sr = 2.56, 24000
+        p.setdefault("assets", OD())[lk] = OD([("provider", "preset"), ("type", "speech"), ("status", "ready"),
+            ("uri", GEMMA_SIGNATURE), ("meta", OD([("duration", adur), ("sample_rate", sr)]))])
+    return lk, p["assets"][lk]["meta"]["duration"]
 def _expand_laughs(beats):
     """pre-split a leading-laugh beat ("Heh~ Welcome back, mortals") into TWO beats: a pure-giggle beat (the
     golden take + a smug closeup snap — see the laugh handling) followed by the SPEECH beat (normal TTS). The
@@ -392,7 +409,11 @@ def _expand_laughs(beats):
     plate/etc. Non-line beats (sections/pauses) and whole-line laughs pass through untouched."""
     out = []
     for b in beats:
-        sl = (_split_laugh(b.get("line", "")) if (isinstance(b, dict) and b.get("laugh") is None) else None)
+        line = b.get("line", "") if isinstance(b, dict) else ""
+        locked_signature = (re.sub(r"\s+", " ", line.strip()).casefold() ==
+                            "heh~ welcome back, mortals.".casefold())
+        sl = (_split_laugh(line) if (isinstance(b, dict) and b.get("laugh") is None and
+                                    not locked_signature and b.get("signature") is not True) else None)
         if not sl:
             out.append(b); continue
         laugh_txt, speech = sl
@@ -481,6 +502,7 @@ def cmd_skeleton(a):
     host_bg_i=0                 # rotates host-only backdrops: room (day) ↔ desk
     fs_img_i=0                  # fullscreen SCREENSHOTS alternate: hosted inset ↔ centered solo card
     held_kind=None              # what the held visual is: "card" (code/diagram/stack) | "media" | None
+    held_owns_frame=False       # suppress avatars on later beats while a solo/full-frame visual is held
     open_vis=[]                 # clip ids of the held visual(s) — extend until the next visual change
     open_fill=None              # filler under the current content run
     bg_open=0.0                 # the room bg backs HOST + plate-only spans — bare fill-only host shots are unauthorable
@@ -520,7 +542,7 @@ def cmd_skeleton(a):
         if not d: return True
         ar=(d[0]/d[1])/(res[0]/res[1])
         return (1/ar if ar>1 else ar) >= 0.45
-    for b in _expand_laughs(sk.get("beats",[])):   # split "Heh~ Welcome back" → golden giggle beat + speech beat
+    for b in _expand_laughs(sk.get("beats",[])):   # non-signature lead laughs may still split into giggle + speech
         if "section" in b:
             # scene cut: blur-swap straddling the boundary + a marker note + a branded act card
             # (a small pill in the least-busy corner for the first seconds of the act)
@@ -539,17 +561,22 @@ def cmd_skeleton(a):
         emo=b.get("emotion","neutral")
         # a pure-laugh line reuses the golden 'Heh~' take (never regenerated — the TTS renders a clean
         # giggle only ~1 in N tries) as a smug closeup that SNAPS in. `"laugh": true|false` overrides.
-        is_laugh=bool(line) and b.get("laugh", _is_laugh(line))
+        is_signature = bool(line) and (b.get("signature") is True or
+            re.sub(r"\s+", " ", line.strip()).casefold() == "heh~ welcome back, mortals.".casefold())
+        is_laugh=bool(line) and not is_signature and b.get("laugh", _is_laugh(line))
         laugh_key=None
-        if is_laugh:
+        if is_signature:
+            if emo in ("neutral", "auto"): emo="smug"
+            laugh_key, dur = _signature_asset(p)
+        elif is_laugh:
             if emo in ("neutral","auto"): emo="smug"          # the signature giggle reads smug
             laugh_key,_lhold=_laugh_asset(p)
             if "dur" not in b: dur=_lhold                      # size the beat to the take + a short smug hold
         if line:
             cv=new_clip(p,"tts","r_vo",t,dur,OD([("text",line),("emotion",emo),("voice_preset",voice)]),f"{pref}_vo")
             p["clips"][cv]["notes"]=line[:60]
-            if is_laugh:
-                # point the VO at the golden take + drop the TTS text so genvo never (re)generates the laugh
+            if is_laugh or is_signature:
+                # point the VO at a locked golden take + drop the TTS text so genvo never regenerates it
                 p["clips"][cv]["asset"]=laugh_key
                 p["clips"][cv]["params"].pop("text",None)
             # {"transcript": "..."} = what the on-screen transcript DISPLAYS when the line is
@@ -579,14 +606,19 @@ def cmd_skeleton(a):
                         and not _vis.get("cover") and img_covers(_vis["image"]))
             _fs_img_solo=False
             if _is_img_fs and not b.get("host") and not b.get("solo"):
-                _fs_img_solo=(fs_img_i%2==1)
-                _vis["layout"]="inset-center" if _fs_img_solo else "inset"   # both get the default pro border
+                # A side inset reserves a presenter column.  Never create that empty column unless
+                # the beat explicitly asks for a host; the old alternator produced b12_img-style
+                # compositions where the presenter only arrived on a later beat.
+                _fs_img_solo=True
+                _vis["layout"]="inset-center"
                 fs_img_i+=1
             # a beat whose visual IS the host ("host"/"host-dark") must ALWAYS draw her — `solo` on such a
             # beat means "just her, nothing else" (the owner's mental model), NOT "drop the host" (which
             # leaves a bare backdrop: the reported b04 "Welcome back, mortals" + b20 "sharpening your comment").
             _is_host_vis = _vis in ("host","host-dark")
-            if _is_host_vis or (not b.get("solo") and not _quote_solo and not _fs_img_solo and not ((_fs_video or _is_code) and not b.get("host"))):
+            if _is_host_vis or (not b.get("solo") and not _quote_solo and not _fs_img_solo and
+                                not (_vis is None and held_owns_frame) and
+                                not ((_fs_video or _is_code) and not b.get("host"))):
                 fr=b.get("framing", "closeup" if is_laugh else "bust")   # the giggle is a smug FACE closeup
                 aprm=OD([("emotion",emo),("framing",fr)])
                 if fr=="bust": aprm["anchor"]="bust"   # rides the project's bust anchor (Project panel knob)
@@ -659,12 +691,19 @@ def cmd_skeleton(a):
                     cids.append(scid)
                 return cids, True
             elif "code" in v:
-                # pass EVERY code key through (highlight/line_numbers/first_line…). Defaults: the card
-                # docks TOP, auto-fits its font to the frame width (drop font_px to opt in), and the
-                # host goes small lower-right — the code owns the frame.
-                prm=OD((k,val) for k,val in v.items() if k not in ("layout","zoom","for"))
-                # centred by default now (owner) — no dock:"top"; the card sits mid-frame on the checker with no host
-                cid=new_clip(p,"code","r_code",at,vdur,prm,f"{pref}{sfx}_code")
+                # Kirby established the code language: animated VS Code chrome, syntax colour,
+                # line-by-line reveal, and a mouse cursor carrying the card in.  Make that the
+                # authoring default; style:"native" remains an escape hatch for legacy cards.
+                if v.get("style") == "native":
+                    prm=OD((k,val) for k,val in v.items() if k not in ("layout","zoom","for","style"))
+                    cid=new_clip(p,"code","r_code",at,vdur,prm,f"{pref}{sfx}_code")
+                else:
+                    data=OD((k,val) for k,val in v.items() if k not in ("layout","zoom","for","style"))
+                    data.setdefault("cursor", True)
+                    data.setdefault("cursor_img", DEFAULT_CURSOR)
+                    data.setdefault("reveal", 0.34)
+                    prm=OD([("script","local t, d = ...\nreturn widgets.code(t, d)"), ("data",data)])
+                    cid=new_clip(p,"scene","r_scene",at,vdur,prm,f"{pref}{sfx}_code")
                 fill=False   # NO filler — the code card sits on the BARE grid (owner: "on the grid backdrop")
             elif "caption" in v:
                 prm=OD([("text",v["caption"]),("style",v.get("style","lower_third"))])
@@ -737,6 +776,7 @@ def cmd_skeleton(a):
                 if vis=="host-dark": open_bg(t, "dark")
                 else: open_bg(t, "desk" if host_bg_i%2 else "day"); host_bg_i+=1
                 held_kind=None
+                held_owns_frame=False
             else:
                 seq = vis if isinstance(vis,list) else [vis]
                 # caption/quote/term-plate beats sit on the CHECKER now (owner: checker preferred; a plate
@@ -761,6 +801,11 @@ def cmd_skeleton(a):
                             open_fill=new_clip(p,"filler","r_fill",at,vdur,OD(),f"{pref}{sfx}_fill")
                     at=round(at+vdur,3)
                 held_kind = "card" if any(k in v for v in seq for k in ("code","diagram","plot","stack","scene")) else "media"
+                lastv=seq[-1]
+                held_owns_frame=bool(b.get("solo") or
+                    ("video" in lastv and lastv.get("layout")=="fullscreen" and not b.get("host")) or
+                    ("image" in lastv and lastv.get("layout")=="inset-center" and not b.get("host")) or
+                    (("code" in lastv or "scene" in lastv) and not b.get("host")))
                 # code sections get the strict-teacher pose on the beat that reveals the card
                 if line and not b.get("solo") and any("code" in v for v in seq) and f"{pref}_av" in p["clips"]:
                     p["clips"][f"{pref}_av"]["params"]["emotion"]="teaching"

@@ -70,6 +70,18 @@ truth is promoted to the canonical workflow and format docs.
 - 2026-07-16: TTS shortlist is Chatterbox first, CosyVoice 3 second, a bounded dots.tts
   retry third, with Azure as the deterministic SSML escape hatch. The reproducible test
   suite and pass criteria live in `docs/TTS_EVALUATION.md`.
+- 2026-07-16: owner review of the animated LotR II cut exposed three composition defaults:
+  the signature opener was only partially reused, native code lagged behind Kirby's VS Code
+  scene, and held solo screenshots could summon a presenter on later beats and shift sideways.
+  The compiler now locks the complete LuckyMas opener, defaults code to `widgets.code` with
+  mouse carry-in, and remembers when held content owns the frame. `lotr2-rework.slop.json`
+  is the resulting candidate; five rewritten lines intentionally await new VO.
+- 2026-07-16: captured full provenance frames and legible 1080p edit crops for the real
+  Steam “This Game CHEATS!!!” thread and GOG empirical-stats post, then replaced the two
+  generic-map placeholders. Source review caught that the GOG post measures movement,
+  range, armour, and deterministic hits but does not publish the executable's seven resolver
+  weights; the script now keeps the fan testing and extracted table as separate claims.
+  The recompiled candidate adopts 91 existing VO takes; seven rewritten lines await VO.
 
 ## Deliverables / status
 

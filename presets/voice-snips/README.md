@@ -11,6 +11,7 @@ Keep them at a natural voice level (peak ≈0.55); the mixer's `meta.speech_gain
 | file | source | notes |
 |---|---|---|
 | `gemma-heh.wav` | luckymas3 `b01` ("Heh~ Welcome back, mortals.", `a_fkd464dl3yyhscxg`), cut 0.238–0.530s | the signature spoken giggle. **The TTS can't say "fufu" and stumbles on "heh"** ([[gemma-fufu-signature]]), so reuse THIS instead of regenerating. 0.292s, 24kHz mono, de-clicked (8ms/50ms fades). |
+| `gemma-welcome-back-mortals.wav` | luckymas3 `b01`, complete take (`a_fkd464dl3yyhscxg`) | the locked spoken opener, **“Heh~ Welcome back, mortals.”** Skeleton compilation reuses this complete 2.56s take automatically. Do not regenerate either half until a replacement TTS is explicitly approved. |
 
 **TODO (owner ask):** grow this into a small library of Gemma vocal sounds for VO variety (more giggles,
 sighs, "fufu"-adjacent hums, reactions) — cut from the best takes as they appear. See [[gemma-voice-workflow]].
