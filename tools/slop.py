@@ -417,7 +417,10 @@ def _expand_laughs(beats):
         if not sl:
             out.append(b); continue
         laugh_txt, speech = sl
-        out.append(OD([("line", laugh_txt), ("emotion", "smug"), ("laugh", True), ("visual", "host")]))
+        gig = OD([("line", laugh_txt), ("emotion", "smug"), ("laugh", True), ("visual", "host")])
+        if isinstance(b, dict) and "scene" in b:   # a lead-laugh over a forced backdrop (scene:"dark")
+            gig["scene"] = b["scene"]              # keeps that backdrop across the giggle too — no mid-beat flash
+        out.append(gig)
         sp = OD(b); sp["line"] = speech         # remainder speaks normally, keeping the beat's visual/emotion
         out.append(sp)
     return out
@@ -579,6 +582,9 @@ def cmd_skeleton(a):
                 # point the VO at a locked golden take + drop the TTS text so genvo never regenerates it
                 p["clips"][cv]["asset"]=laugh_key
                 p["clips"][cv]["params"].pop("text",None)
+                p["clips"][cv]["params"]["rate"]=1.0   # a recorded take is a FIXED-length take: never
+                                                       # rate-scaled by meta.speech_rate (else it overruns
+                                                       # into silence / a sped-up giggle). Speedup is for TTS.
             # {"transcript": "..."} = what the on-screen transcript DISPLAYS when the line is
             # written weird for the TTS (phonetic spellings etc.); defaults to the line itself.
             if b.get("transcript"): p["clips"][cv]["params"]["transcript"]=b["transcript"]
@@ -773,7 +779,10 @@ def cmd_skeleton(a):
             close_vis(t)
             if vis in ("host","host-dark"):
                 # host-only shots ROTATE room ↔ desk (owner); host-dark keeps the dark room (gag/outro)
-                if vis=="host-dark": open_bg(t, "dark")
+                if scene: pass                            # an explicit scene:"dark" (opened above) forces the
+                                                          # backdrop — do NOT rotate over it (else the outro/gag
+                                                          # desk flips back to room on alternate beats)
+                elif vis=="host-dark": open_bg(t, "dark")
                 else: open_bg(t, "desk" if host_bg_i%2 else "day"); host_bg_i+=1
                 held_kind=None
                 held_owns_frame=False
@@ -1729,7 +1738,11 @@ def cmd_adopt(p, a):
     nv=na=0
     for cid,c in p["clips"].items():
         if p["rows"].get(c.get("row",""),{}).get("type")!="tts": continue
-        key=_norm_text(c.get("params",{}).get("text"))
+        txt=c.get("params",{}).get("text")
+        if not txt: continue   # laugh/signature clips are already pinned to a golden take by the
+                               # compiler (their text is popped). Their empty key would otherwise
+                               # match a src preset take and clobber the correct one (heh↔signature).
+        key=_norm_text(txt)
         hit=speech.get(key) or speech.get(_norm_text(_tts_norm(key)))
         if hit:
             ak,ad=hit; install(ak,ad); c["asset"]=ak; nv+=1
