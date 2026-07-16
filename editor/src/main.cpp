@@ -6075,6 +6075,7 @@ struct TransInfo {
     bool swapIn = false, swapOut = false;  // pose-swap slide fires on that edge
     bool glideIn = false;                  // same-sprite reposition glide
     bool popThrough = false;               // contiguous media swap still pops (fade suppressed)
+    bool explicitPop = false;              // transition.in was EXPLICITLY "pop" (not the inset auto-pop)
 };
 static TransInfo clip_trans_info(Project& p, Clip& c) {
     TransInfo ti;
@@ -6090,6 +6091,7 @@ static TransInfo clip_trans_info(Project& p, Clip& c) {
         }
     };
     spec("in", ti.inType, ti.inDur); spec("out", ti.outType, ti.outDur);
+    ti.explicitPop = (ti.inType == "pop");   // authored pop (vs the inset/fit auto-pop below) → the ONLY pop that SOUNDS
     // Non-fullscreen media showcases POP in by default (the user's pick): an inset/fit image or
     // video with no explicit `transition.in` enters with the spring pop instead of a plain fade.
     if (ti.inType == "fade" && !(tr.is_object() && tr.contains("in"))) {
@@ -6283,7 +6285,10 @@ static std::vector<SfxEvent> collect_sfx_events(Project& p) {
             c.params["sfx"].is_boolean() && !c.params["sfx"].get<bool>()) continue;   // per-clip opt-out
         TransInfo ti = clip_trans_info(p, c);
         if (ti.disabled) continue;
-        if (ti.inType == "pop" && (!ti.skipIn || ti.popThrough))
+        // Only a DELIBERATE pop transition sounds. The default inset/fit auto-pop (content images
+        // springing in) stays visually poppy but SILENT — else every supporting image "pops" (the
+        // owner's "pop sounds in random places"). Authored `transition.in:"pop"` still sounds.
+        if (ti.explicitPop && (!ti.skipIn || ti.popThrough))
             ev.push_back({c.start, "pop.wav", -8.0});
         bool slIn  = ti.inType.rfind("slide", 0) == 0 || ti.inType == "rise";
         bool slOut = ti.outType.rfind("slide", 0) == 0 || ti.outType == "rise";
