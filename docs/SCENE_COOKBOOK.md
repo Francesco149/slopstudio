@@ -51,6 +51,7 @@ working render.
 | Several objects slide into place | `slidein` | `items:[{image,from,to,delay,pw,label}]` |
 | Code reveal in VS Code chrome | `code` | `code`, `lang`, `title`, reveal options |
 | Typed viewer comment | `youtube_comment` | `author`, `text`, `time`, `likes`, `hearted` |
+| Game capture plus evidence fields | `event_proof` | `mode`, `image`, `deck_index`, `assigned`, `gate`, `applied`, treasury values |
 | Timeline/history | `timeline` or `lineage` | dated events, or `nodes` |
 | Chart/plot | `chart` | `series`, `x`, `y`; optional markers/regions/callouts |
 | Annotated screenshot | `callout` | image plus label/target data |
@@ -75,4 +76,3 @@ The executable examples are `examples/scene-demo.slop.json`,
   a quota.
 - Long-form sound uses `soft-swish`, `soft-settle`, or `soft-tick` around -12 to -18 dB,
   normally with `sound_duck:false`. Reserve `boom`/`awkward` for actual punchlines.
-

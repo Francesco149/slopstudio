@@ -600,6 +600,140 @@ function widgets.youtube_comment(t, d)
     kids = { box{ t_y = (1 - e) * 44, t_op = e, kids = { card } } } }
 end
 
+-- EVENT PROOF — a retail game capture plus a reflowable evidence panel.  This is
+-- intentionally layout-only: field rows and outcome values participate in Clay
+-- measurement, so long labels cannot collide the way baked absolute-coordinate
+-- proof cards do. data:
+--   { mode="human"|"ai", image=uri, capture_label="...",
+--     county="13", deck_index="247", assigned="0x132", gate="1",
+--     applied="0x132", event="TREASURY GIFT", before="1,000",
+--     after="2,000", delta="+1,000", assertion="..." }
+function widgets.event_proof(t, d)
+  d = d or {}
+  local W, H = (frame and frame.w) or 1920, (frame and frame.h) or 1080
+  local human = (d.mode or "human") ~= "ai"
+  local panelW = math.floor(W * (d.panel_width or 0.38))
+  local e = anim.rise(t, 0.45)
+  local GOLD = { 240, 155, 0, 255 }
+  local TEAL = { 47, 217, 208, 255 }
+  local RED = { 255, 82, 82, 255 }
+  local WHITE = { 245, 244, 250, 255 }
+  local MUTE = { 154, 148, 171, 255 }
+  local LAV = { 209, 172, 236, 255 }
+  local BG = { 11, 7, 20, 255 }
+  local CARD = { 20, 14, 34, 255 }
+  local BORDER = { 72, 57, 92, 255 }
+  local active = human and TEAL or RED
+
+  local function field(label, value, color)
+    return col{ growx = true, h = 92, pad = 12, gap = 8, ax = "c", ay = "c",
+      radius = 12, bg = CARD, bw = 2, bc = theme.fade(color or BORDER, 0.82),
+      kids = {
+        text(label, { size = 14, col = MUTE, ta = "c", wrap = "words" }),
+        text(value, { size = 25, col = color or WHITE, ta = "c" }),
+      } }
+  end
+
+  local left = col{ growx = true, growy = true, pad = 36, gap = 18,
+    bg = { 8, 8, 12, 255 }, kids = {
+      row{ growx = true, ay = "c", kids = {
+        text(d.capture_label or "RETAIL CAPTURE · UNTOUCHED DECK",
+          { size = 22, col = GOLD }),
+        box{ growx = true },
+        text(human and "HUMAN RUN" or "SECOND RUN",
+          { size = 20, col = active, ta = "r" }),
+      } },
+      box{ growx = true, growy = true, pad = 18, radius = 18,
+        bg = { 18, 18, 25, 255 }, bw = 2, bc = { 72, 64, 88, 255 },
+        ax = "c", ay = "c", kids = {
+          image{ asset = d.image, grow = true, fit = "contain", radius = 10,
+            tint = theme.fade({ 255, 255, 255, 255 }, e) },
+        } },
+      row{ growx = true, ay = "c", kids = {
+        text("retail Lords2.exe", { size = 18, col = MUTE }),
+        box{ growx = true },
+        text("controlled state · frame-checked", { size = 18, col = LAV, ta = "r" }),
+      } },
+    } }
+
+  local flow = row{ growx = true, gap = 10, kids = {
+    field("DECK INDEX", d.deck_index or (human and "247" or "151"), GOLD),
+    field("ASSIGNED", d.assigned or (human and "0x132" or "0x131"), LAV),
+    field("OWNER GATE", d.gate or (human and "1" or "0"), active),
+    field("APPLIED", d.applied or (human and "0x132" or "—"), human and TEAL or RED),
+  } }
+
+  local detail
+  if human then
+    detail = col{ growx = true, pad = 22, gap = 10, radius = 14,
+      bg = CARD, bw = 2, bc = theme.fade(TEAL, 0.8), kids = {
+        text(d.event or "TREASURY GIFT", { size = 23, col = GOLD }),
+        text(d.popup or "Localized popup: gold has been added.",
+          { size = 24, col = WHITE, wrap = "words" }),
+      } }
+  else
+    detail = col{ growx = true, pad = 22, gap = 10, radius = 14,
+      bg = CARD, bw = 2, bc = theme.fade(RED, 0.8), kids = {
+        text("AI COUNTY " .. tostring(d.county or "11"), { size = 23, col = RED }),
+        text("A non-zero card was assigned.", { size = 28, col = WHITE }),
+        text("The owner gate blocked application.", { size = 23, col = GOLD }),
+      } }
+  end
+
+  local outcome = col{ growx = true, pad = 22, gap = 12, radius = 14,
+    bg = { 17, 12, 30, 255 }, bw = 2, bc = BORDER, kids = {
+      row{ growx = true, ay = "c", kids = {
+        text("TREASURY", { size = 18, col = MUTE }),
+        box{ growx = true },
+        text(human and "APPLIED" or "NO CHANGE", { size = 18, col = active, ta = "r" }),
+      } },
+      row{ growx = true, gap = 16, ay = "c", kids = {
+        text(d.before or "1,000", { size = 50, col = WHITE }),
+        text("→", { size = 38, col = MUTE }),
+        text(d.after or (human and "2,000" or "1,000"), { size = 50, col = WHITE }),
+        box{ growx = true },
+        box{ padl = 16, padr = 16, padt = 10, padb = 10, radius = 10,
+          bg = theme.fade(active, 0.17), bw = 2, bc = active,
+          kids = { text(d.delta or (human and "+1,000" or "±0"),
+            { size = 30, col = active, ta = "c" }) } },
+      } },
+    } }
+
+  local panel = col{ w = panelW, growy = true, pad = 30, gap = 16, bg = BG,
+    t_x = (1 - e) * 34, t_op = e, kids = {
+      text("CONTROLLED RETAIL EVENT PASS", { size = 17, col = GOLD }),
+      text("THE DECK ONLY", { size = 46, col = WHITE }),
+      text("APPLIES TO YOU", { size = 46, col = RED }),
+      rule{ col = BORDER },
+      row{ growx = true, ay = "c", kids = {
+        text(human and ("HUMAN COUNTY " .. tostring(d.county or "13"))
+                       or "SECOND UNTOUCHED-DECK RUN",
+          { size = 20, col = active }),
+        box{ growx = true },
+        text(d.assigned or (human and "0x132" or "0x131"),
+          { size = 28, col = WHITE, ta = "r" }),
+      } },
+      detail,
+      flow,
+      outcome,
+      box{ growx = true, pad = 18, radius = 12, bg = CARD, bw = 2, bc = BORDER,
+        kids = {
+          text(d.assertion or (human
+            and "Assignment and application both happened."
+            or "Assignment happened; application did not."),
+            { size = 22, col = human and TEAL or GOLD, wrap = "words" }),
+        } },
+      box{ growy = true },
+      row{ growx = true, ay = "c", kids = {
+        text("ALL ASSERTIONS PASS", { size = 16, col = TEAL }),
+        box{ growx = true },
+        text("FUN_00448819 · deck @ 0x4d6108", { size = 15, col = MUTE, ta = "r" }),
+      } },
+    } }
+
+  return row{ growx = true, growy = true, bg = BG, kids = { left, panel } }
+end
+
 -- COMPARISON — N cells (image + caption) side by side, staggered in. data:
 --   { title="...", items = { { image=uri, label="..." }, ... } }
 function widgets.comparison(t, d)
