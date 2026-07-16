@@ -4032,6 +4032,7 @@ static void clip_flip(Clip& c, int axis, bool on) {
 // func, themed dark; a title bar, line numbers, per-line highlight, a typewriter reveal
 // (`typewrite` 0..1) and vertical `scroll` — all instant + keyframe-animatable.
 static ImFont* g_monoFont = nullptr;   // Consolas, loaded in main(); null → ImGui default
+static ImFont* g_uiMonoFont = nullptr; // Consolas @ UI size — the JSON/Lua/code inspector editors
 
 enum CodeLang { LANG_C, LANG_LUA, LANG_TOML, LANG_TEXT };
 static CodeLang lang_of(const std::string& s) {
@@ -9229,6 +9230,45 @@ static void color_param(const char* label, json& P, const char* key, ImU32 def) 
     }
 }
 
+// A monospace, SYNTAX-HIGHLIGHTED multiline editor for the inspector (JSON / Lua / code). The
+// field is a normal InputTextMultiline in the UI-mono face; we then overlay opaque colored
+// tokens ON TOP at the identical glyph positions (same font, same origin) so the default-grey
+// glyphs are recoloured in place — caret, selection and editing all keep working. The overlay is
+// only drawn when the content fits without vertical scroll (origin stable); taller content falls
+// back to plain mono (still readable, just uncoloured) so nothing ever misaligns.
+static bool MonoCodeInput(const char* id, std::string& str, const std::string& lang,
+                          int minLines = 6, int maxLines = 22) {
+    ImFont* mf = g_uiMonoFont ? g_uiMonoFont : ImGui::GetFont();
+    ImGui::PushFont(mf);
+    int nl = 1; for (char ch : str) if (ch == '\n') nl++;
+    float lineH = ImGui::GetTextLineHeight();
+    int rows = nl < minLines ? minLines : (nl > maxLines ? maxLines : nl);
+    ImVec2 pad = ImGui::GetStyle().FramePadding;
+    float h = rows * lineH + pad.y * 2.0f;
+    ImVec2 origin = ImGui::GetCursorScreenPos();
+    bool changed = ImGui::InputTextMultiline(id, &str, ImVec2(-1, h), ImGuiInputTextFlags_AllowTabInput);
+    // overlay highlight only when everything fits (no internal scroll → origin is exact)
+    if (nl <= rows) {
+        std::vector<std::string> lines; { std::string cur; for (char ch : str) { if (ch == '\n') { lines.push_back(cur); cur.clear(); } else cur.push_back(ch); } lines.push_back(cur); }
+        std::vector<CTok> toks; tokenize_code(lines, lang_of(lang), toks);
+        CodeTheme th = default_code_theme();
+        float cellw = mf->CalcTextSizeA(mf->FontSize, FLT_MAX, 0, "M").x;   // monospace advance
+        ImVec2 tp{ origin.x + pad.x, origin.y + pad.y };
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->PushClipRect(origin, ImVec2(origin.x + ImGui::GetItemRectSize().x, origin.y + h), true);
+        for (const CTok& tk : toks) {
+            if (tk.line >= (int)lines.size()) continue;
+            const std::string& s = lines[tk.line];
+            if (tk.col + tk.len > (int)s.size()) continue;
+            ImVec2 gp{ tp.x + tk.col * cellw, tp.y + tk.line * lineH };
+            dl->AddText(mf, mf->FontSize, gp, th.col[tk.cls], s.c_str() + tk.col, s.c_str() + tk.col + tk.len);
+        }
+        dl->PopClipRect();
+    }
+    ImGui::PopFont();
+    return changed;
+}
+
 // Inspector widgets for the native compositing clips (code / caption / shape) — these are NOT
 // generated, so they had no inspector at all (JSON-only). Each field reads c.params live and
 // writes back on edit (instant, like the transform widgets).
@@ -9237,13 +9277,12 @@ static void draw_native_params(Project& p, Clip& c) {
     if (c.type == "code") {
         ImGui::SeparatorText("code card");
         std::string code = P.value("code", std::string());
+        std::string lang = P.value("lang", std::string("c"));
         ImGui::TextDisabled("code (the typewriter source)");
-        if (ImGui::InputTextMultiline("##code", &code, ImVec2(-1, 220),
-                ImGuiInputTextFlags_AllowTabInput)) { P["code"] = code; c.label = snippet(code); }
+        if (MonoCodeInput("##code", code, lang, 6, 22)) { P["code"] = code; c.label = snippet(code); }
         std::string title = P.value("title", std::string());
         if (ImGui::InputText("title", &title)) P["title"] = title;
         const char* LANGS[] = {"c", "cpp", "lua", "toml", "text"};
-        std::string lang = P.value("lang", std::string("c"));
         if (ImGui::BeginCombo("lang", lang.c_str())) {
             for (auto l : LANGS) { bool s = (lang == l); if (ImGui::Selectable(l, s)) P["lang"] = std::string(l); }
             ImGui::EndCombo();
@@ -9464,14 +9503,14 @@ static void draw_native_params(Project& p, Clip& c) {
         // the next draw, and a compile/runtime error draws a card + shows below — no revert needed.
         ImGui::TextDisabled("script (Lua)");
         std::string script = P.value("script", std::string());
-        if (ImGui::InputTextMultiline("##scenescript", &script, ImVec2(-1, 240), ImGuiInputTextFlags_AllowTabInput))
+        if (MonoCodeInput("##scenescript", script, "lua", 6, 24))
             P["script"] = script;
         // data: a JSON body → mid-typing is invalid JSON, so hold a persistent buffer (refreshed on
         // selection change) and only write P["data"] when it parses, so partial edits aren't clobbered.
         static std::string g_sceneDataBuf, g_sceneDataFor; static bool g_sceneDataErr = false;
         if (g_sceneDataFor != c.id) { g_sceneDataBuf = P.contains("data") ? P["data"].dump(2) : std::string("{}"); g_sceneDataFor = c.id; g_sceneDataErr = false; }
         ImGui::TextDisabled("data (JSON)");
-        if (ImGui::InputTextMultiline("##scenedata", &g_sceneDataBuf, ImVec2(-1, 120), ImGuiInputTextFlags_AllowTabInput)) {
+        if (MonoCodeInput("##scenedata", g_sceneDataBuf, "c", 4, 24)) {   // C lexer colours JSON strings/numbers/braces
             try { P["data"] = json::parse(g_sceneDataBuf); g_sceneDataErr = false; } catch (...) { g_sceneDataErr = true; }
         }
         if (g_sceneDataErr) ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "invalid JSON — not applied");
@@ -13206,6 +13245,8 @@ int main(int argc, char** argv) {
         for (const char* fp : mono) {
             FILE* tf = fopen(fp, "rb"); if (!tf) continue; fclose(tf);
             g_monoFont = fio.Fonts->AddFontFromFileTTF(fp, 48.0f, nullptr, monoRanges.Data);
+            // a UI-sized copy of the SAME face for the inspector code/JSON/Lua editors (chrome, 16px)
+            g_uiMonoFont = fio.Fonts->AddFontFromFileTTF(fp, 16.0f, nullptr, monoRanges.Data);
             break;
         }
         // Merge the JP face INTO the mono font so a code card can quote Japanese strings

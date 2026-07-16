@@ -1742,6 +1742,47 @@ def cmd_adopt(p, a):
 
 # ── genvo: bulk-generate every pending VO line + host viseme track via the headless editor,
 # then retime. The one command between "skeleton compiled" and "watchable cut". ──
+def _canned_viseme_track(dur, kind="speech"):
+    """A deterministic mouth-flap viseme track (no align provider needed) for a GOLDEN preset
+    snip whose audio never changes — e.g. the recorded "Heh~" giggle / the locked signature take.
+    Rhubarb/WhisperX times out on these tiny clips every regen (a long-standing flake), and there
+    is no point re-aligning a fixed take: bake a plausible cycle once. `kind`: "laugh" = fast bouncy
+    pulses; "speech" = a steady talking cycle. Matches the align schema {viseme,t0,t1,openness}."""
+    dur = max(0.2, float(dur))
+    if kind == "laugh":                                    # heh-heh-heh: quick open/close bounces
+        cyc = [("D", 1.0), ("B", 0.2), ("E", 0.7), ("A", 0.0), ("D", 0.9), ("C", 0.5)]; step = 0.11
+    else:                                                  # generic talking mouth
+        cyc = [("C", 0.6), ("A", 0.1), ("D", 0.9), ("B", 0.25), ("E", 0.5), ("F", 0.3), ("A", 0.1)]; step = 0.14
+    out = [{"viseme": "X", "t0": 0.0, "t1": 0.08, "openness": 0.0}]
+    t = 0.08; i = 0
+    while t < dur - 0.1:
+        v, o = cyc[i % len(cyc)]; t1 = min(dur - 0.06, round(t + step, 3))
+        out.append({"viseme": v, "t0": round(t, 3), "t1": t1, "openness": o}); t = t1; i += 1
+    out.append({"viseme": "X", "t0": round(t, 3), "t1": round(dur, 3), "openness": 0.0})
+    return {"visemes": out}
+
+def _wire_preset_visemes(p, av_cid, av_clip, vo_text, kind):
+    """If a viseme clip lip-syncs to a GOLDEN preset snip (provider:"preset" speech), bake a canned
+    viseme sidecar next to the snip and wire a READY viseme asset — so genvo never ships the fixed
+    take to the flaky align provider again. Returns True when handled locally."""
+    # find the paired VO clip's speech asset
+    m = re.match(r"(b\d+)_av$", av_cid); vo = p["clips"].get(f"{m.group(1)}_vo") if m else None
+    if not vo: return False
+    sad = p.get("assets", {}).get(vo.get("asset", ""))
+    if not sad or sad.get("provider") != "preset" or not sad.get("uri"): return False
+    wav = sad["uri"]; side = re.sub(r"\.wav$", ".visemes.json", wav, flags=re.I)
+    dur = sad.get("meta", {}).get("duration", av_clip.get("dur", 1.0))
+    sp = resolve_uri(side)
+    if not os.path.exists(sp):
+        os.makedirs(os.path.dirname(sp) or ".", exist_ok=True)
+        json.dump(_canned_viseme_track(dur, kind), open(sp, "w"))
+    vk = "vis_" + re.sub(r"[^a-z0-9]", "_", os.path.basename(wav).lower())
+    p.setdefault("assets", OD())[vk] = OD([("provider", "preset"), ("type", "visemes"),
+        ("status", "ready"), ("uri", side), ("params", OD([("dialog", vo_text)])),
+        ("meta", OD([("duration", dur)]))])
+    av_clip["asset"] = vk
+    return True
+
 def cmd_genvo(a):
     exe=a.exe or "./build/slopstudio.exe"
     def _vo_text_for(p, av_cid, av_clip):
@@ -1777,6 +1818,19 @@ def cmd_genvo(a):
                         vt=_vo_text_for(p,cid,c)
                         if not vt or dlg in ("",vt): continue
             todo.append(cid)
+        # GOLDEN preset snips (the "Heh~" giggle / locked signature) never change — bake canned
+        # visemes locally instead of re-aligning them every regen (the align provider flakes on the
+        # tiny clips). Wire + drop them from the align todo.
+        if rt=="avatar" and todo:
+            baked=0; keep=[]
+            for cid in todo:
+                c=p["clips"][cid]; vt=_vo_text_for(p,cid,c)
+                kind="laugh" if re.search(r"heh|fufu|ふふ|giggle|laugh",(vt or ""),re.I) else "speech"
+                if _wire_preset_visemes(p,cid,c,vt,kind): baked+=1
+                else: keep.append(cid)
+            if baked:
+                save(p,a.project); print(f"genvo: baked {baked} canned viseme track(s) for golden preset snips (no align)")
+            todo=keep
         print(f"genvo: {len(todo)} {phase} clips to generate")
         for i,cid in enumerate(todo):
             r=subprocess.run([exe,a.project,"--generate",cid],capture_output=True,text=True)
@@ -1909,6 +1963,7 @@ def main():
     s.add_argument("--type", default=None, choices=["image","video","audio"],
                    help="asset type (default: infer from the row; audio = a ready speech asset, e.g. a presets/voice-snips take on a tts row)")
     s=sub.add_parser("rowset"); common(s); s.add_argument("row"); s.add_argument("kv", nargs="+", help="param=value (JSON value) — lane params: gain_db, normalize, normalize_db, voice_preset, driven_by, rig")
+    s=sub.add_parser("meta"); common(s); s.add_argument("kv", nargs="*", help="dotted.key=value (JSON value) — project meta: sfx, vignette, title, anchors.…; no kv = print meta")
     s=sub.add_parser("kfprune"); common(s); s.add_argument("--clip", default=None, help="limit to one clip")
     s.add_argument("--keep-opacity", action="store_true", help="keep redundant opacity-fade tracks (the default transition handles fades)")
     s.add_argument("--dry", action="store_true", help="report only, don't write")
@@ -2059,6 +2114,14 @@ def main():
             ("status","ready"),("uri",uri),("meta",meta)])
         c["asset"]=key
         save(p,out); print(f"reasset {a.clip} -> {key} ({atype}) {uri}"); return
+
+    if a.cmd=="meta":
+        m=p.setdefault("meta",OD())
+        if not a.kv:
+            print(json.dumps(m, indent=1, ensure_ascii=False)); return
+        for kv in a.kv:
+            k,_,v=kv.partition("="); set_dotted(m,k,jval(v))
+        save(p,out); print(f"meta: {', '.join(a.kv)}"); return
 
     if a.cmd=="rowset":
         if a.row not in p["rows"]: print(f"no row {a.row}"); return

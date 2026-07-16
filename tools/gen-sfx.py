@@ -210,6 +210,28 @@ def gen_soft_tick(dur=0.085):
     return out
 
 
+def gen_ticker(dur=1.1, ticks=26):
+    """Count-up ticker: a fast click train that DECELERATES and stops. Tick times are
+    the inverse of the stat widget's cubic-out count ease (anim.count in std.lua) at
+    equal VALUE steps — so if the sfx starts when the number starts climbing, every
+    tick lands as the displayed value increments and the train dies exactly when the
+    number settles. The final tick is accented (the "stop")."""
+    n = int((dur + 0.30) * SR); out = [0.0] * n
+    for k in range(1, ticks + 1):
+        u = k / ticks                                  # value progress of this tick
+        t0 = (1.0 - (1.0 - u) ** (1.0 / 3.0)) * dur    # inverse of out_cubic -> time
+        accent = 1.7 if k == ticks else 1.0
+        f = 1450.0 - 420.0 * u                         # pitch eases down as it slows
+        i0 = int(t0 * SR); phase = 0.0
+        for i in range(int(0.045 * SR)):
+            t = i / SR
+            phase += 2 * math.pi * f / SR
+            a = (1 - math.exp(-t / 0.0012)) * math.exp(-t * (150.0 / accent))
+            j = i0 + i
+            if j < n: out[j] += math.sin(phase) * a * 0.5 * accent
+    return out
+
+
 def gen_awkward(dur=2.2):
     """'Awkward Moment': a muffled cough-thud up front, then an awkward-silence
     bed — faint 750 Hz room tone + cricket chirp bursts (~4.4 kHz carrier gated
@@ -281,6 +303,7 @@ def main():
     write_wav("soft-swish.wav", gen_soft_swish(), peak=0.46)
     write_wav("soft-settle.wav", gen_soft_settle(), peak=0.46)
     write_wav("soft-tick.wav", gen_soft_tick(), peak=0.42)
+    write_wav("ticker.wav", gen_ticker(), peak=0.5)    # count-up tick train (decelerates + stops)
     write_wav("awkward.wav", gen_awkward(), peak=0.6)
     write_wav("boom.wav", gen_boom(), peak=0.95)
     print("done.")

@@ -25,7 +25,9 @@ function anim.clamp(x, a, b) return clamp(x, a, b) end
 function anim.smoothstep(e) return smooth(e) end
 function anim.rise(t, dur) return smooth(t / (dur or 0.45)) end                 -- 0->1 ease over the clip head
 function anim.lerp(t, a, b, dur, delay) return a + (b - a) * smooth((t - (delay or 0)) / (dur or 0.5)) end
-function anim.count(t, from, to, dur) return math.floor(from + (to - from) * smooth(t / (dur or 1.0)) + 0.5) end
+-- count-up: DECELERATES to a stop (cubic-out) — paired with the library/sfx/ticker.wav
+-- tick train, whose tick times are this ease's inverse at equal value steps
+function anim.count(t, from, to, dur) return math.floor(from + (to - from) * anim.out_cubic(t / (dur or 1.0)) + 0.5) end
 -- element i (1-based) reveals after (i-1)*step seconds, over dur → 0..1 (staggered list/line reveals)
 function anim.stagger(t, i, step, dur) return anim.rise(t - (i - 1) * (step or 0.08), dur or 0.4) end
 -- typewriter: the leading chars of `str` shown at time t (utf8-aware; cps = chars/sec)
@@ -111,7 +113,9 @@ function anim.spring_path(t, path, st, dm)
   if t > settle then local x, y = target(1e9); return x, y, 0, 0 end
   local dt = 1 / 60
   local px, py = target(0); local vx, vy = 0, 0; local ppx, ppy = px, py
-  for i = 1, math.min(math.floor(t / dt), 240) do   -- hard cap (belt-and-suspenders past the settle early-out)
+  -- integration cap tracks `settle` (a fixed 240 froze any path with moves past 4s)
+  local cap = math.floor(settle / dt) + 30
+  for i = 1, math.min(math.floor(t / dt), cap) do   -- hard cap (belt-and-suspenders past the settle early-out)
     ppx, ppy = px, py
     local tx, ty = target(i * dt)
     px, vx = anim.spring_step(px, vx, tx, dt, st, dm)
@@ -397,6 +401,122 @@ function widgets.slidein(t, d)
       kids[#kids + 1] = box{ float = "tl", fx = x * W - lw * 0.5, fy = ly,
         w = lw, kids = { text(it.label, { size = it.label_size or 60, ta = "c",
           col = theme.fade(it.label_col or theme.acc, le) }) } }
+    end
+  end
+  return box{ growx = true, growy = true, kids = kids }
+end
+
+-- CODEWALL — the coverage-maxxing camera move over a baked code POSTER (tools/prerender/
+-- codewall.py + its sidecar of named rects). Starts framed on ONE function and ACCELERATES
+-- out to the whole wall (`ease="in_cubic"`, the b05 reveal), or the reverse: decelerate IN
+-- to a function (`ease="out_cubic"`, the b51 callback). Aspect-correct (no stretch): the crop
+-- always matches the frame's aspect; only the zoom + center are animated. REUSABLE — pass any
+-- poster + two rects. data:
+--   { image=uri, img_w, img_h,             -- poster pixel size (from the sidecar)
+--     from={x,y,w,h}, to={x,y,w,h},         -- source rects to frame (0..1); `to` = {0,0,1,1} for the whole wall
+--     dur=sec, ease="in_cubic"|"out_cubic"|"io_cubic", hold=sec(dwell on `from` first),
+--     margin=1.35 (how much slack around a framed function) }
+function widgets.codewall(t, d)
+  d = d or {}
+  local fa = ((frame and frame.w) or 1920) / ((frame and frame.h) or 1080)
+  local ia = (d.img_w or 1920) / (d.img_h or 1080)
+  local margin = d.margin or 1.35
+  -- the crop that frames a source rect at the frame's aspect (aspect ratio of the crop in
+  -- normalized source coords is fa/ia), clamped inside the poster.
+  local function frame_rect(r)
+    r = r or { 0, 0, 1, 1 }
+    local cx, cy = r[1] + r[3] * 0.5, r[2] + r[4] * 0.5
+    local ch = margin * math.max(r[4], r[3] * ia / fa)   -- crop height (source-norm)
+    local cw = ch * fa / ia
+    if cw > 1 then ch, cw = ch / cw, 1 end
+    if ch > 1 then cw, ch = cw / ch, 1 end
+    return cx, cy, cw, ch
+  end
+  local fcx, fcy, fcw, fch = frame_rect(d.from)
+  local tcx, tcy, tcw, tch = frame_rect(d.to)
+  local raw = ((t - (d.hold or 0)) / (d.dur or 4.0))
+  local e = anim.tween(raw, 1.0, d.ease or "in_cubic")     -- dur folded into raw so tween sees 0..1
+  -- geometric (log) zoom interpolation reads as a steady optical zoom
+  local ch = fch * (tch / fch) ^ e
+  local cw = ch * fa / ia
+  if cw > 1 then ch, cw = ch / cw, 1 end
+  local cx = fcx + (tcx - fcx) * e
+  local cy = fcy + (tcy - fcy) * e
+  cx = anim.clamp(cx, cw * 0.5, 1 - cw * 0.5)
+  cy = anim.clamp(cy, ch * 0.5, 1 - ch * 0.5)
+  local crop = { cx - cw * 0.5, cy - ch * 0.5, cw, ch }
+  local kids = { image{ asset = d.image, grow = true, crop = crop, fit = "cover" } }
+  if d.title and d.title ~= "" then
+    kids[#kids + 1] = box{ float = "tr", fx = -28, fy = 28, pad = 12, radius = 10,
+      bg = theme.fade(theme.bg, 0.8), kids = { text(d.title, { size = 24, col = theme.accent(1) }) } }
+  end
+  return box{ growx = true, growy = true, kids = kids }
+end
+
+-- DRAG-IN — N receipt cards dragged in sequentially by a mouse cursor with the balatro
+-- velocity-spring dangle. Each card = an image (optionally cropped), a caption, and an optional
+-- DETAIL STRIP: a crop-zoom of the load-bearing region (e.g. a HUD readout) that pops in under
+-- the card at its own time. Cards can be re-parked mid-scene via a multi-leg path (card 1 slides
+-- aside when card 2 arrives). data:
+--   { items = { { image=uri, crop={x,y,w,h}?, w=0..1(pw), delay=sec,
+--       path={ {t,x,y}, ... }(0..1 frame fractions, t RELATIVE to delay), settle=sec,
+--       label="...", label_col={r,g,b},
+--       detail={ crop={x,y,w,h}, label="...", col={r,g,b}, at=sec(scene time) }? }, ... },
+--     cursor_img=uri, img_aspect=w/h(source, default 4/3) }
+function widgets.dragin(t, d)
+  d = d or {}
+  local W, H = (frame and frame.w) or 1920, (frame and frame.h) or 1080
+  local kids = {}
+  for _, it in ipairs(d.items or {}) do
+    local lt = t - (it.delay or 0)
+    local path = it.path or { { t = 0, x = -0.5, y = 0.6 }, { t = 0.3, x = 0.5, y = 0.45 } }
+    path.settle = it.settle or 3.0
+    local x, y, dx, dy = anim.spring_path(lt, path, it.stiffness or 80, it.damping or 11)
+    local rot = anim.clamp(dx * (it.lean or 26), -14, 14)
+    local mb = (it.blur ~= false) and { dx * W * 0.6, dy * H * 0.6 } or nil
+    local cw = math.floor((it.w or 0.34) * W)
+    local asp = it.img_aspect or d.img_aspect or (4 / 3)
+    local crop = it.crop
+    if crop then asp = asp * (crop[3] / crop[4]) end   -- crop scales the aspect by its own w/h ratio
+    local ck = { image{ asset = it.image, w = cw, h = math.floor(cw / asp),
+      crop = crop, radius = 10, glow = it.glow or 0, mb = mb } }
+    if it.label then
+      ck[#ck + 1] = text(it.label, { size = it.label_size or 32, ta = "c", wrap = "words",
+        col = it.label_col or theme.dim })
+    end
+    local det = it.detail
+    if det then
+      local de = anim.rise(t - (det.at or 0), 0.4)
+      local dcrop = det.crop or { 0, 0, 1, 1 }
+      local dasp = (it.img_aspect or d.img_aspect or (4 / 3)) * (dcrop[3] / dcrop[4])
+      if de > 0.01 then
+        ck[#ck + 1] = box{ radius = 8, clip = true, t_op = de, t_y = (1 - de) * 16, kids = {
+          image{ asset = it.image, w = cw, h = math.floor(cw / dasp), crop = dcrop } } }
+        ck[#ck + 1] = text(det.label or "", { size = det.label_size or 36, ta = "c",
+          col = theme.fade(det.col or theme.acc, de), t_op = de })
+      end
+    end
+    kids[#kids + 1] = box{ float = "tl", fx = x * W - cw * 0.5, fy = y * H, w = cw,
+      kids = { col{ gap = 14, ax = "c", t_rot = rot, kids = ck } } }
+    -- the cursor "holding" this card: leads the spring (rides the raw path target), visible
+    -- from just before this card's entry until it settles, then eases off toward the top-right
+    if d.cursor_img then
+      local function target(tt)
+        if tt <= path[1].t then return path[1].x, path[1].y end
+        for i = 2, #path do
+          if tt <= path[i].t then local a, b = path[i - 1], path[i]
+            local f = (tt - a.t) / math.max(1e-4, b.t - a.t); return a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f end
+        end
+        return path[#path].x, path[#path].y
+      end
+      local grabdur = (path[#path].t or 0.4) + (it.cursor_hold or 0.9)
+      if lt >= -0.01 and lt < grabdur + 0.8 then
+        local tx, ty = target(lt)
+        local ex = anim.tween(lt - grabdur, 0.6, "in_cubic")
+        local cx = tx * W + ex * (W - tx * W + 160)
+        local cy = ty * H - 26 - ex * 220
+        kids[#kids + 1] = image{ asset = d.cursor_img, w = 46, aspect = true, float = "tl", fx = cx, fy = cy }
+      end
     end
   end
   return box{ growx = true, growy = true, kids = kids }
@@ -1311,13 +1431,27 @@ function widgets.table(t, d)
   local rows = d.rows or {}
   local rtop = ty0 + fp * 1.9
   local rowh = math.min(fp * 2.5, (cy1 - fp * 1.2 - rtop) / math.max(1, #rows))
+  -- narrated row highlight: d.highlight = { {row=1, at=sec}, ... } — at clip time `at` that
+  -- row becomes the active one (accent bar sweeps in, other rows dim back)
+  local hrow, hat = nil, -1
+  for _, h in ipairs(d.highlight or {}) do
+    if t >= (h.at or 0) and (h.at or 0) >= hat then hrow = h.row; hat = h.at or 0 end
+  end
   for ri, row in ipairs(rows) do
     local e = anim.rise(t - (ri - 1) * 0.12, 0.42)
     local ry = rtop + (ri - 0.5) * rowh
+    if hrow == ri then
+      local he = anim.rise(t - hat, 0.35)
+      kids[#kids + 1] = pxrect(tx0 - fp * 0.35, ry - rowh * 0.46,
+        (tx1 - tx0) + fp * 0.7, rowh * 0.92,
+        theme.fade({ co.acc[1], co.acc[2], co.acc[3], 46 }, he), fp * 0.25,
+        1, theme.fade({ co.acc[1], co.acc[2], co.acc[3], 110 }, he))
+    end
+    local dimf = (hrow and hrow ~= ri) and 0.45 or 1.0
     for ci, cell in ipairs(row) do
       local s, col = cell, co.txt
       if type(cell) == "table" then s = cell.s or ""; col = cell.col or co.fg end
-      kids[#kids + 1] = pxtext(s, colx[ci], ry, fp * 0.82, theme.fade(_col(col), e), 0, 0.5)
+      kids[#kids + 1] = pxtext(s, colx[ci], ry, fp * 0.82, theme.fade(_col(col), e * dimf), 0, 0.5)
     end
   end
   if d.footer then kids[#kids + 1] = pxtext(d.footer, cx0, cy1 - fp * 0.85, fp * 0.66, co.sub, 0, 0) end
