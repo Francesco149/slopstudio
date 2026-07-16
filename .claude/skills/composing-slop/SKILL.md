@@ -29,6 +29,8 @@ session**). The reference cut + all conventions are in `docs/LLM_WORKFLOW.md`; f
    rest on lame; then `retime` time-warps the timeline onto the real audio durations (rate-aware for shorts)
    + adds a **scene crossfade** on full-frame cuts. Split every sentence into its own TTS clip; tune
    intonation per clip (see `gemma-voice-tts`).
+   - **Contractions by default** (owner) — write "it's" not "it is", "that's" not "that is". Reads less
+     stiff and the TTS delivers it snappier; keep the full form only when a line is deliberately emphatic.
    - **NEVER genvo a laugh/giggle** — the TTS can't say "fufu" and stumbles on "heh", so the signature giggle
      is the RECORDED **`presets/voice-snips/gemma-heh.wav`** (the "Heh~" from luckymas3 b01). The compiler now
      does this AUTOMATICALLY: a beat whose LINE is just a laugh (`Heh~` / `Fufu~` / `heh heh` / `ふふふ` /
@@ -60,6 +62,11 @@ session**). The reference cut + all conventions are in `docs/LLM_WORKFLOW.md`; f
   screenshots, code cropped to the load-bearing lines only.
 - **Teach a chart's grammar before plotting the reveal on it**; big numbers get stat
   cards.
+- **Reveal animation (owner):** big single framed media (a photo / footage inset) reveals with the
+  **tilt+slide** — `visual.reveal:"tilt"` (from the right) or `"tilt-l"` (left); vary direction between
+  adjacent reveals. fit/inset media **defaults to `tilt`**. The scale-**pop** is now *rare* — reserve it
+  for **small insets or staggered multiples** (a `stack` still pops-pops-pops). `reveal` also accepts
+  `slide-l|slide-r|rise|fade|none`.
 - When no footage exists for a claim, STAGE it (A/B mockup, repro save, XP-VM capture) —
   fabricating the demonstration is the normal path, not extra credit.
 

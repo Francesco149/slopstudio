@@ -251,23 +251,40 @@ PRESETS = {  # axis/off = positional offset to enter from; spring=[stiffness,dam
     "slide-l":     {"axis": "x", "off": -420, "spring": [130, 22]},
     "slide-r":     {"axis": "x", "off":  420, "spring": [130, 22]},
     "pop":         {"scale": 0.5, "spring": [240, 15]},               # scale up with a little overshoot
+    # tilt = the fancy big-reveal: slide in WHILE rotated, righting itself with a soft overshoot. The
+    # default for framed (fit/inset) media — pop is reserved for small insets / staggered multiples.
+    "tilt":        {"axis": "x", "off":  360, "rot":  6, "spring": [120, 17]},   # from the right
+    "tilt-l":      {"axis": "x", "off": -360, "rot": -6, "spring": [120, 17]},   # from the left
     "fade":        {},                                                # opacity only
 }
 def apply_transition(p, cid, preset, indur=0.9, do_out=True):
     c = p["clips"][cid]; tf = c.get("transform", {})
-    pos = list(tf.get("pos", [0, 0])); scl = list(tf.get("scale", [1, 1]))
+    pos = list(tf.get("pos", [0, 0])); scl = list(tf.get("scale", [1, 1])); rot = float(tf.get("rot", 0.0))
     s = c["start"]; e = s + c["dur"]; P = PRESETS[preset]
     kfs = c.setdefault("keyframes", OD())
-    for k in ("transform.pos", "transform.scale", "transform.opacity"): kfs.pop(k, None)  # replace stale transform anim
+    for k in ("transform.pos", "transform.scale", "transform.opacity", "transform.rot"): kfs.pop(k, None)  # replace stale transform anim
     if P.get("axis") == "y":
         kfs["transform.pos"] = [_kf(s, [pos[0], pos[1] + P["off"]], "spring", P["spring"]), _kf(s + indur, pos)]
     elif P.get("axis") == "x":
         kfs["transform.pos"] = [_kf(s, [pos[0] + P["off"], pos[1]], "spring", P["spring"]), _kf(s + indur, pos)]
     elif "scale" in P:
         kfs["transform.scale"] = [_kf(s, [scl[0]*P["scale"], scl[1]*P["scale"]], "spring", P["spring"]), _kf(s + indur, scl)]
+    if "rot" in P:   # a tilt that rights itself — rides ALONGSIDE the slide above (fancy reveal)
+        kfs["transform.rot"] = [_kf(s, rot + P["rot"], "spring", P["spring"]), _kf(s + indur, rot)]
     op = [_kf(s, 0.0, "bezier"), _kf(s + min(0.4, indur), 1.0)]
     if do_out and e - s > 1.0: op += [_kf(e - 0.4, 1.0, "bezier"), _kf(e, 0.0, "bezier")]
     kfs["transform.opacity"] = op
+
+def _reveal_media(p, cid, v, lay):
+    """Entrance for a single framed media clip. `reveal:"tilt|slide-l|slide-r|rise|pop|fade|none"`
+    overrides; the DEFAULT for fit/inset media is the fancy tilt-slide. pop is reserved for small
+    insets / stacked multiples (the staggered unveil); fullscreen footage just cuts (eras)."""
+    if not cid: return
+    rev = v.get("reveal")
+    if rev is None:
+        rev = "tilt" if lay in ("fit", "inset") else None
+    if rev and rev != "none" and rev in PRESETS:
+        apply_transition(p, cid, rev, 0.8, do_out=False)
 
 # ── overview: compact timeline (structured + ascii lanes) ──
 def desc_of(c):
@@ -645,6 +662,7 @@ def cmd_skeleton(a):
                 cid=new_clip(p,"image","r_img",at,vdur,prm,f"{pref}{sfx}_img")
                 p["clips"][cid]["asset"]=asset_for(uri,"image")
                 fill = (lay!="fullscreen") and bool(v.get("blur_fill", False))   # inset default = bare checker bg; blur_fill:true opts into the blurred backdrop (nice photos)
+                _reveal_media(p, cid, v, lay)   # fancy tilt-slide reveal (default for fit/inset)
             elif "video" in v:
                 prm=OD([("layout",lay),("in",float(v.get("in",0.0))),("video_volume",v.get("volume",0.12)),("loop",True)])
                 if "crop" in v: prm["crop"]=v["crop"]          # [x,y,w,h] source fractions (the copy dialog in a full desktop grab)
@@ -653,6 +671,7 @@ def cmd_skeleton(a):
                 cid=new_clip(p,"video","r_video",at,vdur,prm,f"{pref}{sfx}_vid")
                 p["clips"][cid]["asset"]=asset_for(v["video"],"video")
                 fill = (lay!="fullscreen") and bool(v.get("blur_fill", False))   # inset default = bare checker bg; blur_fill:true opts in
+                _reveal_media(p, cid, v, lay)   # fancy tilt-slide reveal (default for fit/inset)
             elif "stack" in v:
                 # multiple images shown together — zoom-crop pairs (menu bar + tasks), a banner +
                 # the site under it, a collage of wallpapers/savers. side:"center" = 2 stacked big,
