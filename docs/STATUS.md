@@ -4,6 +4,18 @@ Hand-maintained "what's true right now." **Read this first after `CLAUDE.md`** a
 in the same change that lands work, so a fresh session reorients in ~60s. Last updated:
 **2026-07-17**. For composing a video as an agent, **`docs/LLM_WORKFLOW.md`**.
 
+**★ SLOPTHUMB MANIPULATION OVERHAUL (2026-07-17) — the teidraw/cosmic2d editor feel, ported. Docs: `docs/THUMBNAIL_TOOL.md` § GUI:**
+Unified canvas gizmo (rotation-aware content-hugging OBBs · corner scale about the fixed opposite
+corner · rotate ring outside the corners with shift=15° · **ctrl+corner CROP on images** with full-source
+ghost — new engine `crop:[u0,v0,u1,v1]` param, density-preserving · text wrap-width + rect/mosaic edge
+handles · arrow endpoint dots) · marquee + shift multi-select · ctrl=snap-with-guides, shift=axis-lock ·
+**gesture-settle undo** (a drag / wheel burst / nudge run = ONE step — was one per frame) · `[`/`]` z-step
+(shift = to back/front) · arrow-key nudge · Esc revert/deselect · right-click context menu ·
+**OS drag-drop images → branded `card` layer at the drop point** with an inspector style combo
+(sticker/plain/card/…) · chrome = the editor's cosmic2d theme · new **`--drive` scripted-input harness**
+(all gestures verified end-to-end via driven screenshots). Fixed en route: `--shot` regression where a
+loaded doc was replaced by the blank starter.
+
 **★ EDITOR ROUGH-EDGES PASS (2026-07-17) — 6 owner-requested UX fixes, all built + editor rebuilt:**
 1. **Grab / slip mode (`g`)** — press `g` on a selected **timed** clip (tts/music/video) to slide its
    CONTENTS (source `in`-point) under the fixed clip window without moving the clip ("start it from the

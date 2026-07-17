@@ -153,6 +153,10 @@ static RGBA parse_hex_color(const std::string& s, bool* ok = nullptr) {
 // ───────────────────────────── images ───────────────────────────────────────
 struct Img {                       // RGBA8, straight (non-premultiplied) alpha
     int w = 0, h = 0;
+    // tight bbox of the VISIBLE content inside this block (block px; excludes
+    // glow/shadow headroom AND source transparency) — the GUI's selection box
+    // hugs this, not the padded block. cx1<=cx0 means "unset → whole block".
+    float cx0 = 0, cy0 = 0, cx1 = 0, cy1 = 0;
     std::vector<uint8_t> px;
     void alloc(int W, int H) { w = W; h = H; px.assign((size_t)W * H * 4, 0); }
     uint8_t* at(int x, int y) { return &px[((size_t)y * w + x) * 4]; }
@@ -632,7 +636,12 @@ static float sd_triangle(float px, float py, const float v[6]) {
 }
 
 // ─────────────────────────── document rendering ────────────────────────────
-struct LayerInfo { std::string id, type; float x0 = 0, y0 = 0, x1 = 0, y1 = 0; };
+struct LayerInfo {
+    std::string id, type;
+    float x0 = 0, y0 = 0, x1 = 0, y1 = 0;       // logical bbox of the whole block (incl. fx headroom)
+    float px0 = 0, py0 = 0, px1 = 0, py1 = 0;   // logical bbox of the VISIBLE content, in the layer's
+                                                // UNROTATED frame (rotate about the block center)
+};
 
 static std::map<std::string, Img>& image_cache() { static std::map<std::string, Img> c; return c; }
 static Img* get_image(const std::string& path) {
@@ -851,10 +860,37 @@ static bool build_layer(const json& L, const Brand& brand, const std::string& do
                 return false;
             }
             float scale = (float)jf(L, "scale", 1.0);
-            float targetH = scale * ch * SS;
-            float targetW = targetH * im->w / im->h;
-            Img scaled; resize_img(*im, scaled, std::max(1, (int)lroundf(targetW)), std::max(1, (int)lroundf(targetH)));
-            if (jb(L, "flip", false)) {
+            // crop: [u0,v0,u1,v1] normalized sub-rect of the DISPLAYED (post-flip) source kept
+            // visible. Pixel density stays that of the uncropped image at this scale — cropping
+            // trims the card, it never rescales the remaining content (the teidraw crop feel).
+            float cu0 = 0, cv0 = 0, cu1 = 1, cv1 = 1;
+            if (L.contains("crop") && L["crop"].is_array() && L["crop"].size() == 4) {
+                cu0 = clampf((float)L["crop"][0].get<double>(), 0.f, 1.f);
+                cv0 = clampf((float)L["crop"][1].get<double>(), 0.f, 1.f);
+                cu1 = clampf((float)L["crop"][2].get<double>(), 0.f, 1.f);
+                cv1 = clampf((float)L["crop"][3].get<double>(), 0.f, 1.f);
+                if (cu1 - cu0 < 0.005f) cu1 = std::min(1.f, cu0 + 0.005f);
+                if (cv1 - cv0 < 0.005f) cv1 = std::min(1.f, cv0 + 0.005f);
+            }
+            bool flip = jb(L, "flip", false);
+            const Img* srcIm = im;
+            Img croppedSrc;
+            if (cu0 > 0.0001f || cv0 > 0.0001f || cu1 < 0.9999f || cv1 < 0.9999f) {
+                // crop coords are display-space; a flipped layer samples mirrored source columns
+                float su0 = flip ? 1.f - cu1 : cu0, su1 = flip ? 1.f - cu0 : cu1;
+                int sx0 = std::max(0, std::min(im->w - 1, (int)lroundf(su0 * im->w)));
+                int sx1 = std::max(sx0 + 1, std::min(im->w, (int)lroundf(su1 * im->w)));
+                int sy0 = std::max(0, std::min(im->h - 1, (int)lroundf(cv0 * im->h)));
+                int sy1 = std::max(sy0 + 1, std::min(im->h, (int)lroundf(cv1 * im->h)));
+                croppedSrc.alloc(sx1 - sx0, sy1 - sy0);
+                for (int y = 0; y < croppedSrc.h; y++)
+                    memcpy(croppedSrc.at(0, y), im->at(sx0, y + sy0), (size_t)croppedSrc.w * 4);
+                srcIm = &croppedSrc;
+            }
+            float targetH = scale * ch * SS * (cv1 - cv0);
+            float targetW = scale * ch * SS * (cu1 - cu0) * im->w / im->h;
+            Img scaled; resize_img(*srcIm, scaled, std::max(1, (int)lroundf(targetW)), std::max(1, (int)lroundf(targetH)));
+            if (flip) {
                 for (int y = 0; y < scaled.h; y++)
                     for (int x = 0; x < scaled.w / 2; x++) {
                         uint8_t* a = scaled.at(x, y), * b = scaled.at(scaled.w - 1 - x, y);
@@ -867,6 +903,20 @@ static bool build_layer(const json& L, const Brand& brand, const std::string& do
             block->alloc(scaled.w + mg * 2, scaled.h + mg * 2);
             blit_over(*block, scaled, mg, mg);
             apply_fx(*block, fx);
+            {   // tight alpha bbox of the sprite (sources often carry transparent padding)
+                // + the sticker outline = the content box the GUI selection hugs.
+                // MUST be set after apply_fx — it move-replaces the Img wholesale.
+                int ax0 = scaled.w, ay0 = scaled.h, ax1 = -1, ay1 = -1;
+                for (int y = 0; y < scaled.h; y++) {
+                    const uint8_t* p = scaled.at(0, y) + 3;
+                    for (int x = 0; x < scaled.w; x++, p += 4)
+                        if (*p > 8) { if (x < ax0) ax0 = x; if (x > ax1) ax1 = x; if (y < ay0) ay0 = y; if (y > ay1) ay1 = y; }
+                }
+                if (ax1 < ax0) { ax0 = 0; ay0 = 0; ax1 = scaled.w - 1; ay1 = scaled.h - 1; }
+                float ox = fx.outline_px + 1;
+                block->cx0 = std::max(0.f, mg + ax0 - ox); block->cy0 = std::max(0.f, mg + ay0 - ox);
+                block->cx1 = std::min((float)block->w, mg + ax1 + 1 + ox); block->cy1 = std::min((float)block->h, mg + ay1 + 1 + ox);
+            }
             if (!transient) block_cache_store(key, block);
         }
         out.block = block;
@@ -874,6 +924,10 @@ static bool build_layer(const json& L, const Brand& brand, const std::string& do
         out.rot = (float)jf(L, "rot", 0); out.opacity = (float)jf(L, "opacity", 1.0);
         float ex = block->w / 2.f / SS, ey = block->h / 2.f / SS;
         li.x0 = out.cx / SS - ex; li.y0 = out.cy / SS - ey; li.x1 = out.cx / SS + ex; li.y1 = out.cy / SS + ey;
+        if (block->cx1 > block->cx0) {
+            li.px0 = li.x0 + block->cx0 / SS; li.py0 = li.y0 + block->cy0 / SS;
+            li.px1 = li.x0 + block->cx1 / SS; li.py1 = li.y0 + block->cy1 / SS;
+        } else { li.px0 = li.x0; li.py0 = li.y0; li.px1 = li.x1; li.py1 = li.y1; }
         return true;
     }
 
@@ -943,6 +997,12 @@ static bool build_layer(const json& L, const Brand& brand, const std::string& do
                 blit_over(plateImg, *block, 0, 0);
                 *block = std::move(plateImg);
             }
+            {   // visible content = glyphs + stroke or plate, whichever reaches further
+                // (set after apply_fx/plate — both move-replace the Img wholesale)
+                float exX = std::max(fx.outline_px, platePadX), exY = std::max(fx.outline_px, platePadY);
+                block->cx0 = std::max(0.f, mg - exX); block->cy0 = std::max(0.f, mg - exY);
+                block->cx1 = std::min((float)block->w, mg + tm.w + exX); block->cy1 = std::min((float)block->h, mg + tm.h + exY);
+            }
             if (!transient) block_cache_store(key, block);
         }
         out.block = block;
@@ -950,6 +1010,10 @@ static bool build_layer(const json& L, const Brand& brand, const std::string& do
         out.rot = (float)jf(L, "rot", 0); out.opacity = (float)jf(L, "opacity", 1.0);
         float ex = block->w / 2.f / SS, ey = block->h / 2.f / SS;
         li.x0 = out.cx / SS - ex; li.y0 = out.cy / SS - ey; li.x1 = out.cx / SS + ex; li.y1 = out.cy / SS + ey;
+        if (block->cx1 > block->cx0) {
+            li.px0 = li.x0 + block->cx0 / SS; li.py0 = li.y0 + block->cy0 / SS;
+            li.px1 = li.x0 + block->cx1 / SS; li.py1 = li.y0 + block->cy1 / SS;
+        } else { li.px0 = li.x0; li.py0 = li.y0; li.px1 = li.x1; li.py1 = li.y1; }
         return true;
     }
 
@@ -1025,12 +1089,23 @@ static bool build_layer(const json& L, const Brand& brand, const std::string& do
                 }
             }
             apply_fx(*block, fx);
+            {   // geometric bounds + outline (after apply_fx — it move-replaces the Img)
+                float ox = fx.outline_px + 1;
+                block->cx0 = std::max(0.f, mg - ox); block->cy0 = std::max(0.f, mg - ox);
+                block->cx1 = std::min((float)bw, bw - mg + ox); block->cy1 = std::min((float)bh, bh - mg + ox);
+            }
             if (!transient) block_cache_store(key, block);
         }
         out.block = block;
         out.cx = (bx0 + bx1) / 2 * SS; out.cy = (by0 + by1) / 2 * SS;
         out.rot = (float)jf(L, "rot", 0); out.opacity = (float)jf(L, "opacity", 1.0);
         li.x0 = bx0; li.y0 = by0; li.x1 = bx1; li.y1 = by1;
+        // block coords → logical: block spans [bx0-mg/SS .. bx1+mg/SS]
+        if (block->cx1 > block->cx0) {
+            float lx = bx0 - mg / SS, ly = by0 - mg / SS;
+            li.px0 = lx + block->cx0 / SS; li.py0 = ly + block->cy0 / SS;
+            li.px1 = lx + block->cx1 / SS; li.py1 = ly + block->cy1 / SS;
+        } else { li.px0 = li.x0; li.py0 = li.y0; li.px1 = li.x1; li.py1 = li.y1; }
         return true;
     }
 

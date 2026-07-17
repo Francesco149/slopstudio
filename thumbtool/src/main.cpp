@@ -51,14 +51,18 @@ struct App {
     TexEntry previewTex;                          // CPU-fallback preview texture
     ID3D11ShaderResourceView* previewSrv = nullptr;  // what the panels draw (GPU RT or fallback)
     size_t renderedKey = 0;
-    int sel = -1;
+    int sel = -1;                        // primary selection (what the inspector shows)
+    std::vector<int> selMulti;           // full selection set (always contains sel when sel>=0)
+    bool focusText = false;              // double-clicked a text layer → focus the inspector text box
     std::string perf;                             // "build 3ms · composite 1ms (GPU)"
 
-    // undo (editor pattern: compact-dump snapshots at gesture settle)
+    // undo (teidraw pattern: doc mutates live during a gesture; ONE snapshot pushes
+    // when the gesture settles — so a drag is one undo step, not a hundred)
     std::deque<std::string> undo, redo;
     std::string undoBase;                // committed doc state
     std::string savedDump;               // last state loaded-from/saved-to disk
     bool undoDirty = false, activePrev = false;
+    double nudgeUndoAt = 0;              // arrow-key nudge burst coalescing deadline (teidraw: 0.6s)
 
     // external-edit watch
     fs::file_time_type docMtime{};
@@ -81,6 +85,62 @@ struct App {
 };
 static App g_app;
 
+// ───────────────────── canvas gizmo state (teidraw port) ────────────────────
+// One drag state machine for every canvas gesture. The doc mutates live from a
+// SNAPSHOT taken at press + the absolute offset since press (never incremental
+// deltas), so modifiers (shift axis-lock, ctrl snap) rewrite the drag without
+// drift and the undo system records exactly one step per gesture.
+enum DragMode { DM_NONE, DM_PENDING, DM_MOVE, DM_MARQUEE, DM_HANDLE, DM_ROTATE, DM_CROP, DM_EDGE, DM_ARROW_A, DM_ARROW_B };
+struct Gizmo {
+    DragMode mode = DM_NONE;
+    int layer = -1, handle = -1;            // handle: corner 0..3 (tl,tr,br,bl) or edge 0..3 (l,r,t,b)
+    ImVec2 pressL, pressScr;                // logical / screen coords at press
+    json snap;                              // primary layer snapshot at press
+    std::vector<std::pair<int, json>> snaps;  // all selected layers at press (move)
+    ImVec2 fixedL, centerL;                 // scale: fixed opposite corner + obb center at press
+    float startDist = 1;
+    float startAngle = 0; ImVec2 pivotL;    // rotate
+    float boundsMn[2] = {0, 0}, boundsMx[2] = {0, 0};   // moving selection AABB at press (snap)
+    bool moved = false;
+    float iw = 0, ih = 0;                   // crop: source image dims
+    std::vector<int> marqueeBase;           // selection kept under a shift-marquee
+    double lastClickT = -1e9; ImVec2 lastClickScr; int lastClickLayer = -1;
+};
+static Gizmo g_giz;
+
+// OS file drop (WM_DROPFILES) → pending list consumed by the canvas panel
+static std::vector<std::string> g_dropFiles; static POINT g_dropPt{}; static bool g_hasDrop = false;
+
+// canvas placement of the last frame (drive scripts address logical canvas coords)
+static ImVec2 g_canvasP0(0, 0); static float g_canvasSc = 1;
+
+static inline float deg2rad(float d) { return d * 3.14159265f / 180.f; }
+static inline ImVec2 rot_vec(ImVec2 v, float a) {
+    float s = sinf(a), c = cosf(a);
+    return ImVec2(v.x * c - v.y * s, v.x * s + v.y * c);
+}
+static inline ImVec2 rot_about(ImVec2 p, ImVec2 c, float a) {
+    ImVec2 d(p.x - c.x, p.y - c.y), r = rot_vec(d, a);
+    return ImVec2(c.x + r.x, c.y + r.y);
+}
+static inline float vlen(ImVec2 v) { return sqrtf(v.x * v.x + v.y * v.y); }
+
+static bool sel_contains(int i) {
+    for (int s : g_app.selMulti) if (s == i) return true;
+    return false;
+}
+static void select_one(int i) { g_app.sel = i; g_app.selMulti.assign(1, i); }
+static void sel_clear() { g_app.sel = -1; g_app.selMulti.clear(); }
+static void sel_toggle(int i) {
+    for (size_t k = 0; k < g_app.selMulti.size(); k++)
+        if (g_app.selMulti[k] == i) {
+            g_app.selMulti.erase(g_app.selMulti.begin() + k);
+            g_app.sel = g_app.selMulti.empty() ? -1 : g_app.selMulti.back();
+            return;
+        }
+    g_app.selMulti.push_back(i); g_app.sel = i;
+}
+
 // ───────────────────────────── d3d11 boilerplate ────────────────────────────
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
 
@@ -100,6 +160,21 @@ static LRESULT WINAPI wnd_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
         }
         return 0;
     case WM_DESTROY: PostQuitMessage(0); return 0;
+    case WM_DROPFILES: {                     // drag image files from the OS onto the canvas
+        HDROP hd = (HDROP)w;
+        UINT n = DragQueryFileW(hd, 0xFFFFFFFF, nullptr, 0);
+        for (UINT i = 0; i < n; i++) {
+            wchar_t wb[2048] = {0};
+            if (!DragQueryFileW(hd, i, wb, 2048)) continue;
+            char ub[4096] = {0};
+            WideCharToMultiByte(CP_UTF8, 0, wb, -1, ub, sizeof ub, nullptr, nullptr);
+            g_dropFiles.push_back(ub);
+        }
+        DragQueryPoint(hd, &g_dropPt);       // client coords == ImGui screen coords (single viewport)
+        g_hasDrop = !g_dropFiles.empty();
+        DragFinish(hd);
+        return 0;
+    }
     }
     return DefWindowProcW(h, m, w, l);
 }
@@ -124,9 +199,10 @@ static void upload_tex(TexEntry& t, const Img& img) {
 }
 
 static TexEntry* thumb_tex(const std::string& path, int maxPx = 128) {
-    auto it = g_app.thumbCache.find(path);
+    std::string key = path + "@" + std::to_string(maxPx);   // same file at 96px (sprite) vs 512px (crop ghost) coexists
+    auto it = g_app.thumbCache.find(key);
     if (it != g_app.thumbCache.end()) return it->second.srv ? &it->second : nullptr;
-    TexEntry& t = g_app.thumbCache[path];
+    TexEntry& t = g_app.thumbCache[key];
     Img im;
     if (!load_image(path, im)) return nullptr;
     float sc = std::min(1.f, maxPx / (float)std::max(im.w, im.h));
@@ -406,7 +482,7 @@ static bool load_doc(const std::string& path) {
     g_app.docDir = path_dir(path);
     g_app.undoBase = g_app.doc.dump();
     g_app.savedDump = g_app.undoBase;
-    g_app.sel = -1;
+    sel_clear();
     resolve_brand();
     load_undo_log();
     std::error_code ec;
@@ -429,9 +505,16 @@ static bool save_doc() {
     return true;
 }
 
+// Gesture-settle undo (the teidraw rule): the doc mutates live while ANY gesture
+// is in flight — an active widget, a canvas gizmo drag, a ctrl+wheel burst, an
+// arrow-key nudge burst — and exactly ONE snapshot pushes when everything
+// settles. The identical-snapshot guard drops no-op gestures for free.
 static void undo_settle_check() {
-    bool active = ImGui::IsAnyItemActive();
-    if ((g_app.activePrev && !active) || g_app.undoDirty) {
+    double now = ImGui::GetTime();
+    if (g_app.nudgeUndoAt > 0 && now >= g_app.nudgeUndoAt) g_app.nudgeUndoAt = 0;
+    bool gesture = ImGui::IsAnyItemActive() || g_giz.mode != DM_NONE
+                || g_app.wheelGesture > 0 || g_app.nudgeUndoAt > 0;
+    if (!gesture && (g_app.activePrev || g_app.undoDirty)) {
         std::string cur = g_app.doc.dump();
         if (cur != g_app.undoBase) {
             g_app.undo.push_back(g_app.undoBase);
@@ -442,7 +525,7 @@ static void undo_settle_check() {
         }
         g_app.undoDirty = false;
     }
-    g_app.activePrev = active;
+    g_app.activePrev = gesture;
 }
 static void do_undo() {
     if (g_app.undo.empty()) return;
@@ -571,25 +654,47 @@ static std::string unique_id(const char* base) {
 }
 static void add_layer(json l, bool select = true) {
     layers().push_back(std::move(l));
-    if (select) g_app.sel = (int)layers().size() - 1;
+    if (select) select_one((int)layers().size() - 1);
     g_app.undoDirty = true;
 }
 static int canvas_w() { auto& d = g_app.doc; return d.contains("canvas") && d["canvas"].is_array() ? d["canvas"][0].get<int>() : 1280; }
 static int canvas_h() { auto& d = g_app.doc; return d.contains("canvas") && d["canvas"].is_array() ? d["canvas"][1].get<int>() : 720; }
 
-// Stamp the brand package's reusable image treatment onto a layer — the one-click "set it up the
-// branded way (tilt + border + glow)" the owner wanted. Reads brand.image_styles[style] so the look
-// stays in sync with the package (falls back to a sane literal); writes LITERAL rot/outline_px/glow
-// onto the layer so they stay visible + tweakable in the inspector afterwards. The white sticker
-// border + drop shadow already come free from brand.sticker.
-static void brand_image(json& L, const char* style = "card") {
-    const json& styles = g_app.brand.image_styles;
-    json c = styles.contains(style) ? styles[style] : json::object();
-    L["rot"]        = jf(c, "rot", -2.0);
-    L["outline_px"] = jf(c, "outline_px", 10.0);
-    L["glow"]       = (c.contains("glow") && c["glow"].is_object()) ? c["glow"]
-                                                                    : json{{"px", 30}, {"color", "$gold"}, {"alpha", 0.4}};
+// Image treatment styles — the brand package's reusable looks plus two built-ins:
+//   "sticker" = clear overrides so the brand.sticker defaults apply (border + shadow)
+//   "plain"   = raw image, no border/shadow/glow/tilt
+//   anything else = brand.image_styles[name] stamped as LITERAL values (visible +
+//   tweakable in the inspector afterwards). Falls back to the classic card look.
+static void apply_image_style(json& L, const std::string& style) {
+    for (const char* k : {"rot", "outline_px", "outline", "glow", "shadow"}) L.erase(k);
+    if (style == "plain") {
+        L["outline_px"] = 0;
+        L["shadow"] = json{{"off", true}};
+    } else if (style != "sticker") {
+        const json& styles = g_app.brand.image_styles;
+        json c = (styles.contains(style) && styles[style].is_object()) ? styles[style] : json::object();
+        if (c.empty()) c = json{{"rot", -2.0}, {"outline_px", 10.0},
+                                {"glow", json{{"px", 30}, {"color", "$gold"}, {"alpha", 0.4}}}};
+        for (auto& [k, v] : c.items()) if (k != "_comment") L[k] = v;
+    }
     g_app.undoDirty = true;
+}
+static void brand_image(json& L, const char* style = "card") { apply_image_style(L, style); }
+
+// name the treatment a layer currently wears (for the inspector's quick-style combo)
+static std::string detect_image_style(const json& L) {
+    for (auto& [name, st] : g_app.brand.image_styles.items()) {
+        if (!st.is_object() || name == "_comment") continue;
+        bool match = true;
+        for (auto& [k, v] : st.items()) { if (k == "_comment") continue; if (!L.contains(k) || L[k] != v) { match = false; break; } }
+        if (match) return name;
+    }
+    bool anyOverride = false;
+    for (const char* k : {"rot", "outline_px", "outline", "glow", "shadow"})
+        if (L.contains(k)) anyOverride = true;
+    if (!anyOverride) return "sticker";
+    if (jf(L, "outline_px", -1) == 0 && L.contains("shadow") && jb(L["shadow"], "off", false)) return "plain";
+    return "custom";
 }
 
 // ─────────────────────── inspector color/number widgets ─────────────────────
@@ -712,7 +817,9 @@ static void panel_layers() {
             std::replace(t.begin(), t.end(), '\n', ' ');
             label += "  \"" + t.substr(0, 14) + (t.size() > 14 ? ".." : "") + "\"";
         }
-        if (ImGui::Selectable(label.c_str(), g_app.sel == i)) g_app.sel = i;
+        if (ImGui::Selectable(label.c_str(), sel_contains(i))) {
+            if (ImGui::GetIO().KeyShift) sel_toggle(i); else select_one(i);
+        }
         if (ImGui::BeginPopupContextItem("lctx")) {
             if (ImGui::MenuItem("move up"))   { move = i; moveDir = 1; }
             if (ImGui::MenuItem("move down")) { move = i; moveDir = -1; }
@@ -724,13 +831,13 @@ static void panel_layers() {
     }
     if (move >= 0) {
         int j = move + moveDir;
-        if (j >= 0 && j < (int)ls.size()) { std::swap(ls[move], ls[j]); g_app.sel = j; g_app.undoDirty = true; }
+        if (j >= 0 && j < (int)ls.size()) { std::swap(ls[move], ls[j]); select_one(j); g_app.undoDirty = true; }
     }
     if (dup >= 0) {
         json c = ls[dup]; c["id"] = unique_id((js(c, "id", "layer") + "_").c_str());
-        ls.insert(ls.begin() + dup + 1, c); g_app.sel = dup + 1; g_app.undoDirty = true;
+        ls.insert(ls.begin() + dup + 1, c); select_one(dup + 1); g_app.undoDirty = true;
     }
-    if (del >= 0) { ls.erase(ls.begin() + del); g_app.sel = -1; g_app.undoDirty = true; }
+    if (del >= 0) { ls.erase(ls.begin() + del); sel_clear(); g_app.undoDirty = true; }
 
     ImGui::Separator();
     ImGui::TextDisabled("ADD");
@@ -745,7 +852,7 @@ static void panel_layers() {
             add_layer({{"id", unique_id("img")}, {"type", "image"}, {"src", std::string(file)}, {"x", canvas_w() / 2}, {"y", canvas_h() / 2}, {"scale", 0.8}});
     }
     ImGui::SameLine();
-    if (ImGui::SmallButton("image\xE2\x98\x85")) {   // add an image ALREADY branded (tilt + border + glow) — one action
+    if (ImGui::SmallButton("card..")) {   // add an image ALREADY branded (tilt + border + glow) — one action
         char file[1024] = "";
         OPENFILENAMEA ofn = {}; ofn.lStructSize = sizeof ofn;
         ofn.lpstrFilter = "Images\0*.png;*.jpg;*.jpeg;*.webp\0\0";
@@ -860,19 +967,41 @@ static void panel_inspector() {
         if (ImGui::InputText("src", &src, ImGuiInputTextFlags_EnterReturnsTrue) || ImGui::IsItemDeactivatedAfterEdit()) {
             if (src != js(L, "src", "")) { L["src"] = src; ch = true; }
         }
+        // quick treatment swap — the branded card default is one combo away from
+        // plain / sticker / any other brand image style
+        std::string curStyle = detect_image_style(L);
+        ImGui::SetNextItemWidth(160);
+        if (ImGui::BeginCombo("style", curStyle.c_str())) {
+            auto opt = [&](const std::string& name, const char* hint) {
+                if (ImGui::Selectable(name.c_str(), curStyle == name)) { apply_image_style(L, name); ch = true; }
+                if (hint && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", hint);
+            };
+            opt("sticker", "brand default: white border + drop shadow, no tilt/glow");
+            opt("plain", "raw image - no border, shadow, tilt or glow");
+            for (auto& [k, v] : g_app.brand.image_styles.items())
+                if (k != "_comment" && v.is_object()) opt(k, nullptr);
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("image treatment (from the '%s' brand package). Fine-tune rot / outline / glow below.", g_app.brand.name.c_str());
         ch |= num_field("x", L, "x", canvas_w() / 2.0); ImGui::SameLine(); ch |= num_field("y", L, "y", canvas_h() / 2.0);
         ch |= num_field("scale", L, "scale", 1.0, 0.005f, 0.02, 6);
         ch |= num_field("rot", L, "rot", 0, 0.2f, -180, 180);
         bool flip = jb(L, "flip", false);
         if (ImGui::Checkbox("flip", &flip)) { L["flip"] = flip; ch = true; }
+        if (L.contains("crop")) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("reset crop")) { L.erase("crop"); ch = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("cropped - ctrl+drag a corner handle on the canvas to re-crop");
+        } else {
+            ImGui::SameLine(); ImGui::TextDisabled("(ctrl+corner = crop)");
+        }
         ch |= num_field("opacity", L, "opacity", 1, 0.01f, 0, 1);
         ch |= num_field("outline_px", L, "outline_px", jf(g_app.brand.sticker, "outline_px", 0), 0.2f, 0, 60);
         ch |= color_field("outline", L, "outline", js(g_app.brand.sticker, "outline", "#ffffff"));
         ch |= fx_section(L);
-        if (ImGui::Button("\xE2\x98\x85 brand it (tilt + border + glow)")) { brand_image(L); ch = true; }   // one-click branded setup
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("stamp the brand '%s' card treatment onto this image: a slight tilt, the white sticker border,\nand a gold accent glow. Tweak rot / outline / glow above afterwards; change glow color for a different accent.", g_app.brand.name.c_str());
     } else if (type == "text") {
         std::string text = js(L, "text", "");
+        if (g_app.focusText) { ImGui::SetKeyboardFocusHere(); g_app.focusText = false; }
         if (ImGui::InputTextMultiline("text", &text, ImVec2(-1, 60))) { L["text"] = text; ch = true; }
         // style picker
         std::string style = js(L, "style", "headline");
@@ -974,65 +1103,485 @@ static void panel_sprites() {
     }
 }
 
-// canvas: preview + selection + drag-to-move + squint inset
+// ─────────────── canvas: preview + unified manipulation (teidraw port) ──────
+// Rotation-aware OBB selection · corner scale about the fixed opposite corner ·
+// rotate ring just outside each corner (shift = 15° snap) · ctrl+corner crop on
+// images with a full-source ghost · edge handles (text wrap width, rect/mosaic
+// w/h) · arrow endpoint gizmos · marquee multi-select · ctrl = snap-with-guides
+// · shift = axis lock / multi-toggle. Every drag mutates from a press-time
+// snapshot + absolute offset, so modifiers rewrite the gesture without drift.
+
+struct Obb { bool ok = false; ImVec2 c; float hw = 0, hh = 0, rotDeg = 0; };
+
+static Obb layer_obb(int i) {
+    Obb o;
+    auto& ls = layers();
+    if (i < 0 || i >= (int)g_app.layerInfo.size() || i >= (int)ls.size()) return o;
+    const LayerInfo& li = g_app.layerInfo[i];
+    if (li.type.empty() || li.type == "bg" || li.x1 <= li.x0 || li.y1 <= li.y0) return o;
+    o.ok = true;
+    bool isArrow = li.type == "shape" && js(ls[i], "shape", "") == "arrow";
+    o.rotDeg = (li.type == "mosaic" || li.type == "watermark" || isArrow) ? 0.f : (float)jf(ls[i], "rot", 0);
+    // hug the VISIBLE content (tight alpha bbox + border), not the padded block;
+    // the content can sit off-center in the block, and rotation pivots on the
+    // BLOCK center — so rotate the content center about it to place the box
+    bool hasContent = li.px1 > li.px0 && li.py1 > li.py0;
+    float px0 = hasContent ? li.px0 : li.x0, py0 = hasContent ? li.py0 : li.y0;
+    float px1 = hasContent ? li.px1 : li.x1, py1 = hasContent ? li.py1 : li.y1;
+    ImVec2 blockC((li.x0 + li.x1) / 2, (li.y0 + li.y1) / 2);
+    ImVec2 d = rot_vec(ImVec2((px0 + px1) / 2 - blockC.x, (py0 + py1) / 2 - blockC.y), deg2rad(o.rotDeg));
+    o.c = ImVec2(blockC.x + d.x, blockC.y + d.y);
+    o.hw = std::max(4.f, (px1 - px0) / 2);
+    o.hh = std::max(4.f, (py1 - py0) / 2);
+    return o;
+}
+static bool obb_hit(const Obb& o, ImVec2 pL) {
+    if (!o.ok) return false;
+    ImVec2 lp = rot_about(pL, o.c, -deg2rad(o.rotDeg));
+    return fabsf(lp.x - o.c.x) <= o.hw && fabsf(lp.y - o.c.y) <= o.hh;
+}
+static void obb_corners(const Obb& o, ImVec2 out[4]) {   // tl,tr,br,bl
+    float a = deg2rad(o.rotDeg);
+    ImVec2 ex[4] = {{-o.hw, -o.hh}, {o.hw, -o.hh}, {o.hw, o.hh}, {-o.hw, o.hh}};
+    for (int i = 0; i < 4; i++) { ImVec2 r = rot_vec(ex[i], a); out[i] = ImVec2(o.c.x + r.x, o.c.y + r.y); }
+}
+// marquee: partial overlap selects (SAT on the rect's + obb's axes)
+static bool obb_touches_rect(const Obb& o, ImVec2 mn, ImVec2 mx) {
+    if (!o.ok) return false;
+    ImVec2 cs[4]; obb_corners(o, cs);
+    float ax0 = 1e9f, ax1 = -1e9f, ay0 = 1e9f, ay1 = -1e9f;
+    for (auto& p : cs) { ax0 = std::min(ax0, p.x); ax1 = std::max(ax1, p.x); ay0 = std::min(ay0, p.y); ay1 = std::max(ay1, p.y); }
+    if (ax1 < mn.x || ax0 > mx.x || ay1 < mn.y || ay0 > mx.y) return false;
+    float a = deg2rad(o.rotDeg);
+    ImVec2 axes[2] = {rot_vec(ImVec2(1, 0), a), rot_vec(ImVec2(0, 1), a)};
+    ImVec2 rc[4] = {mn, {mx.x, mn.y}, mx, {mn.x, mx.y}};
+    for (int ai = 0; ai < 2; ai++) {
+        float oc = axes[ai].x * o.c.x + axes[ai].y * o.c.y, oh = ai == 0 ? o.hw : o.hh;
+        float r0 = 1e9f, r1 = -1e9f;
+        for (auto& p : rc) { float d = axes[ai].x * p.x + axes[ai].y * p.y; r0 = std::min(r0, d); r1 = std::max(r1, d); }
+        if (r1 < oc - oh || r0 > oc + oh) return false;
+    }
+    return true;
+}
+
+static bool layer_selectable(int i) {
+    auto& ls = layers();
+    if (i < 0 || i >= (int)ls.size() || i >= (int)g_app.layerInfo.size()) return false;
+    if (jb(ls[i], "hidden", false)) return false;
+    const std::string& t = g_app.layerInfo[i].type;
+    return !t.empty() && t != "bg";
+}
+
+// ctrl-snap while moving: pull the moving selection's edges/centers onto canvas
+// guides (edges · center · thirds) and other layers' edges/centers, drawing mint
+// guide lines through the match (teidraw snap_move, 8 screen px threshold).
+static ImVec2 snap_move_offset(ImVec2 want, ImDrawList* dl, ImVec2 p0, ImVec2 sz, float sc) {
+    float cw = (float)canvas_w(), chh = (float)canvas_h();
+    std::vector<float> tx = {0, cw / 3, cw / 2, 2 * cw / 3, cw};
+    std::vector<float> ty = {0, chh / 3, chh / 2, 2 * chh / 3, chh};
+    for (int i = 0; i < (int)layers().size(); i++) {
+        if (!layer_selectable(i) || sel_contains(i)) continue;
+        Obb o = layer_obb(i); if (!o.ok) continue;
+        ImVec2 cs[4]; obb_corners(o, cs);
+        float x0 = 1e9f, x1 = -1e9f, y0 = 1e9f, y1 = -1e9f;
+        for (auto& p : cs) { x0 = std::min(x0, p.x); x1 = std::max(x1, p.x); y0 = std::min(y0, p.y); y1 = std::max(y1, p.y); }
+        tx.push_back(x0); tx.push_back((x0 + x1) / 2); tx.push_back(x1);
+        ty.push_back(y0); ty.push_back((y0 + y1) / 2); ty.push_back(y1);
+    }
+    float thr = 8.f / sc;
+    float mnx = g_giz.boundsMn[0] + want.x, mxx = g_giz.boundsMx[0] + want.x;
+    float mny = g_giz.boundsMn[1] + want.y, mxy = g_giz.boundsMx[1] + want.y;
+    float probeX[3] = {mnx, (mnx + mxx) / 2, mxx}, probeY[3] = {mny, (mny + mxy) / 2, mxy};
+    float bestDx = 0, bestDy = 0, bestAx = thr, bestAy = thr;
+    float gx = 0, gy = 0; bool hitX = false, hitY = false;
+    for (float p : probeX) for (float t : tx) { float d = t - p; if (fabsf(d) < bestAx) { bestAx = fabsf(d); bestDx = d; gx = t; hitX = true; } }
+    for (float p : probeY) for (float t : ty) { float d = t - p; if (fabsf(d) < bestAy) { bestAy = fabsf(d); bestDy = d; gy = t; hitY = true; } }
+    want.x += hitX ? bestDx : 0; want.y += hitY ? bestDy : 0;
+    const ImU32 GUIDE = IM_COL32(0x7f, 0xd8, 0xa8, 190);
+    if (hitX) dl->AddLine(ImVec2(p0.x + gx * sc, p0.y), ImVec2(p0.x + gx * sc, p0.y + sz.y), GUIDE, 1.f);
+    if (hitY) dl->AddLine(ImVec2(p0.x, p0.y + gy * sc), ImVec2(p0.x + sz.x, p0.y + gy * sc), GUIDE, 1.f);
+    return want;
+}
+
+// [ / ] one z step, shift = all the way (the layers array is bottom→top)
+static void reorder_layer(int i, int dir, bool allTheWay) {
+    auto& ls = layers();
+    int n = (int)ls.size();
+    if (i < 0 || i >= n || n < 2) return;
+    if (allTheWay) {
+        json L = ls[i]; ls.erase(ls.begin() + i);
+        int j = dir > 0 ? n - 1 : 0;
+        ls.insert(ls.begin() + j, L); select_one(j);
+    } else {
+        int j = i + dir;
+        if (j < 0 || j >= n) return;
+        std::swap(ls[i], ls[j]); select_one(j);
+    }
+    g_app.undoDirty = true;
+}
+
 static void panel_canvas() {
     ensure_preview();
+    ImGuiIO& io = ImGui::GetIO();
     ImVec2 avail = ImGui::GetContentRegionAvail();
     if (!g_app.previewSrv || avail.x < 32 || avail.y < 32) return;
     float cw = (float)canvas_w(), chh = (float)canvas_h();
     float sc = std::min((avail.x - 8) / cw, (avail.y - 8) / chh);
     ImVec2 sz(cw * sc, chh * sc);
-    ImVec2 p0 = ImGui::GetCursorScreenPos();
-    p0.x += (avail.x - sz.x) / 2; p0.y += (avail.y - sz.y) / 2;
+    ImVec2 origin = ImGui::GetCursorScreenPos();
+    ImVec2 p0(origin.x + (avail.x - sz.x) / 2, origin.y + (avail.y - sz.y) / 2);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRect(ImVec2(p0.x - 1, p0.y - 1), ImVec2(p0.x + sz.x + 1, p0.y + sz.y + 1), IM_COL32(90, 90, 110, 255));
-    ImGui::SetCursorScreenPos(p0);
-    ImGui::InvisibleButton("##canvas", sz, ImGuiButtonFlags_MouseButtonLeft);
+    // the button spans the whole panel so handles/ring just outside the canvas stay grabbable
+    ImGui::SetCursorScreenPos(origin);
+    ImGui::InvisibleButton("##canvas", avail, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
     dl->AddImage((ImTextureID)(intptr_t)g_app.previewSrv, p0, ImVec2(p0.x + sz.x, p0.y + sz.y));
 
-    ImVec2 m = ImGui::GetIO().MousePos;
-    float lx = (m.x - p0.x) / sc, ly = (m.y - p0.y) / sc;   // logical coords
+    g_canvasP0 = p0; g_canvasSc = sc;
+    auto toScr = [&](ImVec2 l) { return ImVec2(p0.x + l.x * sc, p0.y + l.y * sc); };
+    ImVec2 m = io.MousePos;
+    ImVec2 mL((m.x - p0.x) / sc, (m.y - p0.y) / sc);
 
-    // click select — sticky: if the click lands on the CURRENTLY selected layer,
-    // keep it selected even when other layers sit above (makes overlapped layers
-    // editable intuitively). Only with no selected layer under the cursor does it
-    // fall through to the topmost hit. bg never hit-tests.
-    if (ImGui::IsItemClicked(0)) {
-        auto& ls = layers();
-        auto hits = [&](int i) {
-            if (i < 0 || i >= (int)g_app.layerInfo.size() || i >= (int)ls.size()) return false;
-            const LayerInfo& li = g_app.layerInfo[i];
-            if (li.type == "bg" || li.type.empty()) return false;
-            if (jb(ls[i], "hidden", false)) return false;
-            return lx >= li.x0 && lx <= li.x1 && ly >= li.y0 && ly <= li.y1;
-        };
-        if (!hits(g_app.sel)) {
-            int hit = -1;
-            for (int i = (int)g_app.layerInfo.size() - 1; i >= 0; i--)
-                if (hits(i)) { hit = i; break; }
-            if (hit >= 0) g_app.sel = hit;
-        }
+    // sanitize selection (undo/redo/hot-reload can reshape the doc under us)
+    {
+        int n = (int)layers().size();
+        for (size_t k = g_app.selMulti.size(); k-- > 0;)
+            if (g_app.selMulti[k] < 0 || g_app.selMulti[k] >= n)
+                g_app.selMulti.erase(g_app.selMulti.begin() + k);
+        if (g_app.sel >= n) g_app.sel = -1;
+        if (g_app.sel < 0 && !g_app.selMulti.empty()) g_app.sel = g_app.selMulti.back();
+        if (g_app.sel >= 0 && !sel_contains(g_app.sel)) g_app.selMulti.push_back(g_app.sel);
     }
-    // drag move
-    if (ImGui::IsItemActive() && ImGui::IsMouseDragging(0) && g_app.sel >= 0 && g_app.sel < (int)layers().size()) {
-        ImVec2 d = ImGui::GetIO().MouseDelta;
-        if (d.x != 0 || d.y != 0) {
-            json& L = layers()[g_app.sel];
-            float dx = d.x / sc, dy = d.y / sc;
-            if (js(L, "type", "") == "shape" && js(L, "shape", "") == "arrow") {
-                L["x1"] = jf(L, "x1", 0) + dx; L["y1"] = jf(L, "y1", 0) + dy;
-                L["x2"] = jf(L, "x2", 0) + dx; L["y2"] = jf(L, "y2", 0) + dy;
-            } else {
-                L["x"] = jf(L, "x", canvas_w() / 2.0) + dx;
-                L["y"] = jf(L, "y", canvas_h() / 2.0) + dy;
-            }
-            g_app.undoDirty = true;   // settle happens on mouse release (item deactivates)
+
+    // OS drop → branded card image layer(s) at the drop point (style swappable after)
+    if (g_hasDrop) {
+        float lx = (g_dropPt.x - p0.x) / sc, ly = (g_dropPt.y - p0.y) / sc;
+        if (lx < 0 || ly < 0 || lx > cw || ly > chh) { lx = cw / 2; ly = chh / 2; }
+        sel_clear();
+        int made = 0;
+        for (auto& f : g_dropFiles) {
+            json L = {{"id", unique_id("img")}, {"type", "image"}, {"src", f},
+                      {"x", lx + made * 26}, {"y", ly + made * 26}, {"scale", 0.55}};
+            apply_image_style(L, "card");
+            layers().push_back(L);
+            g_app.selMulti.push_back((int)layers().size() - 1);
+            g_app.sel = (int)layers().size() - 1;
+            made++;
         }
+        if (made) {
+            g_app.undoDirty = true;
+            char b[128]; snprintf(b, sizeof b, "dropped %d image%s as branded card (swap the style in the inspector)", made, made == 1 ? "" : "s");
+            g_app.status = b;
+        }
+        g_dropFiles.clear(); g_hasDrop = false;
+        return;   // layerInfo refreshes next frame
     }
-    // ctrl+wheel scale on hover
-    if (ImGui::IsItemHovered() && ImGui::GetIO().KeyCtrl && ImGui::GetIO().MouseWheel != 0 && g_app.sel >= 0 && g_app.sel < (int)layers().size()) {
+
+    // ── hover: handles of the single-selected layer first, then layer bodies ──
+    enum { HK_NONE, HK_CORNER, HK_RING, HK_EDGE, HK_ARROW_A, HK_ARROW_B };
+    const float HR = 5.f;
+    int hovKind = HK_NONE, hovIdx = -1;
+    bool single = g_app.selMulti.size() == 1 && g_app.sel >= 0 && g_app.sel < (int)layers().size();
+    Obb selObb; ImVec2 selCorScr[4]{}, selCorL[4]{};
+    bool selIsArrow = false; std::string selType;
+    if (single) {
         json& L = layers()[g_app.sel];
-        float f = ImGui::GetIO().MouseWheel > 0 ? 1.05f : 1 / 1.05f;
+        selType = js(L, "type", "");
+        selIsArrow = selType == "shape" && js(L, "shape", "") == "arrow";
+        if (selIsArrow) {
+            ImVec2 a = toScr(ImVec2((float)jf(L, "x1", 100), (float)jf(L, "y1", 100)));
+            ImVec2 b = toScr(ImVec2((float)jf(L, "x2", 300), (float)jf(L, "y2", 300)));
+            if (vlen(ImVec2(m.x - a.x, m.y - a.y)) <= HR + 4) { hovKind = HK_ARROW_A; }
+            else if (vlen(ImVec2(m.x - b.x, m.y - b.y)) <= HR + 4) { hovKind = HK_ARROW_B; }
+        } else if (selType != "watermark") {
+            selObb = layer_obb(g_app.sel);
+            if (selObb.ok) {
+                obb_corners(selObb, selCorL);
+                for (int j = 0; j < 4; j++) selCorScr[j] = toScr(selCorL[j]);
+                for (int j = 0; j < 4 && hovKind == HK_NONE; j++)
+                    if (vlen(ImVec2(m.x - selCorScr[j].x, m.y - selCorScr[j].y)) <= HR + 3) { hovKind = HK_CORNER; hovIdx = j; }
+                // edge handles: text = wrap width (l,r); rect/mosaic = w/h (l,r,t,b)
+                bool edgeLR = selType == "text" || (selType == "shape" && js(L, "shape", "") == "rect") || selType == "mosaic";
+                bool edgeTB = (selType == "shape" && js(L, "shape", "") == "rect") || selType == "mosaic";
+                if (hovKind == HK_NONE && (edgeLR || edgeTB)) {
+                    ImVec2 mid[4] = {   // l,r,t,b
+                        ImVec2((selCorScr[0].x + selCorScr[3].x) / 2, (selCorScr[0].y + selCorScr[3].y) / 2),
+                        ImVec2((selCorScr[1].x + selCorScr[2].x) / 2, (selCorScr[1].y + selCorScr[2].y) / 2),
+                        ImVec2((selCorScr[0].x + selCorScr[1].x) / 2, (selCorScr[0].y + selCorScr[1].y) / 2),
+                        ImVec2((selCorScr[3].x + selCorScr[2].x) / 2, (selCorScr[3].y + selCorScr[2].y) / 2)};
+                    int nEdge = edgeTB ? 4 : 2;
+                    for (int j = 0; j < nEdge && hovKind == HK_NONE; j++)
+                        if (vlen(ImVec2(m.x - mid[j].x, m.y - mid[j].y)) <= HR + 3) { hovKind = HK_EDGE; hovIdx = j; }
+                }
+                // rotate ring: a band just outside each corner (teidraw: r+3..r+17)
+                bool canRot = selType == "image" || selType == "text" || (selType == "shape" && !selIsArrow);
+                if (hovKind == HK_NONE && canRot)
+                    for (int j = 0; j < 4 && hovKind == HK_NONE; j++) {
+                        float d = vlen(ImVec2(m.x - selCorScr[j].x, m.y - selCorScr[j].y));
+                        if (d >= HR + 3 && d < HR + 17) { hovKind = HK_RING; hovIdx = j; }
+                    }
+            }
+        }
+    }
+    int hovLayer = -1;
+    if (hovKind == HK_NONE && ImGui::IsItemHovered()) {
+        for (int s : g_app.selMulti)   // sticky: a selected layer under the cursor wins
+            if (layer_selectable(s) && obb_hit(layer_obb(s), mL)) { hovLayer = s; break; }
+        if (hovLayer < 0)
+            for (int i = (int)layers().size() - 1; i >= 0; i--)
+                if (layer_selectable(i) && obb_hit(layer_obb(i), mL)) { hovLayer = i; break; }
+    }
+
+    // ── press dispatch ──
+    if (ImGui::IsItemClicked(0)) {
+        g_giz.pressL = mL; g_giz.pressScr = m; g_giz.moved = false; g_giz.snaps.clear();
+        if (single && hovKind != HK_NONE) {
+            json& L = layers()[g_app.sel];
+            g_giz.layer = g_app.sel; g_giz.snap = L; g_giz.handle = hovIdx;
+            if (hovKind == HK_ARROW_A) g_giz.mode = DM_ARROW_A;
+            else if (hovKind == HK_ARROW_B) g_giz.mode = DM_ARROW_B;
+            else if (hovKind == HK_CORNER && io.KeyCtrl && selType == "image") {
+                Img* im = get_image(path_join(g_app.docDir, js(L, "src", "")));
+                if (im) { g_giz.iw = (float)im->w; g_giz.ih = (float)im->h; g_giz.mode = DM_CROP; }
+            } else if (hovKind == HK_CORNER) {
+                g_giz.mode = DM_HANDLE;
+                g_giz.fixedL = selCorL[(hovIdx + 2) & 3];
+                // scale about the fixed corner maps EVERY point by k — including the
+                // layer center (which may sit off the visible-content center)
+                g_giz.centerL = ImVec2((float)jf(L, "x", cw / 2.0), (float)jf(L, "y", chh / 2.0));
+                g_giz.startDist = std::max(4.f / sc, vlen(ImVec2(mL.x - g_giz.fixedL.x, mL.y - g_giz.fixedL.y)));
+            } else if (hovKind == HK_RING) {
+                g_giz.mode = DM_ROTATE;
+                g_giz.pivotL = selObb.c;
+                g_giz.startAngle = atan2f(mL.y - selObb.c.y, mL.x - selObb.c.x);
+            } else if (hovKind == HK_EDGE) {
+                g_giz.mode = DM_EDGE;
+                g_giz.centerL = selObb.c;
+                g_giz.startDist = (hovIdx < 2 ? selObb.hw : selObb.hh) * 2;   // box size along the dragged axis at press
+            }
+        } else if (hovLayer >= 0) {
+            if (io.KeyShift) sel_toggle(hovLayer);
+            else if (!sel_contains(hovLayer)) select_one(hovLayer);
+            else g_app.sel = hovLayer;                    // primary follows the click
+            if (sel_contains(hovLayer)) {
+                g_giz.mode = DM_PENDING; g_giz.layer = hovLayer;
+                float bx0 = 1e9f, by0 = 1e9f, bx1 = -1e9f, by1 = -1e9f;
+                for (int s : g_app.selMulti) {
+                    g_giz.snaps.push_back({s, layers()[s]});
+                    Obb o = layer_obb(s);
+                    if (o.ok) {
+                        ImVec2 cs[4]; obb_corners(o, cs);
+                        for (auto& p : cs) { bx0 = std::min(bx0, p.x); bx1 = std::max(bx1, p.x); by0 = std::min(by0, p.y); by1 = std::max(by1, p.y); }
+                    }
+                }
+                g_giz.boundsMn[0] = bx0; g_giz.boundsMn[1] = by0; g_giz.boundsMx[0] = bx1; g_giz.boundsMx[1] = by1;
+            }
+        } else if (ImGui::IsItemHovered()) {
+            g_giz.mode = DM_MARQUEE; g_giz.layer = -1;
+            g_giz.marqueeBase = io.KeyShift ? g_app.selMulti : std::vector<int>();
+            if (!io.KeyShift) sel_clear();
+        }
+    }
+
+    // ── drag update / release ──
+    bool escCanceledDrag = false;
+    if (g_giz.mode != DM_NONE) {
+        auto& ls = layers();
+        bool layerOk = g_giz.layer >= 0 && g_giz.layer < (int)ls.size();
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {          // cancel: revert the gesture
+            if (!g_giz.snaps.empty()) { for (auto& [i, s] : g_giz.snaps) if (i < (int)ls.size()) ls[i] = s; }
+            else if (layerOk && g_giz.mode != DM_MARQUEE && g_giz.mode != DM_PENDING) ls[g_giz.layer] = g_giz.snap;
+            g_giz.mode = DM_NONE; g_giz.snaps.clear();
+            escCanceledDrag = true;
+        } else if (!io.MouseDown[0]) {                       // release → settle (one undo step)
+            double now = ImGui::GetTime();
+            bool wasClick = !g_giz.moved && g_giz.mode != DM_MARQUEE;
+            if (wasClick && layerOk) {
+                if (now - g_giz.lastClickT < 0.32 && vlen(ImVec2(m.x - g_giz.lastClickScr.x, m.y - g_giz.lastClickScr.y)) < 6
+                    && g_giz.layer == g_giz.lastClickLayer && js(ls[g_giz.layer], "type", "") == "text")
+                    g_app.focusText = true;                  // double-click text → edit it in the inspector
+                g_giz.lastClickT = now; g_giz.lastClickScr = m; g_giz.lastClickLayer = g_giz.layer;
+            }
+            g_giz.mode = DM_NONE; g_giz.snaps.clear();
+        } else switch (g_giz.mode) {
+        case DM_PENDING:
+            if (vlen(ImVec2(m.x - g_giz.pressScr.x, m.y - g_giz.pressScr.y)) > 4.f) g_giz.mode = DM_MOVE;
+            break;
+        case DM_MOVE: {
+            ImVec2 want(mL.x - g_giz.pressL.x, mL.y - g_giz.pressL.y);
+            if (io.KeyShift) { if (fabsf(want.x) >= fabsf(want.y)) want.y = 0; else want.x = 0; }   // axis lock
+            if (io.KeyCtrl) want = snap_move_offset(want, dl, p0, sz, sc);
+            for (auto& [i, s] : g_giz.snaps) {
+                if (i >= (int)ls.size()) continue;
+                json& L = ls[i];
+                if (js(s, "type", "") == "shape" && js(s, "shape", "") == "arrow") {
+                    L["x1"] = jf(s, "x1", 0) + want.x; L["y1"] = jf(s, "y1", 0) + want.y;
+                    L["x2"] = jf(s, "x2", 0) + want.x; L["y2"] = jf(s, "y2", 0) + want.y;
+                } else {
+                    L["x"] = jf(s, "x", cw / 2.0) + want.x;
+                    L["y"] = jf(s, "y", chh / 2.0) + want.y;
+                }
+            }
+            if (want.x != 0 || want.y != 0) g_giz.moved = true;
+            g_app.undoDirty = true;
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+            break;
+        }
+        case DM_HANDLE: {
+            if (!layerOk) break;
+            float k = vlen(ImVec2(mL.x - g_giz.fixedL.x, mL.y - g_giz.fixedL.y)) / g_giz.startDist;
+            k = clampf(k, 0.05f, 50.f);
+            json& L = ls[g_giz.layer]; const json& s = g_giz.snap;
+            std::string t = js(s, "type", "");
+            if (t == "image") L["scale"] = jf(s, "scale", 1.0) * k;
+            else if (t == "text") {
+                double px0 = jf(s, "px", 0);
+                if (px0 <= 0) px0 = jf(style_of(g_app.brand, s), "px", 160);
+                L["px"] = px0 * k;
+                if (jf(s, "max_w", 0) > 0) L["max_w"] = jf(s, "max_w", 0) * k;
+            } else if (t == "shape") {
+                std::string sh = js(s, "shape", "");
+                if (sh == "circle") { L["r"] = jf(s, "r", 120) * k; if (jf(s, "thick", 16) > 0) L["thick"] = jf(s, "thick", 16) * k; }
+                else if (sh == "rect") {
+                    L["w"] = jf(s, "w", 300) * k; L["h"] = jf(s, "h", 180) * k;
+                    L["radius"] = jf(s, "radius", 12) * k;
+                    if (jf(s, "thick", 0) > 0) L["thick"] = jf(s, "thick", 0) * k;
+                }
+            } else if (t == "mosaic") { L["w"] = jf(s, "w", 260) * k; L["h"] = jf(s, "h", 160) * k; }
+            ImVec2 c1(g_giz.fixedL.x + (g_giz.centerL.x - g_giz.fixedL.x) * k,
+                      g_giz.fixedL.y + (g_giz.centerL.y - g_giz.fixedL.y) * k);
+            L["x"] = c1.x; L["y"] = c1.y;
+            g_giz.moved = true; g_app.undoDirty = true;
+            ImGui::SetMouseCursor((g_giz.handle & 1) ? ImGuiMouseCursor_ResizeNESW : ImGuiMouseCursor_ResizeNWSE);
+            break;
+        }
+        case DM_ROTATE: {
+            if (!layerOk) break;
+            const json& s = g_giz.snap;
+            float ang = atan2f(mL.y - g_giz.pivotL.y, mL.x - g_giz.pivotL.x);
+            float rot = (float)jf(s, "rot", 0) + (ang - g_giz.startAngle) * 180.f / 3.14159265f;
+            if (io.KeyShift) rot = roundf(rot / 15.f) * 15.f;   // 15° steps
+            while (rot > 180.f) rot -= 360.f;
+            while (rot < -180.f) rot += 360.f;
+            json& L = ls[g_giz.layer];
+            L["rot"] = fabsf(rot) < 0.001f ? 0.f : rot;
+            // spin around the VISIBLE content center (the ring's pivot), which may
+            // sit off the layer center: re-place x/y so that point stays put
+            ImVec2 c0((float)jf(s, "x", cw / 2.0), (float)jf(s, "y", chh / 2.0));
+            ImVec2 oc = rot_vec(ImVec2(g_giz.pivotL.x - c0.x, g_giz.pivotL.y - c0.y), -deg2rad((float)jf(s, "rot", 0)));
+            ImVec2 od = rot_vec(oc, deg2rad(rot));
+            L["x"] = g_giz.pivotL.x - od.x; L["y"] = g_giz.pivotL.y - od.y;
+            g_giz.moved = true; g_app.undoDirty = true;
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            break;
+        }
+        case DM_EDGE: {
+            if (!layerOk) break;
+            json& L = ls[g_giz.layer]; const json& s = g_giz.snap;
+            std::string t = js(s, "type", "");
+            float rotR = (t == "mosaic") ? 0.f : deg2rad((float)jf(s, "rot", 0));
+            ImVec2 lp = rot_vec(ImVec2(mL.x - g_giz.centerL.x, mL.y - g_giz.centerL.y), -rotR);
+            float d0 = g_giz.startDist;                       // box size along the axis at press
+            int h = g_giz.handle;                             // 0=l 1=r 2=t 3=b
+            float lpv = h < 2 ? lp.x : lp.y;
+            float opp = (h == 0 || h == 2) ? d0 / 2 : -d0 / 2;
+            float newS = clampf(fabsf(lpv - opp), 12.f, 8000.f);
+            float cShift = opp + ((h == 0 || h == 2) ? -newS / 2 : newS / 2);
+            ImVec2 dW = rot_vec(h < 2 ? ImVec2(cShift, 0) : ImVec2(0, cShift), rotR);
+            // newS is measured on the VISIBLE box; the doc params (w/h/max_w) are inner
+            // values — apply the box delta so nothing pops on grab
+            if (t == "text") {
+                float base = (float)jf(s, "max_w", 0); if (base <= 0) base = d0;
+                L["max_w"] = std::max(30.f, base + newS - d0);
+            } else {
+                const char* key = h < 2 ? "w" : "h";
+                float base = (float)jf(s, key, h < 2 ? 300.0 : 180.0);
+                L[key] = std::max(8.f, base + newS - d0);
+            }
+            L["x"] = jf(s, "x", cw / 2.0) + dW.x;
+            L["y"] = jf(s, "y", chh / 2.0) + dW.y;
+            g_giz.moved = true; g_app.undoDirty = true;
+            ImGui::SetMouseCursor(h < 2 ? ImGuiMouseCursor_ResizeEW : ImGuiMouseCursor_ResizeNS);
+            break;
+        }
+        case DM_CROP: {
+            if (!layerOk || g_giz.iw <= 0 || g_giz.ih <= 0) break;
+            json& L = ls[g_giz.layer]; const json& s = g_giz.snap;
+            float rotR = deg2rad((float)jf(s, "rot", 0));
+            float sxc = (float)jf(s, "x", cw / 2.0), syc = (float)jf(s, "y", chh / 2.0);
+            float u0 = 0, v0 = 0, u1 = 1, v1 = 1;
+            if (s.contains("crop") && s["crop"].is_array() && s["crop"].size() == 4) {
+                u0 = (float)s["crop"][0].get<double>(); v0 = (float)s["crop"][1].get<double>();
+                u1 = (float)s["crop"][2].get<double>(); v1 = (float)s["crop"][3].get<double>();
+            }
+            float fullH = (float)jf(s, "scale", 1.0) * chh, fullW = fullH * g_giz.iw / g_giz.ih;
+            // full-source rect in the crop-center local frame (unrotated)
+            ImVec2 fc(fullW * (0.5f - (u0 + u1) / 2), fullH * (0.5f - (v0 + v1) / 2));
+            ImVec2 fmn(fc.x - fullW / 2, fc.y - fullH / 2), fmx(fc.x + fullW / 2, fc.y + fullH / 2);
+            ImVec2 mn(-fullW * (u1 - u0) / 2, -fullH * (v1 - v0) / 2), mx(-mn.x, -mn.y);
+            ImVec2 lp = rot_vec(ImVec2(mL.x - sxc, mL.y - syc), -rotR);
+            ImVec2 p(clampf(lp.x, fmn.x, fmx.x), clampf(lp.y, fmn.y, fmx.y));
+            float minPx = 8.f;
+            switch (g_giz.handle) {   // tl,tr,br,bl
+            case 0: mn.x = std::min(p.x, mx.x - minPx); mn.y = std::min(p.y, mx.y - minPx); break;
+            case 1: mx.x = std::max(p.x, mn.x + minPx); mn.y = std::min(p.y, mx.y - minPx); break;
+            case 2: mx.x = std::max(p.x, mn.x + minPx); mx.y = std::max(p.y, mn.y + minPx); break;
+            case 3: mn.x = std::min(p.x, mx.x - minPx); mx.y = std::max(p.y, mn.y + minPx); break;
+            }
+            L["crop"] = {(mn.x - fmn.x) / fullW, (mn.y - fmn.y) / fullH,
+                         (mx.x - fmn.x) / fullW, (mx.y - fmn.y) / fullH};
+            ImVec2 dc = rot_vec(ImVec2((mn.x + mx.x) / 2, (mn.y + mx.y) / 2), rotR);
+            L["x"] = sxc + dc.x; L["y"] = syc + dc.y;
+            g_giz.moved = true; g_app.undoDirty = true;
+            ImGui::SetMouseCursor((g_giz.handle & 1) ? ImGuiMouseCursor_ResizeNESW : ImGuiMouseCursor_ResizeNWSE);
+            break;
+        }
+        case DM_ARROW_A: case DM_ARROW_B: {
+            if (!layerOk) break;
+            json& L = ls[g_giz.layer]; const json& s = g_giz.snap;
+            bool isA = g_giz.mode == DM_ARROW_A;
+            ImVec2 p = mL;
+            if (io.KeyShift) {   // 45° snap about the other end
+                ImVec2 other(isA ? (float)jf(s, "x2", 300) : (float)jf(s, "x1", 100),
+                             isA ? (float)jf(s, "y2", 300) : (float)jf(s, "y1", 100));
+                ImVec2 d(p.x - other.x, p.y - other.y);
+                float a = roundf(atan2f(d.y, d.x) / (3.14159265f / 4)) * (3.14159265f / 4);
+                float len = vlen(d);
+                p = ImVec2(other.x + cosf(a) * len, other.y + sinf(a) * len);
+            }
+            L[isA ? "x1" : "x2"] = p.x; L[isA ? "y1" : "y2"] = p.y;
+            g_giz.moved = true; g_app.undoDirty = true;
+            break;
+        }
+        case DM_MARQUEE: {
+            ImVec2 mn(std::min(g_giz.pressL.x, mL.x), std::min(g_giz.pressL.y, mL.y));
+            ImVec2 mx(std::max(g_giz.pressL.x, mL.x), std::max(g_giz.pressL.y, mL.y));
+            g_app.selMulti = g_giz.marqueeBase;
+            for (int i = 0; i < (int)layers().size(); i++)
+                if (layer_selectable(i) && !sel_contains(i) && obb_touches_rect(layer_obb(i), mn, mx))
+                    g_app.selMulti.push_back(i);
+            g_app.sel = g_app.selMulti.empty() ? -1 : g_app.selMulti.back();
+            ImVec2 smn = toScr(mn), smx = toScr(mx);
+            dl->AddRectFilled(smn, smx, IM_COL32(0x7f, 0xd8, 0xa8, 26));
+            dl->AddRect(smn, smx, IM_COL32(0x7f, 0xd8, 0xa8, 170));
+            break;
+        }
+        default: break;
+        }
+    }
+
+    // hover cursor hints (not mid-drag)
+    if (g_giz.mode == DM_NONE) {
+        if (hovKind == HK_CORNER) ImGui::SetMouseCursor((io.KeyCtrl && selType == "image") ? ImGuiMouseCursor_ResizeAll
+                                                        : ((hovIdx & 1) ? ImGuiMouseCursor_ResizeNESW : ImGuiMouseCursor_ResizeNWSE));
+        else if (hovKind == HK_RING) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        else if (hovKind == HK_EDGE) ImGui::SetMouseCursor(hovIdx < 2 ? ImGuiMouseCursor_ResizeEW : ImGuiMouseCursor_ResizeNS);
+    }
+
+    // ctrl+wheel scale on hover (kept from the old UX; a burst = one undo step)
+    if (ImGui::IsItemHovered() && io.KeyCtrl && io.MouseWheel != 0 && g_app.sel >= 0 && g_app.sel < (int)layers().size()) {
+        json& L = layers()[g_app.sel];
+        float f = io.MouseWheel > 0 ? 1.05f : 1 / 1.05f;
         std::string t = js(L, "type", "");
         if (t == "image") L["scale"] = jf(L, "scale", 1.0) * f;
         else if (t == "text") { double px = jf(L, "px", 0); if (px <= 0) px = 160; L["px"] = px * f; }
@@ -1044,12 +1593,150 @@ static void panel_canvas() {
         g_app.undoDirty = true;
         g_app.wheelGesture = 0.30f;   // discrete ticks → a short live-gesture window
     }
-    // selection bbox
-    if (g_app.sel >= 0 && g_app.sel < (int)g_app.layerInfo.size()) {
-        const LayerInfo& li = g_app.layerInfo[g_app.sel];
-        if (li.x1 > li.x0)
-            dl->AddRect(ImVec2(p0.x + li.x0 * sc, p0.y + li.y0 * sc), ImVec2(p0.x + li.x1 * sc, p0.y + li.y1 * sc),
-                        IM_COL32(255, 200, 60, 200), 0, 0, 1.5f);
+
+    // ── draw: crop ghost → hover outline → selection → handles ──
+    const ImU32 ACCENT = IM_COL32(0x7f, 0xd8, 0xa8, 220), HOVER = IM_COL32(0x88, 0x78, 0xd0, 150);
+    const ImU32 HFILL = IM_COL32(240, 240, 250, 255);
+    bool cropAffordance = single && selType == "image" && (g_giz.mode == DM_CROP || (g_giz.mode == DM_NONE && io.KeyCtrl && hovKind == HK_CORNER));
+    if (cropAffordance && g_app.sel < (int)layers().size()) {
+        json& L = layers()[g_app.sel];
+        Img* im = get_image(path_join(g_app.docDir, js(L, "src", "")));
+        TexEntry* gt = im ? thumb_tex(path_join(g_app.docDir, js(L, "src", "")), 512) : nullptr;
+        if (im && gt) {
+            float u0 = 0, v0 = 0, u1 = 1, v1 = 1;
+            if (L.contains("crop") && L["crop"].is_array() && L["crop"].size() == 4) {
+                u0 = (float)L["crop"][0].get<double>(); v0 = (float)L["crop"][1].get<double>();
+                u1 = (float)L["crop"][2].get<double>(); v1 = (float)L["crop"][3].get<double>();
+            }
+            float rotR = deg2rad((float)jf(L, "rot", 0));
+            float fullH = (float)jf(L, "scale", 1.0) * chh, fullW = fullH * im->w / im->h;
+            ImVec2 c((float)jf(L, "x", cw / 2.0), (float)jf(L, "y", chh / 2.0));
+            ImVec2 fcL(fullW * (0.5f - (u0 + u1) / 2), fullH * (0.5f - (v0 + v1) / 2));
+            ImVec2 fcW(c.x + rot_vec(fcL, rotR).x, c.y + rot_vec(fcL, rotR).y);
+            ImVec2 ex[4] = {{-fullW / 2, -fullH / 2}, {fullW / 2, -fullH / 2}, {fullW / 2, fullH / 2}, {-fullW / 2, fullH / 2}};
+            ImVec2 q[4];
+            for (int j = 0; j < 4; j++) { ImVec2 r = rot_vec(ex[j], rotR); q[j] = toScr(ImVec2(fcW.x + r.x, fcW.y + r.y)); }
+            bool flip = jb(L, "flip", false);
+            ImVec2 uva(flip ? 1.f : 0.f, 0), uvb(flip ? 0.f : 1.f, 0), uvc(flip ? 0.f : 1.f, 1), uvd(flip ? 1.f : 0.f, 1);
+            dl->AddImageQuad((ImTextureID)(intptr_t)gt->srv, q[0], q[1], q[2], q[3], uva, uvb, uvc, uvd, IM_COL32(255, 255, 255, 80));
+            dl->AddPolyline(q, 4, IM_COL32(255, 255, 255, 110), ImDrawFlags_Closed, 1.f);
+        }
+    }
+    if (hovLayer >= 0 && !sel_contains(hovLayer) && g_giz.mode == DM_NONE) {
+        Obb o = layer_obb(hovLayer);
+        if (o.ok) { ImVec2 cs[4], ss[4]; obb_corners(o, cs); for (int j = 0; j < 4; j++) ss[j] = toScr(cs[j]);
+                    dl->AddPolyline(ss, 4, HOVER, ImDrawFlags_Closed, 1.25f); }
+    }
+    for (int s : g_app.selMulti) {
+        if (!layer_selectable(s)) continue;
+        json& L = layers()[s];
+        bool isArrow = js(L, "type", "") == "shape" && js(L, "shape", "") == "arrow";
+        if (isArrow) {
+            ImVec2 a = toScr(ImVec2((float)jf(L, "x1", 100), (float)jf(L, "y1", 100)));
+            ImVec2 b = toScr(ImVec2((float)jf(L, "x2", 300), (float)jf(L, "y2", 300)));
+            dl->AddLine(a, b, IM_COL32(0x7f, 0xd8, 0xa8, 90), 1.f);
+            dl->AddCircleFilled(a, HR, HFILL); dl->AddCircle(a, HR, ACCENT, 0, 1.5f);
+            dl->AddCircleFilled(b, HR, HFILL); dl->AddCircle(b, HR, ACCENT, 0, 1.5f);
+            continue;
+        }
+        Obb o = layer_obb(s);
+        if (!o.ok) continue;
+        ImVec2 cs[4], ss[4]; obb_corners(o, cs);
+        for (int j = 0; j < 4; j++) ss[j] = toScr(cs[j]);
+        dl->AddPolyline(ss, 4, ACCENT, ImDrawFlags_Closed, 1.75f);
+        if (single && s == g_app.sel && js(L, "type", "") != "watermark") {
+            for (int j = 0; j < 4; j++) { dl->AddCircleFilled(ss[j], HR, HFILL); dl->AddCircle(ss[j], HR, ACCENT, 0, 1.5f); }
+            std::string t = js(L, "type", "");
+            bool edgeLR = t == "text" || (t == "shape" && js(L, "shape", "") == "rect") || t == "mosaic";
+            bool edgeTB = (t == "shape" && js(L, "shape", "") == "rect") || t == "mosaic";
+            if (edgeLR || edgeTB) {
+                ImVec2 mid[4] = {ImVec2((ss[0].x + ss[3].x) / 2, (ss[0].y + ss[3].y) / 2),
+                                 ImVec2((ss[1].x + ss[2].x) / 2, (ss[1].y + ss[2].y) / 2),
+                                 ImVec2((ss[0].x + ss[1].x) / 2, (ss[0].y + ss[1].y) / 2),
+                                 ImVec2((ss[3].x + ss[2].x) / 2, (ss[3].y + ss[2].y) / 2)};
+                int nEdge = edgeTB ? 4 : 2;
+                for (int j = 0; j < nEdge; j++) {
+                    ImVec2 a(mid[j].x - 3.5f, mid[j].y - 3.5f), b(mid[j].x + 3.5f, mid[j].y + 3.5f);
+                    dl->AddRectFilled(a, b, HFILL); dl->AddRect(a, b, ACCENT, 0, 0, 1.5f);
+                }
+            }
+        }
+    }
+
+    // right-click context menu (teidraw parity, thumb flavored)
+    if (ImGui::IsItemClicked(1)) {
+        if (hovLayer >= 0 && !sel_contains(hovLayer)) select_one(hovLayer);
+        if (g_app.sel >= 0) ImGui::OpenPopup("canvasctx");
+    }
+    if (ImGui::BeginPopup("canvasctx")) {
+        auto& ls = layers();
+        if (g_app.sel >= 0 && g_app.sel < (int)ls.size()) {
+            json& L = ls[g_app.sel];
+            std::string t = js(L, "type", "");
+            if (ImGui::MenuItem("duplicate", "Ctrl+D")) {
+                json c = L; c["id"] = unique_id((js(c, "id", "layer") + "_").c_str());
+                ls.insert(ls.begin() + g_app.sel + 1, c); select_one(g_app.sel + 1); g_app.undoDirty = true;
+            }
+            if (ImGui::MenuItem("delete", "Del")) { ls.erase(ls.begin() + g_app.sel); sel_clear(); g_app.undoDirty = true; }
+            ImGui::Separator();
+            if (ImGui::MenuItem("bring forward", "]")) reorder_layer(g_app.sel, 1, false);
+            if (ImGui::MenuItem("send backward", "[")) reorder_layer(g_app.sel, -1, false);
+            if (ImGui::MenuItem("bring to front", "Shift+]")) reorder_layer(g_app.sel, 1, true);
+            if (ImGui::MenuItem("send to back", "Shift+[")) reorder_layer(g_app.sel, -1, true);
+            if (g_app.sel >= 0 && g_app.sel < (int)ls.size()) {
+                json& L2 = ls[g_app.sel];
+                if (t == "image") {
+                    ImGui::Separator();
+                    if (ImGui::BeginMenu("image style")) {
+                        std::string cur = detect_image_style(L2);
+                        if (ImGui::MenuItem("sticker (brand default)", nullptr, cur == "sticker")) apply_image_style(L2, "sticker");
+                        if (ImGui::MenuItem("plain (no treatment)", nullptr, cur == "plain")) apply_image_style(L2, "plain");
+                        for (auto& [k, v] : g_app.brand.image_styles.items())
+                            if (k != "_comment" && v.is_object() && ImGui::MenuItem(k.c_str(), nullptr, cur == k)) apply_image_style(L2, k);
+                        ImGui::EndMenu();
+                    }
+                    bool flip = jb(L2, "flip", false);
+                    if (ImGui::MenuItem("flip", nullptr, flip)) { L2["flip"] = !flip; g_app.undoDirty = true; }
+                    if (L2.contains("crop") && ImGui::MenuItem("reset crop")) { L2.erase("crop"); g_app.undoDirty = true; }
+                }
+                if (jf(L2, "rot", 0) != 0 && ImGui::MenuItem("reset rotation")) { L2["rot"] = 0; g_app.undoDirty = true; }
+            }
+        }
+        ImGui::EndPopup();
+    }
+
+    // ── canvas keys (skip while typing) ──
+    if (!io.WantTextInput) {
+        bool sh = io.KeyShift;
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftBracket) && g_app.sel >= 0) reorder_layer(g_app.sel, -1, sh);
+        if (ImGui::IsKeyPressed(ImGuiKey_RightBracket) && g_app.sel >= 0) reorder_layer(g_app.sel, 1, sh);
+        float step = sh ? 10.f : 1.f;
+        ImVec2 nd(0, 0);
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) nd.x -= step;
+        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) nd.x += step;
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) nd.y -= step;
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) nd.y += step;
+        if ((nd.x != 0 || nd.y != 0) && !g_app.selMulti.empty() && g_giz.mode == DM_NONE) {
+            for (int i : g_app.selMulti) {
+                if (i < 0 || i >= (int)layers().size()) continue;
+                json& L = layers()[i];
+                if (js(L, "type", "") == "shape" && js(L, "shape", "") == "arrow") {
+                    L["x1"] = jf(L, "x1", 0) + nd.x; L["y1"] = jf(L, "y1", 0) + nd.y;
+                    L["x2"] = jf(L, "x2", 0) + nd.x; L["y2"] = jf(L, "y2", 0) + nd.y;
+                } else {
+                    L["x"] = jf(L, "x", cw / 2.0) + nd.x;
+                    L["y"] = jf(L, "y", chh / 2.0) + nd.y;
+                }
+            }
+            g_app.undoDirty = true;
+            g_app.nudgeUndoAt = ImGui::GetTime() + 0.6;   // a nudge burst coalesces into one undo step
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape) && g_giz.mode == DM_NONE && !escCanceledDrag) sel_clear();
+        if (ImGui::IsKeyPressed(ImGuiKey_A) && io.KeyCtrl) {
+            g_app.selMulti.clear();
+            for (int i = 0; i < (int)layers().size(); i++) if (layer_selectable(i)) g_app.selMulti.push_back(i);
+            g_app.sel = g_app.selMulti.empty() ? -1 : g_app.selMulti.back();
+        }
     }
     // squint-test inset: the thumb at ~channel-page display size (measured off youtube.com,
     // grid thumb ≈240-340px) so YouTube's fixed ~38x20px pill reads at its true proportion.
@@ -1142,12 +1829,16 @@ static void panel_toolbar() {
     }
     // global shortcuts
     if (ImGui::IsKeyPressed(ImGuiKey_S) && ImGui::GetIO().KeyCtrl) save_doc();
-    if (ImGui::IsKeyPressed(ImGuiKey_Delete) && g_app.sel >= 0 && g_app.sel < (int)layers().size() && !ImGui::GetIO().WantTextInput) {
-        layers().erase(layers().begin() + g_app.sel); g_app.sel = -1; g_app.undoDirty = true;
+    if ((ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace))
+        && !g_app.selMulti.empty() && !ImGui::GetIO().WantTextInput) {
+        std::vector<int> idx = g_app.selMulti;
+        std::sort(idx.rbegin(), idx.rend());
+        for (int i : idx) if (i >= 0 && i < (int)layers().size()) layers().erase(layers().begin() + i);
+        sel_clear(); g_app.undoDirty = true;
     }
     if (ImGui::IsKeyPressed(ImGuiKey_D) && ImGui::GetIO().KeyCtrl && g_app.sel >= 0 && g_app.sel < (int)layers().size()) {
         json c = layers()[g_app.sel]; c["id"] = unique_id((js(c, "id", "layer") + "_").c_str());
-        layers().insert(layers().begin() + g_app.sel + 1, c); g_app.sel++; g_app.undoDirty = true;
+        layers().insert(layers().begin() + g_app.sel + 1, c); select_one(g_app.sel + 1); g_app.undoDirty = true;
     }
 }
 
@@ -1182,7 +1873,10 @@ static int headless_export(const std::string& docPath, const std::string& brandO
         size_t li = 0;
         for (const auto& L : doc["layers"]) {
             json e = {{"id", js(L, "id", "")}, {"type", js(L, "type", "")}, {"hidden", jb(L, "hidden", false)}};
-            if (li < info.size()) e["bbox"] = {info[li].x0, info[li].y0, info[li].x1, info[li].y1};
+            if (li < info.size()) {
+                e["bbox"] = {info[li].x0, info[li].y0, info[li].x1, info[li].y1};
+                e["content"] = {info[li].px0, info[li].py0, info[li].px1, info[li].py1};
+            }
             if (js(L, "type", "") == "text") e["text"] = js(L, "text", "");
             out["layers"].push_back(e);
             li++;
@@ -1218,9 +1912,45 @@ static bool capture_backbuffer(const std::string& path) {
     return write_png(img, path);
 }
 
+// ───────────────────────────── chrome theme ─────────────────────────────────
+// Same chrome as the video editor (editor/src/main.cpp apply_editor_theme): the
+// cosmic2d palette (deep-purple base, mint accent, periwinkle focus) + rounded
+// metrics. CHROME ONLY — thumbnail content rendering is untouched.
+static void apply_editor_theme() {
+    ImGui::StyleColorsDark();
+    ImGuiStyle& s = ImGui::GetStyle();
+    auto C = [](unsigned rgba){ return ImVec4(((rgba>>24)&255)/255.f, ((rgba>>16)&255)/255.f, ((rgba>>8)&255)/255.f, (rgba&255)/255.f); };
+    const ImVec4 bg=C(0x141220ffu), panel=C(0x1e1b2effu), panel2=C(0x262238ffu), panel3=C(0x322d48ffu),
+                 edge=C(0x3a3560ffu), edgeHot=C(0x6a60a0ffu), active=C(0x4a4370ffu), accent=C(0x7fd8a8ffu),
+                 accentHot=C(0x9fe8c0ffu), focus=C(0x8878d0ffu), text=C(0xe8e4ffffu), dim=C(0x8a84b0ffu);
+    ImVec4* c = s.Colors;
+    c[ImGuiCol_Text]=text;                    c[ImGuiCol_TextDisabled]=dim;
+    c[ImGuiCol_WindowBg]=panel;               c[ImGuiCol_ChildBg]=C(0x191527ffu);       c[ImGuiCol_PopupBg]=C(0x1e1b2ef7u);
+    c[ImGuiCol_Border]=edge;                  c[ImGuiCol_BorderShadow]=ImVec4(0,0,0,0);
+    c[ImGuiCol_FrameBg]=panel2;               c[ImGuiCol_FrameBgHovered]=panel3;        c[ImGuiCol_FrameBgActive]=active;
+    c[ImGuiCol_TitleBg]=bg;                   c[ImGuiCol_TitleBgActive]=panel2;         c[ImGuiCol_TitleBgCollapsed]=bg;
+    c[ImGuiCol_MenuBarBg]=C(0x181528ffu);
+    c[ImGuiCol_ScrollbarBg]=ImVec4(0,0,0,0);  c[ImGuiCol_ScrollbarGrab]=panel3;         c[ImGuiCol_ScrollbarGrabHovered]=edgeHot; c[ImGuiCol_ScrollbarGrabActive]=focus;
+    c[ImGuiCol_CheckMark]=accent;             c[ImGuiCol_SliderGrab]=accent;            c[ImGuiCol_SliderGrabActive]=accentHot;
+    c[ImGuiCol_Button]=panel2;                c[ImGuiCol_ButtonHovered]=panel3;         c[ImGuiCol_ButtonActive]=active;
+    c[ImGuiCol_Header]=panel3;                c[ImGuiCol_HeaderHovered]=edgeHot;        c[ImGuiCol_HeaderActive]=focus;
+    c[ImGuiCol_Separator]=edge;               c[ImGuiCol_SeparatorHovered]=edgeHot;     c[ImGuiCol_SeparatorActive]=focus;
+    c[ImGuiCol_ResizeGrip]=panel3;            c[ImGuiCol_ResizeGripHovered]=edgeHot;    c[ImGuiCol_ResizeGripActive]=focus;
+    c[ImGuiCol_Tab]=panel;                    c[ImGuiCol_TabHovered]=panel3;            c[ImGuiCol_TabSelected]=panel3;
+    c[ImGuiCol_TabDimmed]=bg;                 c[ImGuiCol_TabDimmedSelected]=panel2;
+    c[ImGuiCol_TabSelectedOverline]=accent;   c[ImGuiCol_TabDimmedSelectedOverline]=edge;
+    c[ImGuiCol_PlotLines]=accent;             c[ImGuiCol_PlotLinesHovered]=accentHot;   c[ImGuiCol_PlotHistogram]=accent;
+    c[ImGuiCol_TextSelectedBg]=C(0x7fd8a855u); c[ImGuiCol_DragDropTarget]=accent;       c[ImGuiCol_NavCursor]=focus;
+    s.WindowRounding=8; s.ChildRounding=6; s.FrameRounding=6; s.PopupRounding=6; s.GrabRounding=5; s.TabRounding=6; s.ScrollbarRounding=8;
+    s.WindowBorderSize=1; s.ChildBorderSize=1; s.PopupBorderSize=1; s.FrameBorderSize=0; s.SeparatorTextBorderSize=2;
+    s.WindowPadding=ImVec2(10,10); s.FramePadding=ImVec2(8,4); s.CellPadding=ImVec2(6,4);
+    s.ItemSpacing=ImVec2(8,6); s.ItemInnerSpacing=ImVec2(6,5); s.IndentSpacing=18;
+    s.ScrollbarSize=13; s.GrabMinSize=11;
+}
+
 // ───────────────────────────── main ─────────────────────────────────────────
 int main(int argc, char** argv) {
-    std::string docPath, exportPng, proofPng, infoJson, shotPng, brandDir;
+    std::string docPath, exportPng, proofPng, infoJson, shotPng, brandDir, driveScript;
     int ssFactor = 2, shotFrames = 5;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
@@ -1231,6 +1961,7 @@ int main(int argc, char** argv) {
         else if (a == "--shot") shotPng = next();
         else if (a == "--frames") shotFrames = atoi(next().c_str());
         else if (a == "--brand") brandDir = next();
+        else if (a == "--drive") driveScript = next();
         else if (a == "--ss") ssFactor = std::max(1, atoi(next().c_str()));
         else if (a[0] != '-') docPath = a;
     }
@@ -1258,11 +1989,11 @@ int main(int argc, char** argv) {
     create_rtv();
     ShowWindow(hwnd, SW_SHOWDEFAULT);
     UpdateWindow(hwnd);
+    DragAcceptFiles(hwnd, TRUE);   // accept image files dragged from the OS
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
-    ImGui::StyleColorsDark();
-    ImGui::GetStyle().Colors[ImGuiCol_WindowBg] = ImVec4(0.08f, 0.08f, 0.10f, 1);
+    apply_editor_theme();          // same chrome as the video editor
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr;
     const char* uiFonts[] = { "C:\\Windows\\Fonts\\segoeui.ttf", "C:\\Windows\\Fonts\\tahoma.ttf" };
@@ -1278,6 +2009,11 @@ int main(int argc, char** argv) {
                      {"layers", {{{"id", "bg"}, {"type", "bg"}, {"fill", "#141021"}, {"grad_to", "#2a1140"}, {"vignette", 0.35}}}}};
         g_app.undoBase = g_app.doc.dump(); g_app.savedDump = g_app.undoBase;
     }
+    if (!shotPng.empty() && g_app.doc.contains("layers")) {   // --shot: select the topmost layer so the gizmo shows
+        auto& ls = g_app.doc["layers"];
+        for (int i = (int)ls.size() - 1; i >= 0; i--)
+            if (ls[i].is_object() && js(ls[i], "type", "") != "bg" && !jb(ls[i], "hidden", false)) { select_one(i); break; }
+    }
 
     int frame = 0;
     bool done = false;
@@ -1291,6 +2027,68 @@ int main(int argc, char** argv) {
 
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
+        // --drive: scripted synthetic input through the REAL event queue (pushed after the
+        // Win32 backend so scripted state wins the frame). One op per frame; ';'-separated:
+        //   wait:N  move:x,y  down  up  rdown  rup  wheel:d  key:[ctrl+][shift+]Name
+        //   shot:file.png  quit      (Name = ImGui key name: Z, Escape, LeftBracket, ...)
+        if (!driveScript.empty()) {
+            static std::vector<std::string> ops; static size_t opi = 0; static int waitN = 30;
+            static std::vector<ImGuiKey> keyUps;   // released one frame after press
+            static bool parsed = false;
+            if (!parsed) {
+                parsed = true;
+                std::stringstream ss(driveScript); std::string tok;
+                while (std::getline(ss, tok, ';')) if (!tok.empty()) ops.push_back(tok);
+            }
+            for (ImGuiKey k : keyUps) io.AddKeyEvent(k, false);
+            keyUps.clear();
+            // re-assert the scripted cursor every frame — the Win32 backend pushes the REAL
+            // cursor position on frames the mouse isn't tracked, which would yank a drag
+            static ImVec2 dmPos(-1, -1);
+            if (dmPos.x >= 0) io.AddMousePosEvent(dmPos.x, dmPos.y);
+            if (waitN > 0) waitN--;
+            else while (opi < ops.size()) {
+                std::string op = ops[opi++];
+                size_t c = op.find(':');
+                std::string cmd = c == std::string::npos ? op : op.substr(0, c);
+                std::string arg = c == std::string::npos ? "" : op.substr(c + 1);
+                if (cmd == "wait") { waitN = atoi(arg.c_str()); break; }
+                if (cmd == "move") { sscanf(arg.c_str(), "%f,%f", &dmPos.x, &dmPos.y); io.AddMousePosEvent(dmPos.x, dmPos.y); break; }
+                if (cmd == "lmove") {   // LOGICAL canvas coords → screen via the live canvas transform
+                    float x = 0, y = 0; sscanf(arg.c_str(), "%f,%f", &x, &y);
+                    dmPos = ImVec2(g_canvasP0.x + x * g_canvasSc, g_canvasP0.y + y * g_canvasSc);
+                    io.AddMousePosEvent(dmPos.x, dmPos.y); break;
+                }
+                if (cmd == "down") { io.AddMouseButtonEvent(0, true); break; }
+                if (cmd == "up")   { io.AddMouseButtonEvent(0, false); break; }
+                if (cmd == "rdown") { io.AddMouseButtonEvent(1, true); break; }
+                if (cmd == "rup")   { io.AddMouseButtonEvent(1, false); break; }
+                if (cmd == "wheel") { io.AddMouseWheelEvent(0, (float)atof(arg.c_str())); break; }
+                if (cmd == "key") {
+                    bool ctrl = arg.rfind("ctrl+", 0) == 0; if (ctrl) arg = arg.substr(5);
+                    bool shift = arg.rfind("shift+", 0) == 0; if (shift) arg = arg.substr(6);
+                    ImGuiKey key = ImGuiKey_None;
+                    for (int k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_NamedKey_END; k++)
+                        if (!strcmp(ImGui::GetKeyName((ImGuiKey)k), arg.c_str())) { key = (ImGuiKey)k; break; }
+                    if (ctrl) { io.AddKeyEvent(ImGuiMod_Ctrl, true); keyUps.push_back(ImGuiMod_Ctrl); }
+                    if (shift) { io.AddKeyEvent(ImGuiMod_Shift, true); keyUps.push_back(ImGuiMod_Shift); }
+                    if (key != ImGuiKey_None) { io.AddKeyEvent(key, true); keyUps.push_back(key); }
+                    break;
+                }
+                if (cmd == "drop") {   // drop:lx,ly,path — synth an OS file drop at logical canvas coords
+                    float x = 0, y = 0; char pbuf[1024] = {0};
+                    sscanf(arg.c_str(), "%f,%f,%1023[^;]", &x, &y, pbuf);
+                    g_dropPt.x = (LONG)(g_canvasP0.x + x * g_canvasSc); g_dropPt.y = (LONG)(g_canvasP0.y + y * g_canvasSc);
+                    g_dropFiles.push_back(pbuf); g_hasDrop = true; break;
+                }
+                if (cmd == "ctrl") { io.AddKeyEvent(ImGuiMod_Ctrl, arg == "1"); break; }
+                if (cmd == "shift") { io.AddKeyEvent(ImGuiMod_Shift, arg == "1"); break; }
+                if (cmd == "shot") { capture_backbuffer(arg); printf("wrote %s\n", arg.c_str()); fflush(stdout); continue; }
+                if (cmd == "quit") { done = true; break; }
+            }
+            if (opi >= ops.size() && waitN <= 0 && keyUps.empty() && !done) done = true;   // script exhausted
+            if (done) { PostQuitMessage(0); }
+        }
         ImGui::NewFrame();
         watch_tick(io.DeltaTime);
 

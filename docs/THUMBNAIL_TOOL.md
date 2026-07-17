@@ -52,7 +52,7 @@ the marks". `--blank` opts out to a bare bg.
 | type | fields |
 |---|---|
 | `bg` | `fill`, `grad_to` + `grad_angle`, `image` (cover-fit) + `blur`/`darken`/`opacity`, `vignette`; **`pattern`:`diamond`/`argyle`** quilt — `cell`, `pattern_fill` (alternate-diamond color), `pattern_line`+`pattern_line_px`+`pattern_line_alpha` (lattice), `pattern_motif` (`diamond`/`dot`/`plus`/`ring`/`box` accent at the corners) + `pattern_motif_fill`/`_size`/`_alpha`/`_every`/`_phase`; `pattern_ox`/`pattern_oy` slide the whole quilt (e.g. to center a motif group in a crop). Procedural → stays crisp at any scale (banners) |
-| `image` | `src`, `x`,`y`, `scale` (1.0 = fit canvas height), `rot`, `flip`, `outline_px`+`outline` (sticker), `shadow{dx,dy,blur,alpha,color,off}`, `glow{px,color,alpha}` — outline/shadow default from the package's `sticker`. **One-click branded setup:** stamp the package's reusable **`image_styles.card`** (a slight tilt + border + gold accent glow — the "floating card" look) via slopthumb's **★ brand it** button (image inspector) / the **image★** add button, or **`thumb.py brand <layer> [--style card]`**. It writes literal `rot`/`outline_px`/`glow` so they stay tweakable; the white border + shadow already come from `sticker`. |
+| `image` | `src`, `x`,`y`, `scale` (1.0 = fit canvas height), `rot`, `flip`, **`crop`:`[u0,v0,u1,v1]`** (normalized sub-rect of the displayed source kept visible; pixel density stays that of the uncropped image — cropping trims the card, it never rescales content; GUI: ctrl+drag a corner), `outline_px`+`outline` (sticker), `shadow{dx,dy,blur,alpha,color,off}`, `glow{px,color,alpha}` — outline/shadow default from the package's `sticker`. **One-click branded setup:** stamp the package's reusable **`image_styles.card`** (a slight tilt + border + gold accent glow — the "floating card" look) via the inspector's **style** combo (sticker / plain / any `image_styles` entry) / the **card..** add button / OS drag-drop (defaults to `card`), or **`thumb.py brand <layer> [--style card]`**. It writes literal `rot`/`outline_px`/`glow` so they stay tweakable; the white border + shadow already come from `sticker`. |
 | `text` | `text` (\n = line break), `style` (package style name; every field overridable), `x`,`y`, `px`, `max_w` (auto-shrink), `fill`+`grad_to` (vertical gradient), `stroke_px`+`stroke`, `tracking` (letter spacing), `line_height` (×natural leading, default 1.02; <1 packs multi-line text tighter), `align`, `plate{pad_x,pad_y,radius,fill,alpha}`, `shadow`, `glow` |
 | `shape` | `shape`: `arrow` (`x1,y1,x2,y2,width`) · `circle` (`x,y,r,thick` — 0=disc) · `rect` (`x,y,w,h,radius,thick` — 0=filled); `fill`, `outline_px`/`outline`, `shadow`, `glow` |
 | `mosaic` | `x`,`y`,`w`,`h`,`cell` — pixelates whatever is already on the canvas under the rect (the anime censor-gag primitive) |
@@ -69,18 +69,51 @@ sprite browser lists) · `watermark` · `templates` (named ready-to-fill layer s
 `hint`) · `lint` (`max_words`, `keep_clear_br`).
 
 ## GUI
-Layers panel (reorder/dup/hide) · Inspector with palette swatches · brand template buttons ·
-sprite browser (from `sprite_roots`, click = add layer) · canvas with drag-move,
-ctrl+wheel scale, and a live **channel-size squint inset** ("channel feed size", ~240px) — which
+Layers panel (reorder/dup/hide; shift+click multi-select) · Inspector with palette swatches ·
+brand template buttons · sprite browser (from `sprite_roots`, click = add layer) · a live
+**channel-size squint inset** ("channel feed size", ~240px) — which
 draws YouTube's **measured duration pill** + **red resume-progress bar** bottom (long-form only;
 pill text = the doc's optional `preview_dur`, default `12:00`) so you can gauge subject↔pill
 collisions live at their true proportion · **history panel**
 (sibling `*.thumb.json` = A/B variants; `history/` snapshots with PNG previews, click to
-restore — undoable) · Snapshot / Export PNG buttons · 16:9↔9:16 toggle.
+restore — undoable) · Snapshot / Export PNG buttons · 16:9↔9:16 toggle. Chrome = the video
+editor's cosmic2d theme (deep purple + mint accent).
 
-- **Undo**: editor-pattern doc snapshots at gesture settle; Ctrl+Z/Y. Snapshots append to
+**Canvas manipulation (the teidraw feel, ported):** every gesture mutates from a press-time
+snapshot + absolute offset — no drift, modifiers rewrite the drag live, one undo step per gesture.
+
+- **Select**: click (sticky — a selected layer under the cursor keeps priority over layers
+  above); shift+click toggles; drag empty space = marquee (partial overlap selects; shift adds);
+  Ctrl+A all; Esc deselects (or cancels + reverts an in-flight drag). Selection boxes are
+  rotation-aware OBBs that **hug the visible content** (tight alpha bbox + border — not the
+  glow/shadow headroom or source transparency).
+- **Move**: body drag (multi-selection moves together); **shift = axis lock**, **ctrl = snap**
+  to canvas edges/center/thirds + other layers' edges/centers with mint guide lines.
+- **Scale**: corner handles, uniform about the fixed opposite corner (images `scale`, text
+  `px`+`max_w`, shapes `r`/`w,h`/`thick`, mosaic `w,h`). Ctrl+wheel still nudge-scales.
+- **Rotate**: grab the invisible **ring just outside each corner** (cursor turns to a hand);
+  **shift snaps to 15°**; spins around the visible-content center.
+- **Crop (images)**: **ctrl+drag a corner** — a 30%-ghost of the full source appears, the kept
+  region stays visually pinned, pixel density never changes. `reset crop` in the inspector
+  and the right-click menu.
+- **Edges**: text side handles set `max_w` (wrap width); rect/mosaic edge handles set `w`/`h`.
+- **Arrows**: endpoint dots; shift snaps the dragged end to 45° steps.
+- **Keys**: `[` / `]` move the layer one z-step down/up, **shift+[ / ]** send to back / bring
+  to front; arrows nudge 1px (**shift = 10px**, a burst coalesces into one undo);
+  Del/Backspace deletes the selection; Ctrl+D duplicates; Ctrl+S saves.
+- **Right-click**: context menu — duplicate/delete/z-order/image style/flip/reset crop/reset rotation.
+- **OS drag-and-drop**: drop image files from Explorer onto the canvas — each becomes an image
+  layer at the drop point **already wearing the branded `card` style** (tilt + border + glow);
+  swap to sticker/plain/another style with one combo in the inspector.
+
+- **Undo**: teidraw-pattern doc snapshots at **gesture settle** (a whole drag, a ctrl+wheel
+  burst, or a nudge run = ONE step); Ctrl+Z/Y. Snapshots append to
   `<doc>.undo.jsonl` so the **full undo history persists across sessions** (delete the file
   to reset). External (agent) edits hot-reload as a normal undo step.
+- **`--drive "ops"`** (verification/agent harness): scripted synthetic input through the real
+  event queue; ops `;`-separated, one per frame — `wait:N` · `move:x,y` (screen) ·
+  `lmove:x,y` (logical canvas) · `down/up/rdown/rup` · `wheel:d` · `key:[ctrl+][shift+]Name` ·
+  `ctrl:0|1` / `shift:0|1` (hold) · `drop:lx,ly,path` (synth OS drop) · `shot:file.png` · `quit`.
 - **Hot-reload**: the GUI polls the doc mtime (~0.5 s). If the file changes on disk with no
   unsaved local edits it reloads silently — this is the **LLM-authoring loop**: the agent
   edits the doc (thumb.py or raw JSON), the human watches it change live. With unsaved local
