@@ -312,6 +312,7 @@ static Project parse_project_json(json j, const std::string& path) {
             else if (!(lbl = pstr("prompt")).empty()) {}
             else if (!(lbl = pstr("title")).empty()) {}   // code/shape cards
             else if (!(lbl = pstr("code")).empty()) {}
+            else if (c.type == "sfx" && !(lbl = pstr("sfx_cue")).empty()) {}   // sfx clip → the cue name is its label
             else lbl = cj.value("notes", c.id);
             c.label = snippet(lbl);
             p.clips[c.id] = c;
@@ -3445,6 +3446,18 @@ static bool g_placeIgnoreUntilUp = false;// after a drop arms the tool, ignore p
 static std::string g_placeReq;           // DrawTimeline → DrawUI: a placement to commit (deferred)
 static std::string g_placeReqRow;        // the lane the cursor was over (row-selection prefers it)
 static double g_placeReqT = 0, g_placeReqDur = -1;
+// Grab / slip mode (press `g`): slide the SELECTED timed clip's source in-point under its fixed
+// window — the NLE "slip" edit ("start it from the beginning again" without moving the clip).
+static std::string g_grabClip;           // clip being slipped ("" = off; click confirms, Esc/right-click cancels)
+static double g_grabIn0 = 0.0;           // its in-point when the grab began (cancel restore + delta base)
+static float  g_grabMouseX0 = 0.f;       // mouse X when the grab began (px)
+// Ctrl+D → placement: the copy rides the cursor (smart-add UX) instead of dropping right after.
+static std::string g_placeDupId;         // source clip for a "__dupe__" placement
+// Ephemeral lane: drag a clip UP where no same-type lane fits → a temporary track appears just above
+// it; drop to promote it (marked so it auto-removes when emptied). All state rebuilt per frame.
+static std::string g_ephemFor;           // clip currently offered an ephemeral lane ("" = none)
+static float  g_ephemY = 0.f;            // the source row's yTop (the band draws in [y-ROWH, y])
+static std::string g_ephemReq;           // DrawTimeline → DrawUI: promote a dropped ephemeral lane (deferred)
 static std::string g_voRegenReq;         // DrawTimeline → DrawUI: an inline VO text edit hit Enter → regen (keep voice/seed)
 // Inline VO-clip text editors (the tall tts rows): a per-box persistent buffer keyed `id+"|text"` /
 // `id+"|ovr"`. Synced FROM the clip params each frame EXCEPT while that box is being edited (else typing
@@ -3568,6 +3581,7 @@ static ImU32 type_color(const std::string& t) {
     if (t == "blur")    return IM_COL32(150, 185, 215, 255);
     if (t == "filter")  return IM_COL32(212, 170, 96, 255);   // cinematic grade over everything below (amber)
     if (t == "anchor")  return IM_COL32( 95, 220, 185, 255);   // caption anchor — the caption-move handle
+    if (t == "sfx")     return IM_COL32(255, 146,  54, 255);   // standalone sound-cue clip (orange, matches the cue flag)
     if (t == "diagram") return IM_COL32(120, 205, 235, 255);
     if (t == "plot")    return IM_COL32(140, 225, 170, 255);   // native chart card (green)
     if (t == "scene")   return IM_COL32(235, 150, 205, 255);   // Lua-scripted layout-engine graphic (pink)
@@ -6325,6 +6339,7 @@ static std::vector<SfxEvent> collect_sfx_events(Project& p) {
         if (c.type == "avatar") continue;                 // HOST transitions are silent (owner): no pop on the
                                                           // giggle snap-in, no whoosh on pose-swaps. Content pop
                                                           // reveals + authored sfx_cue (the doc-zoom swish) stay.
+        if (c.type == "sfx") continue;                    // a standalone sfx clip already emitted its cue above (no transition sounds)
         if (c.params.is_object() && c.params.contains("sfx") &&
             c.params["sfx"].is_boolean() && !c.params["sfx"].get<bool>()) continue;   // per-clip opt-out
         TransInfo ti = clip_trans_info(p, c);
@@ -7449,6 +7464,11 @@ static void composite_frame(Project& p, UIState& st, ImDrawList* dl, ImVec2 f0, 
                 // applied in the caption branch above) — the clip itself draws nothing.
                 if (c.type == "anchor") continue;
 
+                // sfx: a standalone SOUND-CUE clip — plays library/sfx/<sfx_cue>.wav at its start
+                // (scheduled by collect_sfx_events, ducked by collect_duck_windows, exactly like an
+                // authored cue but as its own draggable clip you slide along the timeline). No visual.
+                if (c.type == "sfx") continue;
+
                 // avatar: a STATIC pose per expression + an audio-reactive bob + light-up.
                 // (SD and authored-sheet frame ANIMATION aren't stable enough to feel good, so
                 // until an Inochi2D mesh rig the host is one PNG per expression sold as "talking"
@@ -8175,14 +8195,21 @@ static void draw_gain_envelope(Project& p, Clip& c, double playhead) {
             bool isEnd = (i == 0 || i + 1 == e->size());
             if (na) {
                 actIdx = (int)i; anyActive = true;
-                ImVec2 m = ImGui::GetIO().MousePos;
-                double ndb = std::max((double)GAINENV_BOT, std::min((double)GAINENV_TOP, y2db(m.y)));
+                // Relative-delta drag (moves FROM the current value) so holding Shift for 10x-finer
+                // control has no jump when you press/release it mid-drag. At scale 1.0 the point still
+                // tracks the cursor 1:1 (dB/px matches the graph), so normal dragging feels the same.
+                ImGuiIO& gio = ImGui::GetIO();
+                double fine = gio.KeyShift ? 0.1 : 1.0;
+                double dbPerPx = (double)(GAINENV_TOP - GAINENV_BOT) / (double)std::max(1.0f, size.y);
+                double ndb = std::max((double)GAINENV_BOT, std::min((double)GAINENV_TOP, (*e)[i].v[0] - (double)gio.MouseDelta.y * dbPerPx * fine));
                 double nt = (*e)[i].t;
                 if (i == 0) nt = c.start;                       // endpoints keep their time; interior slides between neighbors
                 else if (i + 1 == e->size()) nt = c.start + c.dur;
-                else nt = std::max((*e)[i - 1].t + 1e-3, std::min((*e)[i + 1].t - 1e-3, std::max(c.start, std::min(c.start + c.dur, x2T(m.x)))));
+                else { double tPerPx = dur / (double)std::max(1.0f, size.x);
+                       nt = (*e)[i].t + (double)gio.MouseDelta.x * tPerPx * fine;
+                       nt = std::max((*e)[i - 1].t + 1e-3, std::min((*e)[i + 1].t - 1e-3, std::max(c.start, std::min(c.start + c.dur, nt)))); }
                 (*e)[i].t = nt; (*e)[i].v[0] = ndb;
-                ImGui::SetTooltip("%.2fs   %+.1f dB", nt - c.start, ndb);
+                ImGui::SetTooltip("%.2fs   %+.2f dB%s", nt - c.start, ndb, gio.KeyShift ? "   (fine)" : "");
             }
             if (nh && !isEnd && ImGui::IsMouseClicked(1)) delIdx = (int)i;   // right-click a middle point → delete
             ImGui::PopID();
@@ -8505,6 +8532,54 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
         placeDeact = ImGui::IsItemDeactivated(); placeHover = ImGui::IsItemHovered();
     }
 
+    // ── grab / slip mode (press `g`): slide the SELECTED timed clip's CONTENTS (its source in-point)
+    //    under the fixed clip window — the NLE "slip" edit (e.g. make a split clip start from the
+    //    beginning again without moving it). Follows the mouse; CLICK confirms, Esc/right-click cancels.
+    //    Ctrl snaps the ends (source start → clip start `in=0`, or source end → clip end). Loop-aware.
+    //    Submitted BEFORE the clips (first-submitted wins) so the confirming click doesn't grab a clip. ──
+    if (!g_placeType.empty()) g_grabClip.clear();                     // placement wins if both somehow armed
+    if (!g_grabClip.empty()) {
+        auto ggi = p.clips.find(g_grabClip);
+        double gk = (ggi != p.clips.end()) ? src_time_factor(p, ggi->second.row, ggi->second.type, ggi->second.params) : 0.0;
+        if (ggi == p.clips.end() || gk <= 1e-6) { g_grabClip.clear(); }   // gone / not slippable → exit
+        else {
+            Clip& gc = ggi->second;
+            ImGui::SetCursorScreenPos(ImVec2(trackX, laneTop));
+            ImGui::InvisibleButton("##grabslip", ImVec2(std::max(1.f, origin.x + canvasW - trackX), std::max(1.f, yBot - laneTop)));
+            bool grabConfirm = ImGui::IsItemActivated();             // a press anywhere on the timeline = confirm
+            if (ImGui::IsItemHovered() || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+            ImGuiIO& gio = ImGui::GetIO();
+            double dtpp = 1.0 / pps;
+            double newIn = g_grabIn0 - (double)(gio.MousePos.x - g_grabMouseX0) * dtpp * gk;   // drag RIGHT → contents slide right → earlier source at the head → in DECREASES
+            double srcLen = 0.0; bool gloops = false;
+            auto gvm = p.asset_video.find(gc.asset);
+            if (gvm != p.asset_video.end() && gvm->second.fps > 0 && gvm->second.frames > 0) {
+                srcLen = gvm->second.frames / gvm->second.fps;
+                gloops = true;                                       // video loops by default (a "pingpong" string wraps too)
+                if (gc.params.is_object() && gc.params.contains("loop") && gc.params["loop"].is_boolean()) gloops = gc.params["loop"].get<bool>();
+            } else {
+                std::string guri; auto gau = p.asset_uri.find(gc.asset); if (gau != p.asset_uri.end()) guri = gau->second;
+                Pcm* gpc = guri.empty() ? nullptr : get_pcm(guri);
+                if (gpc) srcLen = gpc->dur;                          // audio never loops → clamp within the source
+            }
+            double maxIn = std::max(0.0, srcLen - gc.dur * gk);      // largest in that keeps the content window inside the source
+            if (gloops && srcLen > 1e-6) { newIn = std::fmod(newIn, srcLen); if (newIn < 0) newIn += srcLen; }
+            else newIn = std::max(0.0, std::min(maxIn, newIn));
+            if (gio.KeyCtrl && !(gloops && srcLen > 1e-6)) {         // Ctrl = magnetic snap to the two end alignments
+                double snap = 14.0 * dtpp * gk;
+                if (std::fabs(newIn) <= snap) newIn = 0.0;
+                else if (std::fabs(newIn - maxIn) <= snap) newIn = maxIn;
+            }
+            if (!gc.params.is_object()) gc.params = json::object();
+            gc.params["in"] = newIn;
+            st.selected = g_grabClip;
+            ImGui::SetTooltip("grab: in %.2fs%s / src %.2fs   ·  click = confirm · Esc = cancel · Ctrl = snap ends",
+                              newIn, gio.KeyCtrl ? " (snap)" : "", srcLen);
+            if (ImGui::IsMouseClicked(1)) { gc.params["in"] = g_grabIn0; g_grabClip.clear(); }   // right-click cancel
+            else if (grabConfirm) { g_grabClip.clear(); g_undoDirty = true; }                    // click confirm
+        }
+    }
+
     dl->PushClipRect(ImVec2(trackX, laneTop), ImVec2(origin.x + canvasW, yBot), true);  // clips never overdraw the label gutter; yBot (full content) so scrolled-to lanes aren't clipped away
     std::string rowMoveClip, rowMoveTo; float rowMoveY = 0;   // a clip dragged onto another same-type lane (committed after the loop)
     // edge-snap targets = the moving clip's OWN lane + the two ADJACENT lanes (owner: not the whole timeline)
@@ -8589,15 +8664,19 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
                     if (ImGui::IsItemHovered() || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
                     if (ImGui::IsItemActive()) {
                         st.selected = c.id;
-                        ImVec2 m = ImGui::GetIO().MousePos;
-                        double ndb = std::max((double)GAINENV_BOT, std::min((double)GAINENV_TOP, gainenv_f2db((m.y - a.y) / std::max(1.0f, b.y - a.y))));
+                        // Relative-delta drag — Shift = 10x finer with no jump on toggle (mirrors the
+                        // inspector graph). dB/px uses the clip body height; time/px uses the timeline scale.
+                        ImGuiIO& gio = ImGui::GetIO();
+                        double fine = gio.KeyShift ? 0.1 : 1.0;
+                        double dbPerPx = (double)(GAINENV_TOP - GAINENV_BOT) / (double)std::max(1.0f, b.y - a.y);
+                        double ndb = std::max((double)GAINENV_BOT, std::min((double)GAINENV_TOP, (*env)[i].v[0] - (double)gio.MouseDelta.y * dbPerPx * fine));
                         double nt = (*env)[i].t;
                         if (i != 0 && i + 1 != env->size()) {   // endpoints keep t=start/end; interior slides between neighbors
-                            nt = st.tlScroll + (double)((m.x - trackX) / pps);
+                            nt = (*env)[i].t + (double)gio.MouseDelta.x * dtPerPx * fine;
                             nt = std::max((*env)[i - 1].t + 1e-3, std::min((*env)[i + 1].t - 1e-3, std::max(c.start, std::min(c.start + c.dur, nt))));
                         }
                         (*env)[i].t = nt; (*env)[i].v[0] = ndb;
-                        ImGui::SetTooltip("%+.1f dB", ndb);
+                        ImGui::SetTooltip("%+.2f dB%s", ndb, gio.KeyShift ? "   (fine)" : "");
                     }
                     ImGui::PopID(); ImGui::PopID();
                 }
@@ -8652,8 +8731,8 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
         }
         // SFX-cue handle: a draggable flag at the cue's effective time (clip.start + sfx_at). Submitted
         // BEFORE the body button so dragging RETIMES the cue instead of moving the clip. Any clip type.
-        if (c.params.is_object() && c.params.contains("sfx_cue") && c.params["sfx_cue"].is_string()
-            && !c.params["sfx_cue"].get<std::string>().empty()) {
+        if (c.type != "sfx" && c.params.is_object() && c.params.contains("sfx_cue") && c.params["sfx_cue"].is_string()
+            && !c.params["sfx_cue"].get<std::string>().empty()) {   // an sfx CLIP needs no flag/handle — you drag the whole clip
             float sx = T2X(c.start + c.params.value("sfx_at", 0.0));
             if (sx >= a.x - 6 && sx <= b.x + 6) {
                 ImGui::SetCursorScreenPos(ImVec2(sx - 5, a.y));
@@ -8724,20 +8803,32 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
                     // vertical drag onto another lane of the SAME type → move the clip to that row
                     // (committed after the loop so we don't reshuffle membership mid-iteration).
                     float my = io.MousePos.y;
+                    auto laneFits = [&](const std::string& rid) {   // does the WHOLE clip fit on `rid` with no overlap?
+                        auto rit = p.rows.find(rid); if (rit == p.rows.end()) return true;
+                        for (auto& cid : rit->second.clips) { if (cid == c.id) continue;
+                            auto ci = p.clips.find(cid); if (ci == p.clips.end()) continue;
+                            if (ci->second.start < c.start + c.dur - 1e-3 && ci->second.start + ci->second.dur > c.start + 1e-3) return false; }
+                        return true;
+                    };
                     for (auto& pr : laneY)
                         if (my >= pr.second && my < pr.second + rhOf(pr.first)) {
                             auto tr = p.rows.find(pr.first);
-                            if (tr != p.rows.end() && pr.first != c.row && tr->second.type == c.type) {
+                            if (tr != p.rows.end() && pr.first != c.row && tr->second.type == c.type && laneFits(pr.first)) {
                                 rowMoveClip = c.id; rowMoveTo = pr.first; rowMoveY = pr.second;
                             }
                             break;
                         }
+                    // dragging UP with no same-type lane that FITS → offer an EPHEMERAL lane just above this
+                    // clip's row (a temporary track, created on drop, that auto-removes when emptied).
+                    if (rowMoveTo.empty() && my < ly - 4.f) { g_ephemFor = c.id; g_ephemY = ly; }
+                    else if (g_ephemFor == c.id) g_ephemFor.clear();
                 }
             }
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
         }
         if (ImGui::IsItemDeactivated() && !g_clipPressMoved && st.sel.size() > 1 && st.sel.count(c.id))
             sel_set_one(st, c.id);   // released a group member WITHOUT dragging → collapse to just this clip
+        if (ImGui::IsItemDeactivated() && g_ephemFor == c.id) { g_ephemReq = c.id; g_ephemFor.clear(); }   // dropped into the ephemeral lane → promote (deferred)
         ImU32 col = (st.selected == c.id) ? IM_COL32(255, 255, 255, 255)                    // primary selection (white)
                   : st.sel.count(c.id)    ? IM_COL32(0x7f, 0xd8, 0xa8, 255)                 // also in the marquee group (mint)
                                           : type_color(c.type);
@@ -8760,8 +8851,8 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
 
         // SFX-cue marker: an orange flag on the clip at the cue's effective time (drag it to retime;
         // was invisible before — a boom/awkward cue lives only in params). Label shows the cue name.
-        if (c.params.is_object() && c.params.contains("sfx_cue") && c.params["sfx_cue"].is_string()
-            && !c.params["sfx_cue"].get<std::string>().empty()) {
+        if (c.type != "sfx" && c.params.is_object() && c.params.contains("sfx_cue") && c.params["sfx_cue"].is_string()
+            && !c.params["sfx_cue"].get<std::string>().empty()) {   // an sfx CLIP needs no flag/handle — you drag the whole clip
             float sx = T2X(c.start + c.params.value("sfx_at", 0.0));
             if (sx >= a.x - 6 && sx <= b.x + 6) {
                 ImU32 sc = IM_COL32(255, 146, 54, 255);
@@ -8822,6 +8913,12 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
         dl->AddRect(ImVec2(trackX, rowMoveY + 1), ImVec2(origin.x + canvasW, rowMoveY + rhOf(rowMoveTo) - 3),
                     IM_COL32(120, 220, 160, 230), 4.0f, 0, 2.5f);
         if (move_clip_to_row(p, rowMoveClip, rowMoveTo)) g_undoDirty = true;
+    }
+    if (!g_ephemFor.empty() && p.clips.count(g_ephemFor)) {   // the temporary "drop here → new lane" band, just above the source clip's row (a distinct GOLD)
+        ImVec2 ea(trackX, g_ephemY - ROWH + 2), eb(origin.x + canvasW, g_ephemY - 2);
+        dl->AddRectFilled(ea, eb, IM_COL32(0xE0, 0xB0, 0x48, 60), 4.f);
+        dl->AddRect(ea, eb, IM_COL32(0xF2, 0xC8, 0x5A, 235), 4.f, 0, 2.0f);
+        dl->AddText(ImVec2(ea.x + 6, ea.y + 5), IM_COL32(0x24, 0x1c, 0x08, 255), "+ new lane — drop here");
     }
 
     dl->PopClipRect();
@@ -8931,22 +9028,27 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
         if (placeActivated) { placeT0 = tAt(pio.MousePos.x); placeRow = rowAt(pio.MousePos.y); }
         bool generic = (g_placeType == "__generic__");
         bool asset   = (g_placeType == "__asset__");     // placing a specific dropped/library asset (forced type)
+        bool dupe    = (g_placeType == "__dupe__");      // Ctrl+D: the copy of g_placeDupId rides the cursor
         LibType assetLt = LIB_IMAGE; double assetDur = 4.0; std::string assetType;
         if (asset) { assetLt = lib_type_of(ext_lower(g_placeAsset));
                      assetType = (assetLt == LIB_VIDEO) ? "video" : (assetLt == LIB_AUDIO) ? "music" : "image";
                      assetDur  = asset_natural_dur(g_placeAsset, assetLt); }
+        std::string dupType; double dupDur = 4.0;        // the source clip's type + length (the copy defaults to its size)
+        if (dupe) { auto di = p.clips.find(g_placeDupId);
+                    if (di != p.clips.end()) { dupType = di->second.type; dupDur = di->second.dur; } else g_placeType.clear(); }
         if (active || placeHover) {   // live preview: WHICH lane will it land on (re-evaluated as it grows)?
             double a  = active ? std::min(placeT0, tAt(pio.MousePos.x)) : tAt(pio.MousePos.x);
             double bb = active ? std::max(placeT0, tAt(pio.MousePos.x)) : a;
             std::string clk = active ? placeRow : rowAt(pio.MousePos.y);
-            std::string want = asset ? assetType : generic ? (p.rows.count(clk) ? p.rows[clk].type : std::string()) : std::string();
-            if (asset || !generic || !want.empty()) {   // generic needs a real lane under the cursor; asset/kind always typed
+            std::string want = asset ? assetType : dupe ? dupType : generic ? (p.rows.count(clk) ? p.rows[clk].type : std::string()) : std::string();
+            if (asset || dupe || !generic || !want.empty()) {   // generic needs a real lane under the cursor; asset/kind/dupe always typed
                 bool drag = (bb - a > 0.15);
-                double probe = asset ? assetDur : (drag ? (bb - a) : 0.02);   // an asset lands at its natural length
-                std::string tgt = (asset || generic) ? choose_row_of_type(p, want, clk, a, probe) : choose_place_row(p, g_placeType, clk, a, probe);
+                double probe = asset ? assetDur : dupe ? (drag ? (bb - a) : dupDur) : (drag ? (bb - a) : 0.02);   // asset/dupe land at their natural length
+                std::string tgt = (asset || generic || dupe) ? choose_row_of_type(p, want, clk, a, probe) : choose_place_row(p, g_placeType, clk, a, probe);
                 bool newLane = tgt.empty();
                 double durP;                             // asset = natural length; else gap-fill on a click / exact span on a drag
                 if (asset) durP = assetDur;
+                else if (dupe) durP = drag ? (bb - a) : dupDur;   // the copy keeps the source's length unless you drag a span
                 else if (drag) durP = bb - a;
                 else {
                     double def;                          // fallback when nothing follows: kind default (or the ref clip's length)
@@ -8970,6 +9072,7 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
         if (placeDeact && placeT0 > -1e29) {   // release → commit (deferred: p may add a track)
             double a = std::min(placeT0, tAt(pio.MousePos.x)), b = std::max(placeT0, tAt(pio.MousePos.x));
             if (asset) { g_placeReq = "__asset__"; g_placeReqT = a; g_placeReqRow = placeRow; }
+            else if (dupe) { g_placeReq = "__dupe__"; g_placeReqT = a; g_placeReqRow = placeRow; g_placeReqDur = (b - a > 0.15) ? (b - a) : dupDur; }
             else if (!generic || p.rows.count(placeRow)) {   // generic needs a real clicked lane
                 g_placeReq = g_placeType; g_placeReqT = a; g_placeReqDur = (b - a > 0.15) ? (b - a) : -1.0; g_placeReqRow = placeRow;
             }
@@ -9898,6 +10001,8 @@ static std::string add_native_clip_at(Project& p, const std::string& type, doubl
     else if (type == "filter")   { dur = 5.0; params = json{{"filter","cinematic"}}; label = "filter"; }   // whole-frame cinematic grade over its span
     else if (type == "filler")   { dur = 5.0; params = json{{"source","auto"},{"blur",30.0},{"dim",0.55}}; label = "bg fill"; }
     else if (type == "anchor")   { dur = 8.0; params = json::object(); label = "cap anchor"; }   // caption move-handle: pos shifts every caption starting in its span
+    else if (type == "sfx")      { params = json{{"sfx_cue","boom"},{"sfx_gain_db",-3.0}}; label = "boom";   // standalone sound cue: plays at the clip's START (drag the clip to move it)
+                                   Pcm* _sp = get_pcm("library/sfx/boom.wav"); dur = _sp ? std::max(0.6, _sp->dur) : 2.0; }   // dur is a visual handle only — the full sound plays regardless
 
     std::string row = forceRow;   // placement tool passes a pre-chosen (overlap-free) row; else resolve
     if (row.empty()) for (auto& kv : p.rows) if (kv.second.type == type) { row = kv.first; break; }
@@ -11332,7 +11437,7 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
         }
         if (ImGui::BeginMenu("Clip")) {
             bool hasSel = !st.selected.empty() && p.clips.count(st.selected);
-            if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, hasSel)) dupReq = st.selected;
+            if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, hasSel)) { g_placeType = "__dupe__"; g_placeDupId = st.selected; g_placeIgnoreUntilUp = true; }   // then click to place the copy
             if (ImGui::MenuItem("Split at playhead", "S", false, hasSel)) splitReq = st.selected;
             if (ImGui::MenuItem("Delete", "Del", false, hasSel)) delReq = st.selected;
             ImGui::Separator();
@@ -11370,6 +11475,7 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
                     {"Diagram (boxes + arrows)", "diagram"},
                     {"Plot / chart (native)",    "plot"},
                     {"Caption anchor (move captions in range)", "anchor"},
+                    {"SFX cue (standalone sound)", "sfx"},
                 };
                 for (auto& nt : NTS)
                     if (ImGui::MenuItem(nt.label)) {
@@ -11387,7 +11493,7 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
         if (kio.KeyCtrl && !kio.WantTextInput) {
             if (!kio.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z)) doUndo = true;
             if ((kio.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z)) || ImGui::IsKeyPressed(ImGuiKey_Y)) doRedo = true;
-            if (ImGui::IsKeyPressed(ImGuiKey_D) && !st.selected.empty()) dupReq = st.selected;   // Ctrl+D = duplicate
+            if (ImGui::IsKeyPressed(ImGuiKey_D) && !st.selected.empty()) { g_placeType = "__dupe__"; g_placeDupId = st.selected; g_placeIgnoreUntilUp = true; }   // Ctrl+D = duplicate, then click to PLACE the copy (smart-add)
             if (kio.KeyShift && !st.selected.empty() && p.clips.count(st.selected)) {            // Ctrl+Shift+C/V = transform
                 if (ImGui::IsKeyPressed(ImGuiKey_C)) copy_transform(p.clips[st.selected]);
                 if (ImGui::IsKeyPressed(ImGuiKey_V) && g_txClip.has) { paste_transform(p.clips[st.selected]); g_undoDirty = true; }
@@ -11428,7 +11534,7 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
     if (g_openAddTrack) { ImGui::OpenPopup("Add Track"); g_openAddTrack = false; }
     if (ImGui::BeginPopupModal("Add Track", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         static int tIdx = 0; static char tName[64] = "";
-        const char* TYPES[] = {"image", "caption", "code", "shape", "gradient", "filler", "avatar", "tts", "music", "anchor"};
+        const char* TYPES[] = {"image", "caption", "code", "shape", "gradient", "filler", "avatar", "tts", "music", "anchor", "sfx"};
         ImGui::Combo("type", &tIdx, TYPES, IM_ARRAYSIZE(TYPES));
         ImGui::InputText("name (optional)", tName, sizeof tName);
         if (ImGui::Button("Add", ImVec2(120, 0))) { add_track(p, TYPES[tIdx], tName); tName[0] = 0; ImGui::CloseCurrentPopup(); }
@@ -11586,7 +11692,7 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
             Clip& c = it->second;
             ImGui::Text("clip: %s", c.id.c_str());
             ImGui::SameLine();
-            if (ImGui::SmallButton("Duplicate")) dupReq = c.id;   // copy placed right after (Ctrl+D)
+            if (ImGui::SmallButton("Duplicate")) { g_placeType = "__dupe__"; g_placeDupId = c.id; g_placeIgnoreUntilUp = true; }   // then click to place the copy (smart-add)
             ImGui::SameLine(); ImGui::TextDisabled("(Ctrl+D)");
             ImGui::Text("row:  %s  [%s]", c.row.c_str(), c.type.c_str());
             if (c.type == "avatar") {
@@ -12002,23 +12108,30 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
             // ── SFX cue: an authored one-shot (boom/awkward/…) fired at clip.start + `at`; the music
             // DUCKS around it. Any clip type. Also shows/moves via the orange flag on the timeline clip. ──
             {
-                static const char* SFX_OPTS[] = {"(none)", "soft-swish", "soft-settle", "soft-tick", "boom", "awkward", "pop", "pop-blip", "whoosh", "whoosh-sharp"};
+                static const char* SFX_OPTS[] = {"(none)", "soft-swish", "page-turn", "soft-tick", "boom", "awkward", "pop", "pop-blip", "whoosh", "whoosh-sharp", "soft-settle"};   // "soft-settle" kept last = legacy alias (== page-turn) so old cues still display
                 std::string cur = c.params.is_object() ? jstr(c.params, "sfx_cue") : std::string();
                 int idx = 0; for (int i = 1; i < IM_ARRAYSIZE(SFX_OPTS); i++) if (cur == SFX_OPTS[i]) { idx = i; break; }
-                ImGui::SeparatorText("SFX cue");
+                bool sfxClip = (c.type == "sfx");
+                ImGui::SeparatorText(sfxClip ? "sound cue" : "SFX cue");
+                if (sfxClip) ImGui::TextDisabled("plays a one-shot at the clip's start — drag the clip to move the sound");
                 ImGui::SetNextItemWidth(150);
                 if (ImGui::Combo("cue##sfx", &idx, SFX_OPTS, IM_ARRAYSIZE(SFX_OPTS))) {
                     if (!c.params.is_object()) c.params = json::object();
                     if (idx == 0) c.params.erase("sfx_cue");
                     else { c.params["sfx_cue"] = std::string(SFX_OPTS[idx]); if (!c.params.contains("sfx_at")) c.params["sfx_at"] = 0.0; }
+                    if (sfxClip) c.label = (idx == 0) ? "sfx" : std::string(SFX_OPTS[idx]);   // clip body shows the cue name
                     g_undoDirty = true;
                 }
                 if (idx != 0) {
-                    float at = (float)c.params.value("sfx_at", 0.0);
-                    ImGui::SetNextItemWidth(150);
-                    if (ImGui::SliderFloat("at (s)##sfx", &at, 0.0f, (float)std::max(0.1, c.dur), "%.2f")) c.params["sfx_at"] = (double)at;
-                    ImGui::SameLine(); ImGui::TextDisabled("fires @ %.2fs", c.start + c.params.value("sfx_at", 0.0));
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("absolute timeline time. sfx_at is in TIMELINE seconds from the clip start\n(the same units the clip plays at) — drag the orange flag on the clip too.");
+                    if (!sfxClip) {   // a cue ON another clip is offset by `at`; an sfx CLIP just plays at its start
+                        float at = (float)c.params.value("sfx_at", 0.0);
+                        ImGui::SetNextItemWidth(150);
+                        if (ImGui::SliderFloat("at (s)##sfx", &at, 0.0f, (float)std::max(0.1, c.dur), "%.2f")) c.params["sfx_at"] = (double)at;
+                        ImGui::SameLine(); ImGui::TextDisabled("fires @ %.2fs", c.start + c.params.value("sfx_at", 0.0));
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("absolute timeline time. sfx_at is in TIMELINE seconds from the clip start\n(the same units the clip plays at) — drag the orange flag on the clip too.");
+                    } else {
+                        ImGui::TextDisabled("fires @ %.2fs (the clip start)", c.start);
+                    }
                     float g = (float)c.params.value("sfx_gain_db", -3.0);
                     ImGui::SetNextItemWidth(150);
                     if (ImGui::SliderFloat("gain (dB)##sfx", &g, -36.f, 12.f, "%+.1f")) c.params["sfx_gain_db"] = (double)g;
@@ -12303,9 +12416,20 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
             delSel = action_selection(st);   // Del / Backspace = delete the whole selection (never while typing in a field)
         if (ImGui::IsKeyPressed(ImGuiKey_R) && !ImGui::GetIO().WantTextInput && !ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyAlt)
             regenSel = action_selection(st); // R = regenerate the selected clip(s) — fresh take (bumps seed below)
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape) && !g_placeType.empty()) { g_placeType.clear(); g_placeAsset.clear(); g_placeIgnoreUntilUp = false; }   // disarm the placement tool
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {   // Esc cancels grab (restoring the in-point) first, else disarms the placement tool
+            if (!g_grabClip.empty()) { auto gi = p.clips.find(g_grabClip); if (gi != p.clips.end()) { if (!gi->second.params.is_object()) gi->second.params = json::object(); gi->second.params["in"] = g_grabIn0; } g_grabClip.clear(); }
+            else if (!g_placeType.empty()) { g_placeType.clear(); g_placeAsset.clear(); g_placeIgnoreUntilUp = false; g_placeDupId.clear(); }
+        }
         if (ImGui::IsKeyPressed(ImGuiKey_A) && !ImGui::GetIO().WantTextInput && !ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyAlt)
             g_placeType = (g_placeType == "__generic__") ? std::string() : std::string("__generic__");   // A = generic add mode
+        if (ImGui::IsKeyPressed(ImGuiKey_G) && !ImGui::GetIO().WantTextInput && !ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyAlt && !st.selected.empty()) {
+            auto gi = p.clips.find(st.selected);   // G = grab/slip the selected timed clip's contents (its source in-point)
+            if (gi != p.clips.end() && src_time_factor(p, gi->second.row, gi->second.type, gi->second.params) > 1e-6) {
+                g_grabClip = st.selected; g_placeType.clear();
+                g_grabIn0 = gi->second.params.is_object() ? gi->second.params.value("in", 0.0) : 0.0;
+                g_grabMouseX0 = ImGui::GetIO().MousePos.x;
+            }
+        }
         ImGui::SameLine();
         // Reserve a FIXED width for the time readout: the UI font is proportional, so the digits
         // changing (642.99 → 888.88) would otherwise re-measure wider/narrower and nudge every
@@ -12357,11 +12481,21 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
     // A Ctrl+drag on the timeline requests a duplicate via a global (DrawTimeline can't see dupReq).
     if (dupReq.empty() && !g_dragDupReq.empty()) { dupReq = g_dragDupReq; g_dragDupReq.clear(); }
     if (!g_placeReq.empty()) {   // placement tool released → add the clip (overlap-aware; may add a track)
-        std::string nid = (g_placeReq == "__asset__")   ? add_asset_clip_placed(p, g_placeAsset, g_placeReqT, g_placeReqRow)
-                        : (g_placeReq == "__generic__") ? add_generic_clip(p, g_placeReqRow, g_placeReqT, g_placeReqDur)
-                                                        : add_quick_clip(p, g_placeReq, g_placeReqT, g_placeReqDur, g_placeReqRow);
+        std::string nid;
+        if (g_placeReq == "__dupe__") {   // Ctrl+D placement: duplicate the source, then size + move the copy where the cursor dropped
+            nid = duplicate_clip(p, g_placeDupId, g_placeReqT);
+            if (!nid.empty() && p.clips.count(nid)) {
+                if (g_placeReqDur > 0.02) p.clips[nid].dur = g_placeReqDur;
+                std::string want = p.clips[nid].type;
+                std::string tgt = choose_row_of_type(p, want, g_placeReqRow, g_placeReqT, p.clips[nid].dur);
+                if (tgt.empty()) tgt = add_track(p, want, want);   // no room in a same-type lane → a fresh lane
+                if (!tgt.empty() && tgt != p.clips[nid].row) move_clip_to_row(p, nid, tgt);
+            }
+        } else nid = (g_placeReq == "__asset__")   ? add_asset_clip_placed(p, g_placeAsset, g_placeReqT, g_placeReqRow)
+                   : (g_placeReq == "__generic__") ? add_generic_clip(p, g_placeReqRow, g_placeReqT, g_placeReqDur)
+                                                   : add_quick_clip(p, g_placeReq, g_placeReqT, g_placeReqDur, g_placeReqRow);
         if (!nid.empty()) { st.selected = nid; g_bufFor.clear(); g_undoDirty = true;   // auto-select the new clip + auto-exit add mode
-                            g_placeType.clear(); g_placeAsset.clear(); }
+                            g_placeType.clear(); g_placeAsset.clear(); g_placeDupId.clear(); }
         g_placeReq.clear(); g_placeReqRow.clear();
     }
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) g_ctrlDupDragId.clear();   // re-arm for the next Ctrl+drag
@@ -12376,6 +12510,43 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
         for (auto& id : del) delete_clip(p, id);   // id-based; each call re-parses p (safe in a loop)
         sel_clear(st); g_bufFor.clear(); g_undoDirty = true;
     }
+    // ── ephemeral lane: a clip dropped above its row with no fitting same-type lane → promote a
+    //    TEMPORARY track just above it (marked so it auto-removes when emptied). Deferred: add_track /
+    //    move reshape p (safe here — no Clip& held). ──
+    if (!g_ephemReq.empty()) {
+        if (p.clips.count(g_ephemReq)) {
+            std::string srcRow = p.clips[g_ephemReq].row, ty = p.clips[g_ephemReq].type;
+            std::string nrow = add_track(p, ty, ty);   // a fresh same-type lane (add_track inserts it at the TOP of p.tracks)
+            if (!nrow.empty()) {
+                p.rows[nrow].params["ephemeral"] = true;   // marks it for auto-removal once empty
+                if (p.doc.contains("rows") && p.doc["rows"].contains(nrow)) p.doc["rows"][nrow]["params"] = p.rows[nrow].params;
+                int srcTk = -1; for (int i = 0; i < (int)p.tracks.size(); i++) { for (auto& r : p.tracks[i].rows) if (r == srcRow) { srcTk = i; break; } if (srcTk >= 0) break; }
+                int newTk = -1; for (int i = 0; i < (int)p.tracks.size(); i++) if (p.tracks[i].rows.size() == 1 && p.tracks[i].rows[0] == nrow) { newTk = i; break; }
+                if (srcTk >= 0 && newTk >= 0 && newTk != srcTk) {   // move the fresh track from the top to just ABOVE the source clip's track
+                    Track nt = p.tracks[newTk]; p.tracks.erase(p.tracks.begin() + newTk);
+                    if (newTk < srcTk) srcTk--;                     // erasing above the source shifts its index up
+                    p.tracks.insert(p.tracks.begin() + srcTk, nt); // insert AT the source's index → sits just above it
+                }
+                move_clip_to_row(p, g_ephemReq, nrow);
+                st.selected = g_ephemReq; g_bufFor.clear(); g_undoDirty = true;
+            }
+        }
+        g_ephemReq.clear(); g_ephemFor.clear();
+    }
+    // auto-remove an EMPTY ephemeral lane (the "disappears when empty" rule) — only while idle (a drag's
+    // transient empties don't nuke a lane mid-gesture); never the last track; one per frame is plenty.
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) && g_ephemReq.empty() && p.tracks.size() > 1) {
+        std::string kill;
+        for (auto& tk : p.tracks) {
+            if (tk.rows.empty()) continue;
+            bool empt = true;
+            for (auto& rid : tk.rows) { auto r = p.rows.find(rid);
+                if (r == p.rows.end() || !r->second.params.value("ephemeral", false) || !r->second.clips.empty()) { empt = false; break; } }
+            if (empt) { kill = tk.id; break; }
+        }
+        if (!kill.empty()) { delete_track(p, kill); g_undoDirty = true; }
+    }
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) && g_ephemReq.empty()) g_ephemFor.clear();   // safety: never leave the band stuck on
     if (!regenSel.empty()) {     // R = regenerate the selected clip(s) — independent of the reassign chain above
         for (auto& id : regenSel) {
             auto gi = gen.find(id); if (gi != gen.end() && gi->second.state == 1) continue;   // already generating

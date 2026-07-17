@@ -21,7 +21,8 @@ OD = collections.OrderedDict
 # ── clip-type defaults: row + a sensible param skeleton (what the compositor reads) ──
 ROW_OF = {"code":"r_code","caption":"r_cap","text":"r_cap","shape":"r_shape","gradient":"r_grade",
           "image":"r_img","video":"r_video","avatar":"r_av","tts":"r_vo","music":"r_music","blur":"r_blur",
-          "diagram":"r_diagram","plot":"r_plot","filler":"r_fill","anchor":"r_capanchor","scene":"r_scene"}
+          "diagram":"r_diagram","plot":"r_plot","filler":"r_fill","anchor":"r_capanchor","scene":"r_scene",
+          "sfx":"r_sfx"}
 TRACK_OF = {"r_code":("tk_code","Decompile","video"),"r_cap":("tk_cap","Captions","video"),
             "r_shape":("tk_shape","Callouts","video"),"r_grade":("tk_grade","Grade","video"),
             "r_img":("tk_img","Footage","video"),"r_video":("tk_video","Video","video"),
@@ -30,7 +31,8 @@ TRACK_OF = {"r_code":("tk_code","Decompile","video"),"r_cap":("tk_cap","Captions
             "r_plot":("tk_plot","Chart","video"),"r_scene":("tk_scene","Scene","video"),
             "r_vo":("tk_vo","Narration","audio"),"r_music":("tk_music","Music","audio"),
             "r_transcript":("tk_transcript","Transcript","video"),
-            "r_capanchor":("tk_capanchor","Cap anchor","video")}
+            "r_capanchor":("tk_capanchor","Cap anchor","video"),
+            "r_sfx":("tk_sfx","SFX","video")}
 
 PROJDIR = "."   # dir of the loaded project — plain uris resolve CWD-first, then here
                 # (a project dir is portable: it can live outside the code repo)
@@ -89,7 +91,7 @@ def ensure_row_after(p, rid, after, typ="image"):
 def gen_id(p, typ):
     base = {"caption":"c_cap","text":"c_cap","code":"c_cd","shape":"c_sh","gradient":"c_vig",
             "image":"c_im","video":"c_vid","avatar":"c_av","tts":"v_","music":"c_mus","blur":"c_blur",
-            "diagram":"c_diag","plot":"c_plot","filler":"c_fill","anchor":"c_anc"}.get(typ,"c_")
+            "diagram":"c_diag","plot":"c_plot","filler":"c_fill","anchor":"c_anc","sfx":"c_sfx"}.get(typ,"c_")
     i=1
     while f"{base}{i}" in p["clips"]: i+=1
     return f"{base}{i}"
@@ -1512,6 +1514,39 @@ def cmd_anchor(p, a):
     print(f"anchor {cid}: {t0:.2f}-{t1:.2f}  pos {a.pos}  — moves {n} caption clip(s)")
 
 
+def cmd_sfx(p, a):
+    """standalone sound-cue clip on r_sfx: plays library/sfx/<cue>.wav at its START (drag the
+    clip to move the sound). The music ducks around it. This is the clip-type version of the old
+    params.sfx_cue-on-a-clip cue (still supported); here the cue is free to sit on its own row."""
+    rid="r_sfx"
+    if a.rm:
+        if a.rm not in p["clips"]: sys.exit(f"no clip {a.rm}")
+        p["clips"].pop(a.rm)
+        for r in p["rows"].values():
+            if a.rm in r.get("clips",[]): r["clips"].remove(a.rm)
+        save(p, a.out or a.project); print(f"removed {a.rm}"); return
+    if a.cue is None:   # no --cue → list mode
+        clips=[(cid,p["clips"][cid]) for cid in p["rows"].get(rid,{}).get("clips",[])]
+        if not clips: print("no sfx clips"); return
+        for cid,c in clips:
+            pr=c.get("params",{})
+            print(f"{cid}: {c['start']:.2f}s  {pr.get('sfx_cue','?')}  {pr.get('sfx_gain_db',-3.0):+.1f}dB"
+                  + ("" if pr.get('sfx_duck',True) else "  no-duck"))
+        return
+    if a.t is None: sys.exit("need --t <seconds> (or --rm <id>, or no --cue to list)")
+    dur=a.dur
+    if dur is None:   # visual handle length = the sound's length (floored so it stays grabbable); the full sound plays regardless
+        try:
+            import wave as _w
+            with _w.open(os.path.join("library","sfx",a.cue+".wav"),"rb") as w: dur=max(0.6, w.getnframes()/w.getframerate())
+        except Exception: dur=1.0
+    prm=OD([("sfx_cue",a.cue),("sfx_gain_db",a.gain)])
+    if a.no_duck: prm["sfx_duck"]=False
+    cid=new_clip(p,"sfx",rid,a.t,dur,prm,a.id)
+    save(p, a.out or a.project)
+    print(f"sfx {cid}: {a.cue} @ {a.t:.2f}s  {a.gain:+.1f}dB" + ("  (no duck)" if a.no_duck else ""))
+
+
 def _ts(t, sep=","):   # seconds -> HH:MM:SS,mmm (srt) / HH:MM:SS.mmm (vtt)
     t=max(0.0,float(t)); h=int(t//3600); m=int(t%3600//60); s=int(t%60); ms=int(round((t-int(t))*1000))
     if ms==1000: s+=1; ms=0
@@ -2052,6 +2087,14 @@ def main():
     s.add_argument("--rows", default=None, help="comma row ids to move (default: every caption row)")
     s.add_argument("--id", default=None)
     s.add_argument("--rm", default=None, help="remove an anchor clip by id")
+    s=sub.add_parser("sfx", help="standalone sound-cue clip: plays library/sfx/<cue>.wav at its start (drag it to move the sound; music ducks)"); common(s)
+    s.add_argument("--cue", default=None, help="sfx name (boom/awkward/whoosh/pop/page-turn/soft-swish/soft-tick/...); omit to LIST existing sfx clips")
+    s.add_argument("--t", type=float, default=None, help="start time (s) — the sound plays here")
+    s.add_argument("--gain", type=float, default=-3.0, help="gain dB (default -3)")
+    s.add_argument("--dur", type=float, default=None, help="visual clip length (s); default = the sound's length (the full sound plays regardless)")
+    s.add_argument("--no-duck", dest="no_duck", action="store_true", help="do NOT dip the music around this cue")
+    s.add_argument("--id", default=None)
+    s.add_argument("--rm", default=None, help="remove an sfx clip by id")
     s=sub.add_parser("transcript", help="(re)generate the animated on-screen transcript from the VO lines"); common(s)
     s=sub.add_parser("captions", help="export the spoken VO transcript (txt/srt/vtt) for YouTube subtitles"); common(s)
     s.add_argument("--fmt", choices=["txt","srt","vtt"], default="txt", help="stdout format (default txt = paste into YouTube auto-sync)")
@@ -2095,6 +2138,7 @@ def main():
     if a.cmd=="adopt": cmd_adopt(p,a); return
     if a.cmd=="retime": cmd_retime(p,a); return
     if a.cmd=="anchor": cmd_anchor(p,a); return
+    if a.cmd=="sfx": cmd_sfx(p,a); return
     if a.cmd=="transcript": cmd_transcript(p,a); return
     if a.cmd=="captions": cmd_captions(p,a); return
     if a.cmd=="bed": cmd_bed(p,a); return

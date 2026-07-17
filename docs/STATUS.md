@@ -2,7 +2,32 @@
 
 Hand-maintained "what's true right now." **Read this first after `CLAUDE.md`** and update it
 in the same change that lands work, so a fresh session reorients in ~60s. Last updated:
-**2026-07-15**. For composing a video as an agent, **`docs/LLM_WORKFLOW.md`**.
+**2026-07-17**. For composing a video as an agent, **`docs/LLM_WORKFLOW.md`**.
+
+**★ EDITOR ROUGH-EDGES PASS (2026-07-17) — 6 owner-requested UX fixes, all built + editor rebuilt:**
+1. **Grab / slip mode (`g`)** — press `g` on a selected **timed** clip (tts/music/video) to slide its
+   CONTENTS (source `in`-point) under the fixed clip window without moving the clip ("start it from the
+   beginning again"). Follows the mouse; **click confirms, Esc/right-click cancels**; **Ctrl snaps the ends**
+   (source start→clip start `in=0`, or source end→clip end). Loop-aware (looping video wraps; audio clamps
+   inside the source). Reuses `src_time_factor`/`in`; verify: it just drives `params.in`.
+2. **Volume envelope 10× precision** — hold **Shift** while dragging any volume-envelope breakpoint (the
+   Inspector graph `draw_gain_envelope` AND the inline timeline handle) for 0.1× movement. Now delta-based
+   (no jump when you toggle Shift mid-drag); tooltip shows `%+.2f dB (fine)`.
+3. **Page-turn sound replaces `soft-settle`** — `tools/gen-sfx.py` `gen_page_turn()` synthesizes a soft paper
+   riffle→flap; writes `page-turn.wav` **and** `soft-settle.wav` (byte-identical alias, so existing cues keep
+   playing but now sound like a page turn). Inspector dropdown lists `page-turn`.
+4. **`sfx` clip type** (row `r_sfx`) — a standalone sound cue you drag freely (vs a `sfx_cue` baked onto a
+   host clip + its `sfx_at` flag). Draws nothing; plays `library/sfx/<sfx_cue>.wav` at its start via the
+   existing `collect_sfx_events`/duck path (ungated, preview==export — verified `--dump-sfx`). Edit ▸ Add
+   special clip ▸ SFX cue; **`slop.py sfx <proj> --cue boom --t 12.3 [--gain][--no-duck]`** (+ `--rm`/list).
+5. **Ctrl+D → smart-add placement** — duplicating (Ctrl+D / menu / inspector) now arms the placement tool
+   with the copy riding the cursor (a `__dupe__` mode): click to drop, drag to resize, lands in the clicked
+   lane / a free same-type lane / a new lane. (Ctrl+**drag**-duplicate unchanged.)
+6. **Ephemeral lane** — drag a clip UP where no same-type lane FITS (occupied or none) → a gold "+ new lane —
+   drop here" band appears just above its row; drop to promote a temporary track there (marked `ephemeral`,
+   auto-removed when emptied while idle). Same-type lanes that fit still live-move as before.
+   Interactive bits (1,5,6) await the owner's live-test; all compile + the editor loads/renders clean.
+
 **★★ LAYOUT ENGINE SCOPED (2026-07-15) — the `scene` clip, Lua-first. Full design: `docs/LAYOUT_ENGINE.md`.**
 This is the long-deferred "Phase 4a layout engine": a native, scriptable, **reflowable** motion-graphics
 clip type so any diagram/chart/callout/composed visual is authored natively (transparent, adjustable) with

@@ -207,6 +207,16 @@ the param UI from the schema, so adding a model needs no editor change.
   narrows the targets (default: every caption/text row). The clip draws nothing itself.
   Author via **`slop.py anchor <proj> --beat b04[..b06] | --t0 T --t1 T --pos X,Y`** (no
   `--pos` lists; `--rm <id>` removes), or in-editor: Edit ▸ Add special clip ▸ Caption anchor.
+- **sfx clips** (row type **`sfx`**, conventional row `r_sfx`): a **standalone sound cue** you slide
+  freely along the timeline — it plays `library/sfx/<params.sfx_cue>.wav` at the clip's **start**
+  (`sfx_gain_db` trims, default −3; `sfx_duck:false` opts the clip out of the music dip). The clip
+  draws nothing; move the sound by dragging the CLIP (no per-clip `sfx_at` — the clip's position *is*
+  the timing). Scheduled by the same path as an authored `params.sfx_cue` cue, so it's ungated by
+  `meta.sfx` and preview == export. The clip's duration is a visual handle only — the full sound
+  plays regardless. (The old way — a `params.sfx_cue` cue baked onto another clip and nudged with
+  its `sfx_at` orange flag — still works, but a standalone `sfx` clip decouples the sound from a
+  host clip's span.) Author via **`slop.py sfx <proj> --cue boom --t 12.3 [--gain dB] [--no-duck]`**
+  (no `--cue` lists; `--rm <id>` removes), or in-editor: Edit ▸ Add special clip ▸ SFX cue.
 - `keyframes` maps a dotted param path → an ordered list of keyframes. Each keyframe has
   `t`, `v`, and an `interp` (`linear · bezier · constant · spring`); `bezier` adds
   `in`/`out` handle vectors, `spring` adds `{stiffness,damping}`. **Any** numeric param is
