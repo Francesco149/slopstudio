@@ -254,7 +254,15 @@ def cmd_export(a):
     cut = find_one(a.name, ".slop.json")
     args = ["bash", "tools/export.sh", rel(cut), "--cache", "cache"]
     if a.final:
-        args += ["--fps", "60", "--scale", "1080"]
+        args += ["--fps", "60"]
+        # PORTRAIT shorts render at their NATIVE 1080x1920 — `--scale 1080` scales HEIGHT to 1080,
+        # which squashes a portrait cut to 608x1080 (the render-modal fix, ported to the CLI).
+        try:
+            res = json.load(open(cut)).get("meta", {}).get("resolution", [1920, 1080])
+        except Exception:
+            res = [1920, 1080]
+        if res[1] <= res[0]:                 # landscape only → downscale to 1080p
+            args += ["--scale", "1080"]
     run(args, cwd=ROOT)
 
 
