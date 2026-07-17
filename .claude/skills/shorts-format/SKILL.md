@@ -36,6 +36,11 @@ via `slop.py`, never hand-edited JSON. Reuse a proven widget when one fits (`cod
   (~y 240–340px) and a code card centres below it (a ≤14-line card's top ≈ 665px = clear gap). Keep captions
   clear of the top ~10% (Shorts progress bar) and the bottom ~16% (Shorts title/like/comment/share UI). If a
   card must be taller, split it across two beats rather than let it climb into the caption.
+- **Full-frame scene widgets carry NO top title/subtitle on portrait** — the caption band owns the top, so a
+  widget title collides with it. Drop `title`/`sub` and let the caption + VO name it; carry detail with the
+  widget's own in-body labels (chart markers/vlines/axis labels, versus bar notes). For a chart, also push the
+  plot down (`top≈0.20`) so the top axis-tick label clears the caption, and keep the rotated y-label short so
+  it doesn't clip the left frame edge.
 - **Numeric head-to-heads → `widgets.versus`** (count-up value bars with an eased pop; bar height = the real
   magnitude, so "who's bigger" reads instantly). **Native animated line/bar charts → `widgets.chart`.**
 - **Gameplay footage is NOT `solo`** — a landscape 4:3 clip goes in the top content-band with the host as the
