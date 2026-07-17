@@ -577,6 +577,21 @@ static void add_layer(json l, bool select = true) {
 static int canvas_w() { auto& d = g_app.doc; return d.contains("canvas") && d["canvas"].is_array() ? d["canvas"][0].get<int>() : 1280; }
 static int canvas_h() { auto& d = g_app.doc; return d.contains("canvas") && d["canvas"].is_array() ? d["canvas"][1].get<int>() : 720; }
 
+// Stamp the brand package's reusable image treatment onto a layer — the one-click "set it up the
+// branded way (tilt + border + glow)" the owner wanted. Reads brand.image_styles[style] so the look
+// stays in sync with the package (falls back to a sane literal); writes LITERAL rot/outline_px/glow
+// onto the layer so they stay visible + tweakable in the inspector afterwards. The white sticker
+// border + drop shadow already come free from brand.sticker.
+static void brand_image(json& L, const char* style = "card") {
+    const json& styles = g_app.brand.image_styles;
+    json c = styles.contains(style) ? styles[style] : json::object();
+    L["rot"]        = jf(c, "rot", -2.0);
+    L["outline_px"] = jf(c, "outline_px", 10.0);
+    L["glow"]       = (c.contains("glow") && c["glow"].is_object()) ? c["glow"]
+                                                                    : json{{"px", 30}, {"color", "$gold"}, {"alpha", 0.4}};
+    g_app.undoDirty = true;
+}
+
 // ─────────────────────── inspector color/number widgets ─────────────────────
 // A typed color commits on Enter OR on defocus (IsItemDeactivatedAfterEdit — ImGui keeps the
 // buffer live-updated, so the typed text survives to the deactivation frame). Enter-only silently
@@ -730,6 +745,19 @@ static void panel_layers() {
             add_layer({{"id", unique_id("img")}, {"type", "image"}, {"src", std::string(file)}, {"x", canvas_w() / 2}, {"y", canvas_h() / 2}, {"scale", 0.8}});
     }
     ImGui::SameLine();
+    if (ImGui::SmallButton("image\xE2\x98\x85")) {   // add an image ALREADY branded (tilt + border + glow) — one action
+        char file[1024] = "";
+        OPENFILENAMEA ofn = {}; ofn.lStructSize = sizeof ofn;
+        ofn.lpstrFilter = "Images\0*.png;*.jpg;*.jpeg;*.webp\0\0";
+        ofn.lpstrFile = file; ofn.nMaxFile = sizeof file; ofn.Flags = OFN_FILEMUSTEXIST;
+        if (GetOpenFileNameA(&ofn)) {
+            json L = {{"id", unique_id("img")}, {"type", "image"}, {"src", std::string(file)}, {"x", canvas_w() / 2}, {"y", canvas_h() / 2}, {"scale", 0.7}};
+            brand_image(L);
+            add_layer(L);
+        }
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("add an image already set up the branded way: a slight tilt, the white border, and a gold accent glow.");
+    ImGui::SameLine();
     if (ImGui::SmallButton("arrow")) add_layer({{"id", unique_id("arrow")}, {"type", "shape"}, {"shape", "arrow"}, {"x1", canvas_w() / 4}, {"y1", canvas_h() * 3 / 4}, {"x2", canvas_w() / 2}, {"y2", canvas_h() / 2}, {"width", 24}, {"fill", "$gold"}, {"outline_px", 6}});
     if (ImGui::SmallButton("circle")) add_layer({{"id", unique_id("circ")}, {"type", "shape"}, {"shape", "circle"}, {"x", canvas_w() / 2}, {"y", canvas_h() / 2}, {"r", 130}, {"thick", 14}, {"fill", "$gold"}, {"outline_px", 5}});
     ImGui::SameLine();
@@ -841,6 +869,8 @@ static void panel_inspector() {
         ch |= num_field("outline_px", L, "outline_px", jf(g_app.brand.sticker, "outline_px", 0), 0.2f, 0, 60);
         ch |= color_field("outline", L, "outline", js(g_app.brand.sticker, "outline", "#ffffff"));
         ch |= fx_section(L);
+        if (ImGui::Button("\xE2\x98\x85 brand it (tilt + border + glow)")) { brand_image(L); ch = true; }   // one-click branded setup
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("stamp the brand '%s' card treatment onto this image: a slight tilt, the white sticker border,\nand a gold accent glow. Tweak rot / outline / glow above afterwards; change glow color for a different accent.", g_app.brand.name.c_str());
     } else if (type == "text") {
         std::string text = js(L, "text", "");
         if (ImGui::InputTextMultiline("text", &text, ImVec2(-1, 60))) { L["text"] = text; ch = true; }

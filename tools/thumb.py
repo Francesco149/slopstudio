@@ -15,6 +15,7 @@ human ever sees a candidate.
   python tools/thumb.py set t.thumb.json host x=940 scale=1.1 src="/mnt/f/.../sprite.png"
   python tools/thumb.py add t.thumb.json text id=h1 text="BIG HOOK" style=headline x=360 y=200
   python tools/thumb.py rm t.thumb.json h1     |  order t.thumb.json h1 --to 3
+  python tools/thumb.py brand t.thumb.json card1        # one-click branded image (tilt + border + glow)
   python tools/thumb.py render t.thumb.json [--no-feed] [--proof]
   python tools/thumb.py lint t.thumb.json --title "the paired video title"
   python tools/thumb.py snapshot t.thumb.json      # save into history/ (A/B bank)
@@ -201,6 +202,35 @@ def cmd_order(a):
     doc["layers"].insert(max(0, min(len(doc["layers"]), a.to)), l)
     save(a.doc, doc)
     print(f"{l.get('id')} → index {a.to}")
+
+
+def _doc_brand_json(doc, docpath):
+    """Load the doc's brand.json (via its `brand` relative path, else auto-find)."""
+    docdir = os.path.dirname(os.path.abspath(docpath))
+    bdir = doc.get("brand", "")
+    bdir = os.path.join(docdir, bdir) if bdir else find_brand(docdir)
+    bj = os.path.join(bdir, "brand.json")
+    return json.load(open(bj, encoding="utf-8")) if os.path.exists(bj) else {}
+
+
+def cmd_brand(a):
+    """Stamp the brand package's reusable image treatment (image_styles[style] = tilt + border +
+    accent glow) onto an image layer — the CLI twin of slopthumb's '★ brand it' button. The white
+    sticker border + drop shadow already come free from brand.sticker; this adds rot + outline + glow."""
+    doc = load(a.doc)
+    _, layer = find_layer(doc, a.layer)
+    if layer.get("type") != "image":
+        sys.exit(f"'brand' applies to image layers (layer {a.layer} is {layer.get('type')})")
+    styles = _doc_brand_json(doc, a.doc).get("image_styles", {})
+    c = styles.get(a.style)
+    if c is None:
+        sys.exit(f"no image style '{a.style}' in the brand (have: {[k for k in styles if not k.startswith('_')]})")
+    layer["rot"] = c.get("rot", -2)
+    layer["outline_px"] = c.get("outline_px", 10)
+    if "glow" in c:
+        layer["glow"] = json.loads(json.dumps(c["glow"]))   # deep-copy so we don't alias the brand file
+    save(a.doc, doc)
+    print(f"branded {layer.get('id')} with '{a.style}' (rot {layer['rot']}, outline_px {layer['outline_px']}, glow {layer.get('glow', {}).get('color', '-')})")
 
 
 def out_paths(docpath):
@@ -416,6 +446,7 @@ def main():
     s = sub.add_parser("add"); s.add_argument("doc"); s.add_argument("type", choices=["text", "image", "shape", "bg", "watermark", "mosaic"]); s.add_argument("kv", nargs="*")
     s = sub.add_parser("rm"); s.add_argument("doc"); s.add_argument("layer")
     s = sub.add_parser("order"); s.add_argument("doc"); s.add_argument("layer"); s.add_argument("--to", type=int, required=True)
+    s = sub.add_parser("brand"); s.add_argument("doc"); s.add_argument("layer"); s.add_argument("--style", default="card", help="brand image_styles preset (default: card = tilt+border+glow)")
     s = sub.add_parser("render"); s.add_argument("doc"); s.add_argument("--proof", action="store_true"); s.add_argument("--no-feed", action="store_true")
     s.add_argument("--badge", action="store_true", help="also emit a duration-pill sim across feed sizes")
     s.add_argument("--dur", default="12:00", help="duration text for the badge sim (e.g. 14:55)")
@@ -425,7 +456,7 @@ def main():
 
     a = ap.parse_args()
     {"new": cmd_new, "overview": cmd_overview, "set": cmd_set, "docset": cmd_docset, "add": cmd_add,
-     "rm": cmd_rm, "order": cmd_order, "render": cmd_render, "lint": cmd_lint,
+     "rm": cmd_rm, "order": cmd_order, "brand": cmd_brand, "render": cmd_render, "lint": cmd_lint,
      "snapshot": cmd_snapshot, "variants": cmd_variants}[a.cmd](a)
 
 

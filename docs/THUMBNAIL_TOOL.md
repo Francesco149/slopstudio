@@ -14,8 +14,8 @@ the CPU compose path** — the deterministic reference, headless, no GPU needed 
 byte-identical between GUI export buttons and the CLI.
 
 **The one design rule: the tool is brand-agnostic.** Everything channel-specific — palette,
-fonts, text styles, sticker defaults, sprite library roots, watermark, layout templates,
-lint config — lives in a **brand package** directory the document points at. Swap the
+fonts, text styles, sticker defaults, reusable image styles, sprite library roots, watermark,
+layout templates, lint config — lives in a **brand package** directory the document points at. Swap the
 package, retheme the doc. The @GemmaExplains package lives at
 `../gemma-branding/brand-package/` (palette hexes LOCKED there, sampled from the rig
 art); a generic demo package is committed at `examples/thumb-demo/brand-demo/`.
@@ -52,7 +52,7 @@ the marks". `--blank` opts out to a bare bg.
 | type | fields |
 |---|---|
 | `bg` | `fill`, `grad_to` + `grad_angle`, `image` (cover-fit) + `blur`/`darken`/`opacity`, `vignette`; **`pattern`:`diamond`/`argyle`** quilt — `cell`, `pattern_fill` (alternate-diamond color), `pattern_line`+`pattern_line_px`+`pattern_line_alpha` (lattice), `pattern_motif` (`diamond`/`dot`/`plus`/`ring`/`box` accent at the corners) + `pattern_motif_fill`/`_size`/`_alpha`/`_every`/`_phase`; `pattern_ox`/`pattern_oy` slide the whole quilt (e.g. to center a motif group in a crop). Procedural → stays crisp at any scale (banners) |
-| `image` | `src`, `x`,`y`, `scale` (1.0 = fit canvas height), `rot`, `flip`, `outline_px`+`outline` (sticker), `shadow{dx,dy,blur,alpha,color,off}`, `glow{px,color,alpha}` — outline/shadow default from the package's `sticker` |
+| `image` | `src`, `x`,`y`, `scale` (1.0 = fit canvas height), `rot`, `flip`, `outline_px`+`outline` (sticker), `shadow{dx,dy,blur,alpha,color,off}`, `glow{px,color,alpha}` — outline/shadow default from the package's `sticker`. **One-click branded setup:** stamp the package's reusable **`image_styles.card`** (a slight tilt + border + gold accent glow — the "floating card" look) via slopthumb's **★ brand it** button (image inspector) / the **image★** add button, or **`thumb.py brand <layer> [--style card]`**. It writes literal `rot`/`outline_px`/`glow` so they stay tweakable; the white border + shadow already come from `sticker`. |
 | `text` | `text` (\n = line break), `style` (package style name; every field overridable), `x`,`y`, `px`, `max_w` (auto-shrink), `fill`+`grad_to` (vertical gradient), `stroke_px`+`stroke`, `tracking` (letter spacing), `line_height` (×natural leading, default 1.02; <1 packs multi-line text tighter), `align`, `plate{pad_x,pad_y,radius,fill,alpha}`, `shadow`, `glow` |
 | `shape` | `shape`: `arrow` (`x1,y1,x2,y2,width`) · `circle` (`x,y,r,thick` — 0=disc) · `rect` (`x,y,w,h,radius,thick` — 0=filled); `fill`, `outline_px`/`outline`, `shadow`, `glow` |
 | `mosaic` | `x`,`y`,`w`,`h`,`cell` — pixelates whatever is already on the canvas under the rect (the anime censor-gag primitive) |

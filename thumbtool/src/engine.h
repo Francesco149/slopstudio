@@ -448,6 +448,7 @@ struct Brand {
     std::map<std::string, std::string> fonts;     // name → absolute-ish path
     json styles = json::object();                 // name → text style defaults
     json sticker = json::object();                // default image-layer outline/shadow
+    json image_styles = json::object();           // name → reusable image treatment (tilt/border/glow), e.g. "card"
     std::vector<std::string> sprite_roots;
     json watermark = json::object();
     json templates = json::array();
@@ -482,6 +483,7 @@ static Brand load_brand(const std::string& dirIn) {
     if (j.contains("fonts"))   for (auto& [k, v] : j["fonts"].items())   if (v.is_string()) b.fonts[k] = path_join(dirIn, v.get<std::string>());
     if (j.contains("styles"))    b.styles = j["styles"];
     if (j.contains("sticker"))   b.sticker = j["sticker"];
+    if (j.contains("image_styles")) b.image_styles = j["image_styles"];
     if (j.contains("watermark")) { b.watermark = j["watermark"];
         if (b.watermark.contains("src")) b.watermark["src"] = path_join(dirIn, b.watermark["src"].get<std::string>()); }
     if (j.contains("templates")) b.templates = j["templates"];
