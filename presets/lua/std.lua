@@ -409,14 +409,15 @@ function widgets.slidein(t, d)
 end
 
 -- CODEWALL — the coverage-maxxing camera move over a baked code POSTER (tools/prerender/
--- codewall.py + its sidecar of named rects). Starts framed on ONE function and ACCELERATES
--- out to the whole wall (`ease="in_cubic"`, the b05 reveal), or the reverse: decelerate IN
--- to a function (`ease="out_cubic"`, the b51 callback). Aspect-correct (no stretch): the crop
--- always matches the frame's aspect; only the zoom + center are animated. REUSABLE — pass any
--- poster + two rects. data:
+-- codewall.py + its sidecar of named rects). Starts framed on ONE function and zooms out to
+-- the whole wall, or the reverse back IN to a function. Default ease is io_cubic — the camera
+-- accelerates AND smoothly decelerates to rest (owner: we basically never want a hard stop;
+-- in_cubic slams into the end frame). Aspect-correct (no stretch): the crop always matches
+-- the frame's aspect; only the zoom + center are animated. REUSABLE — pass any poster + two
+-- rects. data:
 --   { image=uri, img_w, img_h,             -- poster pixel size (from the sidecar)
 --     from={x,y,w,h}, to={x,y,w,h},         -- source rects to frame (0..1); `to` = {0,0,1,1} for the whole wall
---     dur=sec, ease="in_cubic"|"out_cubic"|"io_cubic", hold=sec(dwell on `from` first),
+--     dur=sec, ease="io_cubic"(default)|"out_cubic"|…, hold=sec(dwell on `from` first),
 --     margin=1.35 (how much slack around a framed function) }
 function widgets.codewall(t, d)
   d = d or {}
@@ -437,7 +438,7 @@ function widgets.codewall(t, d)
   local fcx, fcy, fcw, fch = frame_rect(d.from)
   local tcx, tcy, tcw, tch = frame_rect(d.to)
   local raw = ((t - (d.hold or 0)) / (d.dur or 4.0))
-  local e = anim.tween(raw, 1.0, d.ease or "in_cubic")     -- dur folded into raw so tween sees 0..1
+  local e = anim.tween(raw, 1.0, d.ease or "io_cubic")     -- dur folded into raw so tween sees 0..1
   -- geometric (log) zoom interpolation reads as a steady optical zoom
   local ch = fch * (tch / fch) ^ e
   local cw = ch * fa / ia
