@@ -487,7 +487,7 @@ def cmd_skeleton(a):
         v=round(v,1); return int(v) if float(v).is_integer() else v
     def S(x, y): return (_n(x*sx), _n(y*sy))
     p=OD([("schema","slopstudio.project/1"),
-          ("meta",OD([("title",sk.get("title","untitled")),("fps",sk.get("fps",30)),
+          ("meta",OD([("title",sk.get("title","untitled")),("fps",sk.get("fps",60)),   # 60 by default: smooth motion for the eased scene animations (the editor renders unique frames at meta.fps)
                       ("resolution",res),("sample_rate",48000),
                       ("vignette",sk.get("vignette",0.1)),   # a subtle UNIFORM radial vignette on EVERY beat (drawn in composite_frame). Deliberately NOT on the filter clip: a filter-clip vignette only darkens filter-ACTIVE spans, so filter-carved code/card beats stayed bright while graded beats got dark corners (the owner's "checker looks wrong on some beats but right in the code section"). One uniform vignette = a consistent checker everywhere.
                       ("notes","compiled by slop.py skeleton from "+os.path.basename(a.skeleton))])),

@@ -31,7 +31,8 @@ EXE="build/slopstudio.exe"
 
 PLAN="$(mktemp --suffix=.slop-export.json)"
 ELOG="$(mktemp --suffix=.slop-export.log)"
-trap 'rm -f "$PLAN" "$ELOG"' EXIT
+AMIX="$(mktemp --suffix=.slop-mix.wav)"   # the finished audio mix (a clean WAV; each branch re-encodes it)
+trap 'rm -f "$PLAN" "$ELOG" "$AMIX"' EXIT
 
 "$EXE" "$PROJ" --cache "$CACHE" --export-plan "$PLAN"
 W=$(jq -r .width "$PLAN"); H=$(jq -r .height "$PLAN")
@@ -69,9 +70,15 @@ fi
 # source has NO audio stream (a silent screen-capture mp4) is SKIPPED — otherwise its [N:a]
 # matches no stream and the whole filtergraph fails. `ffidx` is the real ffmpeg input index
 # (input 0 is the rawvideo pipe), incremented only for kept entries so it never desyncs.
+# The editor is a WINDOWS PE (WSLInterop), so it resolves cache/asset paths to Windows UNC form
+# (//wsl.localhost/<distro>/... or //wsl$/<distro>/...). ffmpeg here runs in the LINUX nix shell
+# and can't read those — strip the UNC prefix back to a native /… path so every WAV is found.
+# (Without this the audio probe fails on ALL clips → a silent export.)
+wsl_native() { printf '%s' "$1" | sed -E 's#^//(wsl\.localhost|wsl\$)/[^/]+##'; }
+
 AIN=(); FC=""; MIXLBL=""; NKEPT=0; ffidx=0
 for i in $(seq 0 $((NAUDIO - 1))); do
-  p=$(jq -r ".audio[$i].path" "$PLAN")
+  p=$(wsl_native "$(jq -r ".audio[$i].path" "$PLAN")")
   # skip if the source has no audio stream (probe once; cheap)
   if ! ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 "$p" 2>/dev/null | grep -q .; then
     echo ">> skip (no audio stream): $p" >&2; continue
@@ -92,7 +99,11 @@ for i in $(seq 0 $((NAUDIO - 1))); do
   awk "BEGIN{exit !($rate!=1)}" && ATEMPO="atempo=${rate},"
   VDUCK=""
   [ -n "$vexpr" ] && VDUCK=",volume=volume='${vexpr}':eval=frame"   # quotes protect the expr's commas
-  FC="${FC}[${ffidx}:a]${TRIM},asetpts=PTS-STARTPTS,${ATEMPO}volume=${g}dB${VDUCK},adelay=${ms}|${ms}[a${NKEPT}];"
+  # Normalize EVERY input to 48 kHz stereo BEFORE amix. The takes are a mix of rates (Qwen TTS
+  # 24 kHz, recorded snips 48 kHz, music 44.1 kHz) and amix does NOT resample — feeding it mixed
+  # rates mangled the mix into a short, sped-up blur (the user's "comes out sped up"). aresample +
+  # aformat make amix see one uniform format so `duration=longest` and timing are correct.
+  FC="${FC}[${ffidx}:a]${TRIM},asetpts=PTS-STARTPTS,${ATEMPO}volume=${g}dB${VDUCK},aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,adelay=${ms}|${ms}[a${NKEPT}];"
   MIXLBL="${MIXLBL}[a${NKEPT}]"
   NKEPT=$((NKEPT + 1))
 done
@@ -102,34 +113,38 @@ OUTW="$W"; OUTH="$H"; [ -n "$SCALE_H" ] && { OUTH="$SCALE_H"; OUTW="scaled"; }
 echo ">> rendering '$TITLE'  ${W}x${H} @${OUTFPS}fps  ${DUR}s  (${NAUDIO} audio)  -> $OUT" >&2
 VFARGS=(); [ -n "$VF" ] && VFARGS=(-vf "$VF")
 
+# ── Mix the audio ONCE to a clean WAV, then every branch re-encodes from it. Two hard-won reasons:
+#   (1) amix misbehaves when input 0 is the live rawvideo PIPE (it truncated the mix to a few seconds
+#       — the "sped up" bug), so we mix separately with a tiny anullsrc as input 0.
+#   (2) encoding amix DIRECTLY to AAC also truncated it (a timestamp quirk); a PCM/WAV intermediate
+#       launders the timestamps, so the later AAC encode of the WAV is full-length.
+if [ "$NAUDIO" -gt 0 ]; then
+  FC="${FC}${MIXLBL}amix=inputs=${NAUDIO}:duration=longest:normalize=0,volume=${MG}dB[aout]"
+  ffmpeg -hide_banner -loglevel error -y -f lavfi -t 0.1 -i anullsrc=r=48000:cl=stereo "${AIN[@]}" \
+    -filter_complex "$FC" -map "[aout]" -c:a pcm_s16le -t "$DUR" "$AMIX"
+fi
+
 if [ -n "$AUDIO_ONLY" ]; then
   # just the mixed audio (no video render) — for verifying a music arrangement quickly
   [ -n "$OUT" ] || OUT="exports/$(basename "${PROJ%.slop.json}").audio.m4a"
   echo ">> audio-only mix -> $OUT ($NAUDIO inputs, ${DUR}s)" >&2
   if [ "$NAUDIO" -gt 0 ]; then
-    # the FC is 1-indexed (input 0 = the video pipe in a normal render) — with no pipe, add a dummy
-    # anullsrc as input 0 so the audio-clip inputs still line up at [1:a]..[N:a].
-    FC="${FC}${MIXLBL}amix=inputs=${NAUDIO}:duration=longest:normalize=0,volume=${MG}dB[aout]"
-    ffmpeg -hide_banner -y -f lavfi -t 0.1 -i anullsrc=r=48000:cl=mono "${AIN[@]}" \
-      -filter_complex "$FC" -map "[aout]" -c:a aac -b:a "$ABITRATE" -t "$DUR" "$OUT"
+    ffmpeg -hide_banner -y -i "$AMIX" -c:a aac -b:a "$ABITRATE" -t "$DUR" "$OUT"
   else echo "no audio in plan" >&2; fi
 elif [ -n "$REMUX_FROM" ]; then
-  # AUDIO-ONLY: video is unchanged since $REMUX_FROM — copy its stream, rebuild only the audio mix.
-  # Input 0 is the existing mp4 (its stale audio is ignored); audio-clip inputs follow at 1..N as usual.
+  # video is unchanged since $REMUX_FROM — copy its stream, drop in the freshly-mixed audio.
   [ -f "$REMUX_FROM" ] || { echo "--remux-from not found: $REMUX_FROM" >&2; exit 1; }
   echo ">> remux audio onto $REMUX_FROM (video copied) -> $OUT" >&2
   if [ "$NAUDIO" -gt 0 ]; then
-    FC="${FC}${MIXLBL}amix=inputs=${NAUDIO}:duration=longest:normalize=0,volume=${MG}dB[aout]"
-    ffmpeg -hide_banner -y -i "$REMUX_FROM" "${AIN[@]}" -filter_complex "$FC" \
-      -map 0:v -map "[aout]" -c:v copy -c:a aac -b:a "$ABITRATE" -t "$DUR" "$OUT"
+    ffmpeg -hide_banner -y -i "$REMUX_FROM" -i "$AMIX" -map 0:v -map 1:a \
+      -c:v copy -c:a aac -b:a "$ABITRATE" -t "$DUR" "$OUT"
   else
     ffmpeg -hide_banner -y -i "$REMUX_FROM" -map 0:v -c:v copy -an -t "$DUR" "$OUT"
   fi
 elif [ "$NAUDIO" -gt 0 ]; then
-  FC="${FC}${MIXLBL}amix=inputs=${NAUDIO}:duration=longest:normalize=0,volume=${MG}dB[aout]"
   "$EXE" "$PROJ" --cache "$CACHE" --export 2>"$ELOG" | \
     ffmpeg -hide_banner -y -f rawvideo -pix_fmt rgba -s "${W}x${H}" -r "$FPS" -i - \
-      "${AIN[@]}" -filter_complex "$FC" -map 0:v -map "[aout]" \
+      -i "$AMIX" -map 0:v -map 1:a \
       "${VFARGS[@]}" -r "$OUTFPS" "${VC[@]}" -pix_fmt yuv420p -c:a aac -b:a "$ABITRATE" -t "$DUR" "$OUT"
 else
   "$EXE" "$PROJ" --cache "$CACHE" --export 2>"$ELOG" | \
