@@ -285,6 +285,13 @@ def _reveal_media(p, cid, v, lay):
         rev = "tilt" if lay in ("fit", "inset") else None
     if rev and rev != "none" and rev in PRESETS:
         apply_transition(p, cid, rev, 0.8, do_out=False)
+        # the reveal IS the entrance (keyframed). Disarm two footguns that would fight it: (1) the editor
+        # auto-POPS fit/inset media that has no explicit transition.in — pin it to "none" so the slide/tilt
+        # isn't stacked on a scale-pop; (2) mark the clip so retime won't crossfade-OVERLAP it (a reveal
+        # wants a clean cut-in over the backdrop, not a dissolve lingering from the previous shot).
+        c = p["clips"][cid]; prm = c.setdefault("params", OD())
+        tr = prm.get("transition") or OD(); tr["in"] = "none"; prm["transition"] = tr
+        prm["reveal"] = rev
 
 # ── overview: compact timeline (structured + ascii lanes) ──
 def desc_of(c):
@@ -1706,7 +1713,8 @@ def cmd_retime(p, a):
         a0,b0=allc[i],allc[i+1]
         seam=b0["start"]-(a0["start"]+a0["dur"])
         if -0.12<seam<0.12 and _full(b0) and a0["dur"]>XF+0.4 and b0["dur"]>XF+0.4 \
-           and not (a0.get("params") or {}).get("loop_out") and not (b0.get("params") or {}).get("loop_out"):
+           and not (a0.get("params") or {}).get("loop_out") and not (b0.get("params") or {}).get("loop_out") \
+           and not (b0.get("params") or {}).get("reveal"):   # a reveal does its OWN cut-in — never dissolve into it
             a0["dur"]=round(a0["dur"]+XF,3)                    # outgoing lingers into the incoming
             prm=a0.setdefault("params",OD()); tr=prm.get("transition") or OD(); tr["out"]=OD([("type","fade"),("dur",XF)]); prm["transition"]=tr
             nxf+=1
