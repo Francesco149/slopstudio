@@ -499,6 +499,11 @@ def cmd_skeleton(a):
     if portrait or rate != 1.0:
         p["meta"]["speech_rate"]=rate         # explicit, so retime/lint/editor agree verbatim
                                               # (landscape honors skeleton speech_rate too)
+    # portrait SHORTS suppress the on-screen "now playing" chip by default — it covers the hook on the
+    # FIRST frame (= the Short's thumbnail); the song credit goes in the description/sidecar instead.
+    # Override per-skeleton with "song_credits": true; landscape keeps the editor default (on).
+    if not sk.get("song_credits", not portrait):
+        p["meta"]["song_credits"]=False
     voice=sk.get("voice","gemma-san-deep-clone"); rig=sk.get("rig","gemma-big")
     # rows in draw order (top-first): captions/callouts > HOST > code/diagram > content > blur > bg > filler
     # (the host draws OVER side-showcase images AND code/diagram cards — she overlaps content,

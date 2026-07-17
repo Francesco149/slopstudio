@@ -618,6 +618,20 @@ function widgets.code(t, d)
   local src = d.code or table.concat(d.lines or {}, "\n")
   local toklines = tokenize(src, d.lang or "lua")
   local size = d.size or 30
+  -- AUTO-FIT the font so the widest line (+ gutter) and the title fit the frame width. Essential on
+  -- PORTRAIT (1080 wide) where a landscape-authored card would otherwise clip at the right edge.
+  if d.fit ~= false then
+    local maxchars = 0
+    for _, spans in ipairs(toklines) do
+      local n = 0; for _, s in ipairs(spans) do n = n + #s.s end
+      if n > maxchars then maxchars = n end
+    end
+    local gdig2 = #tostring(math.max(1, #toklines))
+    local bodyU  = 1.8 + 0.6 * gdig2 + 0.9 + 0.6 * maxchars       -- body width in multiples of `size`
+    local titleU = d.title and (3.74 + 0.82 * 0.6 * #d.title) or 0 -- title-bar width in multiples of `size`
+    local fit = (W * (d.fit_w or 0.92)) / math.max(bodyU, titleU, 1)
+    if fit < size then size = math.max(12, math.floor(fit)) end
+  end
   local cc = theme.code
   local gdig = #tostring(#toklines)                            -- gutter digit count
   local cellw = size * 0.6                                     -- monospace advance ≈ 0.6em (Consolas)
@@ -1109,6 +1123,59 @@ local function pxtext(s, x, y, size, col, ax, ay, mono)
   local tw, th = measure_text(s, size, 0, mono or false)
   return box{ float = "tl", fx = x - ax * tw, fy = y - ay * th,
     kids = { text(s, { size = size, col = _col(col), font = mono and "mono" or nil }) } }
+end
+
+-- VERSUS — a small set of labelled value BARS that count up + grow with an eased pop, for a
+-- head-to-head numeric punch (÷4 vs ÷10 upkeep · ×1 vs ×4 defender · 600 vs 1800 grant). Bars grow
+-- UP from a shared baseline so heights are directly comparable; each shows a counting value on top and
+-- a name (+ optional note) below. data:
+--   { title="...", sub="...", foot="= 2.5× the army", dur=0.9, max=<fixed denominator>,
+--     bars = { { label="YOU", value=4, note="per unit", color={r,g,b}|"#hex",
+--                fmt="int"|"x"|"div"|"pct" }, ... } }
+function widgets.versus(t, d)
+  d = d or {}
+  local W, H, co = _fw(), _fh(), FIG
+  local bars = d.bars or {}
+  local n = #bars
+  if n == 0 then return center(text("")) end
+  local maxv = d.max
+  if not maxv then maxv = 1; for _, b in ipairs(bars) do maxv = math.max(maxv, math.abs(b.value or 0)) end end
+  local fp    = d.font_px or 40
+  local baseY = (d.baseline or 0.80) * H          -- bars grow up from here
+  local maxH  = (baseY - (d.top or 0.30) * H)     -- height of the tallest (== maxv) bar
+  local slotW = W / n
+  local barW  = d.bar_w or (slotW * 0.44)
+  local kids = {}
+  local ty = (d.title_y or 0.11) * H
+  if d.title then kids[#kids + 1] = pxtext(d.title, W / 2, ty, fp * 1.28, co.txt, 0.5, 0) end
+  if d.sub   then kids[#kids + 1] = pxtext(d.sub, W / 2, ty + fp * 1.7, fp * 0.72, co.acc, 0.5, 0) end
+  local function fmt(v, f)
+    if f == "x" then return "\u{00D7}" .. tostring(v)
+    elseif f == "div" then return "\u{00F7}" .. tostring(v)
+    elseif f == "pct" then return tostring(v) .. "%"
+    else return tostring(v) end
+  end
+  for i, b in ipairs(bars) do
+    local st = (i - 1) * 0.16                      -- stagger the bars in
+    local grow = anim.out_back(clamp((t - st - 0.05) / (d.dur or 0.9), 0, 1))
+    local h    = (math.abs(b.value or 0) / maxv) * maxH * grow
+    local cx   = (i - 0.5) * slotW
+    local x    = cx - barW / 2
+    local col  = _col(b.color) or (i == 1 and theme.acc or co.sub)
+    local topb = baseY - h
+    local ap   = anim.rise(t - st - 0.1, 0.3)
+    kids[#kids + 1] = pxrect(x, baseY - maxH, barW, maxH, { col[1], col[2], col[3], 26 }, 10)   -- faint track
+    kids[#kids + 1] = pxrect(x, topb, barW, h, { col[1], col[2], col[3], 255 }, 10)             -- the bar
+    local shown = anim.count(t - st, 0, b.value or 0, d.dur or 0.9)
+    kids[#kids + 1] = pxtext(fmt(shown, b.fmt), cx, topb - fp * 0.45, fp * 1.15, theme.fade(theme.fg, ap), 0.5, 1)
+    kids[#kids + 1] = pxtext(b.label or "", cx, baseY + fp * 0.4, fp * 0.92, theme.fade(col, ap), 0.5, 0)
+    if b.note then kids[#kids + 1] = pxtext(b.note, cx, baseY + fp * 1.65, fp * 0.62, theme.fade(theme.dim, ap), 0.5, 0) end
+  end
+  if d.foot then
+    local fe = anim.rise(t - (n * 0.16) - 0.2, 0.4)
+    kids[#kids + 1] = pxtext(d.foot, W / 2, baseY + fp * 2.9, fp * 0.95, theme.fade(theme.acc, fe), 0.5, 0)
+  end
+  return box{ growx = true, growy = true, kids = kids }
 end
 
 -- ZOOMOUT — the pan-zoom-out reveal: start tight on a crop window (a few cells) and pull back to
