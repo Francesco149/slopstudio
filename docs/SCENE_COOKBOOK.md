@@ -74,5 +74,6 @@ The executable examples are `examples/scene-demo.slop.json`,
   document pans need longer and should hold after arrival.
 - Prefer one meaningful animation per claim. `rays`, shake, glow, and SFX are accents, not
   a quota.
-- Long-form sound uses `soft-swish`, `soft-settle`, or `soft-tick` around -12 to -18 dB,
-  normally with `sound_duck:false`. Reserve `boom`/`awkward` for actual punchlines.
+- Long-form sound uses `soft-swish`, `page-turn` (a soft paper flip, for a card/reveal landing —
+  replaces the old `soft-settle` tone; the old name still resolves to it), or `soft-tick` around
+  -12 to -18 dB, normally with `sound_duck:false`. Reserve `boom`/`awkward` for actual punchlines.

@@ -27,7 +27,10 @@ full-length videos get them too; the editor ducks the music around them):
 
 Restrained long-form motion cues (authored explicitly, normally -12 to -18 dB):
   soft-swish.wav  — airy low movement for a card/document entrance.
-  soft-settle.wav — warm, short landing tone for a comparison/reveal settling.
+  page-turn.wav   — a soft paper RIFFLE settling into a low FLAP, for a card/document/
+                    comparison/reveal LANDING (replaces the old "soft-settle" tone, which
+                    the owner disliked). `soft-settle.wav` is kept as a byte-for-byte
+                    back-compat alias (same page turn) so existing cues keep playing.
   soft-tick.wav   — muted UI tick for a stat change or small annotation.
 
 Ships in the stock pack (tools/pack-stock-assets.py); *.wav stays gitignored.
@@ -188,15 +191,37 @@ def gen_soft_swish(dur=0.62):
     return out
 
 
-def gen_soft_settle(dur=0.34):
-    """Long-form landing: a quiet rounded 260→180 Hz body plus a tiny upper chime."""
-    n=int(dur*SR); out=[]; p1=p2=0.0
+def gen_page_turn(dur=0.34):
+    """Turning a page (replaces the old 'soft-settle' beep): a soft paper RIFFLE — band-passed
+    noise whose centre sweeps 3.2k→1.1 kHz as the page lifts and arcs away, textured by an
+    irregular piecewise 'crinkle' amplitude modulation (fibres sliding, not a smooth whoosh) —
+    settling into a low, muffled paper FLAP as it lands. Synthesized from scratch (deterministic
+    seeded PRNG), so it stays commercial-safe by construction like the rest of this file."""
+    n = int(dur * SR); out = [0.0] * n
+    # riffle: a band-pass swept downward, driven by noise, under a friction-swell arc
+    low = band = 0.0; q = 0.55
+    crink = 1.0; nextstep = 0
     for i in range(n):
-        t=i/SR; u=t/dur
-        p1 += 2*math.pi*(180+80*math.exp(-t*18))/SR
-        p2 += 2*math.pi*620/SR
-        a=(1-math.exp(-t/0.008))*math.exp(-t*11)
-        out.append((math.sin(p1)*0.8+math.sin(p2)*0.12)*a)
+        t = i / SR; u = t / dur
+        arc = math.sin(math.pi * min(1.0, u * 1.12)) ** 1.3   # swell in, fall off (asymmetric)
+        fc = 3200.0 - 2100.0 * u                              # brightness drops as it moves away
+        f = 2.0 * math.sin(math.pi * min(fc, SR * 0.24) / SR)
+        x = rng.random() * 2 - 1
+        low += f * band
+        band += f * (x - low - q * band)                      # state-variable band-pass (band = out)
+        if i >= nextstep:                                     # crinkle: random piecewise gain steps (paper texture)
+            crink = 0.30 + 0.70 * rng.random()
+            nextstep = i + int((0.003 + 0.011 * rng.random()) * SR)
+        out[i] += band * arc * crink
+    # flap: a soft dark low-passed thump as the page settles onto the stack, near the end
+    i0 = int(0.52 * dur * SR); flen = int(0.16 * SR); lp = 0.0
+    for i in range(flen):
+        t = i / SR
+        x = rng.random() * 2 - 1
+        lp += 0.10 * (x - lp)                                 # muffled low body
+        env = (1 - math.exp(-t / 0.004)) * math.exp(-t * 30.0)
+        j = i0 + i
+        if j < n: out[j] += lp * env * 1.4
     return out
 
 
@@ -301,7 +326,9 @@ def main():
     write_wav("whoosh.wav", gen_whoosh(), peak=0.7)        # soft low swing (default)
     write_wav("whoosh-sharp.wav", gen_whoosh_sharp())      # the sharper arc swish (alt)
     write_wav("soft-swish.wav", gen_soft_swish(), peak=0.46)
-    write_wav("soft-settle.wav", gen_soft_settle(), peak=0.46)
+    _page = gen_page_turn()
+    write_wav("page-turn.wav", _page, peak=0.5)         # a real page/paper flip (the LANDING cue)
+    write_wav("soft-settle.wav", _page, peak=0.5)       # back-compat alias: old stem → the new page turn
     write_wav("soft-tick.wav", gen_soft_tick(), peak=0.42)
     write_wav("ticker.wav", gen_ticker(), peak=0.5)    # count-up tick train (decelerates + stops)
     write_wav("awkward.wav", gen_awkward(), peak=0.6)
