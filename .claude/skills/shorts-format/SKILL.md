@@ -17,11 +17,34 @@ via `slop.py skeleton` with `"format":"portrait"`. Shorts recipe + the landscape
   not apply an additional multiplier.
 - **Host = bottom-band presenter** (or solo-BIG room-shot when nothing else is on screen: sized to the middle
   band, horns below the top status strip, body above the bottom controls strip). Content = TOP band; the
-  **animated transcript** rides just under it (room scenes) or center (code beats, y=0).
+  **animated transcript** rides just under it (room scenes) or in the **top safe band** over a scene/code card
+  (never overlapping it — see *Scene animations & code cards* below).
 - New **`layout:"cover"`** for backdrops (never degrades). Insets ~86%W/42%H. `pos` is an OFFSET from the smart
   default corner (not absolute) — `[0,0]` = the clean default.
 - Portrait strap 16% from the bottom (clears the Shorts title/controls). Clueless-gag label above the horns,
   arrow tip stops ABOVE the head.
+
+## Scene animations & code cards (portrait) — locked 2026-07-17
+The layout engine (`visual.scene` widgets in a skeleton beat) is how fancy portrait animations are authored —
+via `slop.py`, never hand-edited JSON. Reuse a proven widget when one fits (`code`, `chart`, `comparison`,
+`versus`, `battlegrid`, `event_proof`, `reveal`, `stat`, …); pass a custom `script` only when none does.
+- **Code cards MUST be authored NARROW for portrait.** A widescreen card (long right-aligned trailing
+  comments) clips the right edge on 1080-wide portrait. Reformat so comments sit on their OWN lines, the
+  widest line is **≤ ~30 chars**, and the card is **≤ ~14 lines** — it then renders at a large, legible font.
+  (`widgets.code` auto-fits font to width as a backstop, but narrow authoring keeps the font big, not shrunk.)
+- **Captions must never obstruct a code/scene card.** The animated transcript sits in the **top safe band**
+  (~y 240–340px) and a code card centres below it (a ≤14-line card's top ≈ 665px = clear gap). Keep captions
+  clear of the top ~10% (Shorts progress bar) and the bottom ~16% (Shorts title/like/comment/share UI). If a
+  card must be taller, split it across two beats rather than let it climb into the caption.
+- **Numeric head-to-heads → `widgets.versus`** (count-up value bars with an eased pop; bar height = the real
+  magnitude, so "who's bigger" reads instantly). **Native animated line/bar charts → `widgets.chart`.**
+- **Gameplay footage is NOT `solo`** — a landscape 4:3 clip goes in the top content-band with the host as the
+  bottom-band presenter (this fills the frame). `blur_fill` is image-only; `layout:"cover"` crops a 4:3 source
+  too hard for 9:16 (you get a narrow centre slice).
+- **The now-playing song chip is OFF on portrait** by default (`slop.py skeleton` sets `meta.song_credits`
+  false) — it otherwise covers the first frame = the Short's thumbnail; the song credit goes in the description.
+- **TTS gotcha:** the voice mispronounces some ordinary words (it can't say "deserts" → write "disbands");
+  keep the on-screen spelling via `params.transcript` when the spoken respell differs from the display text.
 
 ## Structure
 Cut a short as its OWN project BESIDE the source cut (so `assets/…` resolve): **adopt** the tuned lm3 takes +
