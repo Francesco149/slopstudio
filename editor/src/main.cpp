@@ -12533,17 +12533,23 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
         }
         g_ephemReq.clear(); g_ephemFor.clear();
     }
-    // auto-remove an EMPTY ephemeral lane (the "disappears when empty" rule) — only while idle (a drag's
-    // transient empties don't nuke a lane mid-gesture); never the last track; one per frame is plenty.
+    // auto-remove empty ephemeral lanes ("disappears when empty") — but ONLY once the WHOLE ephemeral
+    // stack is empty (no ephemeral lane anywhere still holds a clip). That lets you keep dragging a clip
+    // up to stack more lanes (each promotion leaves the vacated ephemeral lane in place, so it doesn't
+    // collapse back onto itself); the whole stack clears the moment the last clip leaves it. Idle only
+    // (a drag's transient empties don't nuke a lane mid-gesture); never the last track; one per frame.
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) && g_ephemReq.empty() && p.tracks.size() > 1) {
+        bool anyEphemClip = false;
+        for (auto& kv : p.rows) if (kv.second.params.value("ephemeral", false) && !kv.second.clips.empty()) { anyEphemClip = true; break; }
         std::string kill;
-        for (auto& tk : p.tracks) {
-            if (tk.rows.empty()) continue;
-            bool empt = true;
-            for (auto& rid : tk.rows) { auto r = p.rows.find(rid);
-                if (r == p.rows.end() || !r->second.params.value("ephemeral", false) || !r->second.clips.empty()) { empt = false; break; } }
-            if (empt) { kill = tk.id; break; }
-        }
+        if (!anyEphemClip)
+            for (auto& tk : p.tracks) {
+                if (tk.rows.empty()) continue;
+                bool empt = true;
+                for (auto& rid : tk.rows) { auto r = p.rows.find(rid);
+                    if (r == p.rows.end() || !r->second.params.value("ephemeral", false) || !r->second.clips.empty()) { empt = false; break; } }
+                if (empt) { kill = tk.id; break; }
+            }
         if (!kill.empty()) { delete_track(p, kill); g_undoDirty = true; }
     }
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) && g_ephemReq.empty()) g_ephemFor.clear();   // safety: never leave the band stuck on
