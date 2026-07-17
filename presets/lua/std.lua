@@ -206,14 +206,16 @@ function widgets.quote(t, d)
   return center(col{ ax = "c", gap = 20, pw = 0.7, kids = kids })
 end
 
--- a big animated number + label (the count-up "receipt")
+-- a big animated number + label (the count-up "receipt"). The numeral uses the "display"
+-- face (Archivo Black baked at 132px in the editor) — native-size + heavy, so the big text
+-- has crisp edges instead of a scaled-up 48px atlas.
 function widgets.stat(t, d)
   d = d or {}
   local n = d.to and anim.count(t, d.from or 0, d.to, d.dur or 1.0) or (d.value or 0)
   return center(col{
     ax = "c", gap = 8,
     kids = {
-      text(tostring(n) .. (d.unit or ""), { size = 132, col = theme.fg,  ta = "c" }),
+      text(tostring(n) .. (d.unit or ""), { size = 132, font = "display", col = theme.fg, ta = "c" }),
       text(d.label or "",                 { size = 34,  col = theme.dim, ta = "c" }),
     }
   })

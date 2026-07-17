@@ -420,7 +420,7 @@ static void save_png_backbuffer(const char* path) {
 }
 
 // ───────────────────────────── textures / assets ──────────────────────────
-struct Tex { ID3D11ShaderResourceView* srv = nullptr; int w = 0, h = 0; };
+struct Tex { ID3D11ShaderResourceView* srv = nullptr; int w = 0, h = 0; bool mips = false; };
 static std::map<std::string, Tex> g_texCache;
 static std::string g_cacheDir = "cache";
 
@@ -499,14 +499,29 @@ static bool item_apply_crop(const std::string& path, std::vector<unsigned char>&
 
 // Create an IMMUTABLE RGBA shader-resource view from a tightly-packed w*h*4 buffer — the one
 // upload path shared by the still cache, the proxy-frame cache, and the libav decode cache.
-static ID3D11ShaderResourceView* make_rgba_srv(const unsigned char* px, int w, int h) {
+// `mips` bakes a full mip chain (GPU GenerateMips) — for HUGE stills (the codewall poster) that
+// get minified hard: without mips the bilinear undersample shimmers, which both looks noisy and
+// eats export bitrate. Kept opt-in: per-frame video uploads must not pay the mip-gen cost.
+static ID3D11ShaderResourceView* make_rgba_srv(const unsigned char* px, int w, int h, bool mips = false) {
     if (!px || w <= 0 || h <= 0) return nullptr;
     D3D11_TEXTURE2D_DESC d = {};
-    d.Width = w; d.Height = h; d.MipLevels = 1; d.ArraySize = 1;
+    d.Width = w; d.Height = h; d.MipLevels = mips ? 0 : 1; d.ArraySize = 1;
     d.Format = DXGI_FORMAT_R8G8B8A8_UNORM; d.SampleDesc.Count = 1;
+    ID3D11Texture2D* tex = nullptr; ID3D11ShaderResourceView* srv = nullptr;
+    if (mips) {
+        d.Usage = D3D11_USAGE_DEFAULT;
+        d.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;   // GenerateMips requires RT
+        d.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
+        if (SUCCEEDED(g_dev->CreateTexture2D(&d, nullptr, &tex)) && tex) {
+            g_ctx->UpdateSubresource(tex, 0, nullptr, px, (UINT)w * 4, 0);
+            g_dev->CreateShaderResourceView(tex, nullptr, &srv);
+            if (srv) g_ctx->GenerateMips(srv);
+            tex->Release();
+        }
+        return srv;
+    }
     d.Usage = D3D11_USAGE_IMMUTABLE; d.BindFlags = D3D11_BIND_SHADER_RESOURCE;
     D3D11_SUBRESOURCE_DATA sd = {}; sd.pSysMem = px; sd.SysMemPitch = (UINT)w * 4;
-    ID3D11Texture2D* tex = nullptr; ID3D11ShaderResourceView* srv = nullptr;
     if (SUCCEEDED(g_dev->CreateTexture2D(&d, &sd, &tex)) && tex) {
         g_dev->CreateShaderResourceView(tex, nullptr, &srv);
         tex->Release();
@@ -532,7 +547,8 @@ static Tex* get_texture(const std::string& uri) {
         if (!item_removebg(path, data, t.w, t.h, buf)) buf.assign(data, data + (size_t)t.w * t.h * 4);
         item_apply_mask(path, buf, t.w, t.h);   // brush/box-fill cleanup (multiply alpha)
         item_apply_crop(path, buf, t.w, t.h);   // crop rect (updates t.w/t.h)
-        t.srv = make_rgba_srv(buf.data(), t.w, t.h);
+        t.mips = t.w >= 4096 || t.h >= 4096;    // huge posters (codewall) minify hard → mip chain
+        t.srv = make_rgba_srv(buf.data(), t.w, t.h, t.mips);
         stbi_image_free(data);
     }
     g_texCache[uri] = t;
@@ -4166,6 +4182,9 @@ static ImFont* g_captionFont = nullptr;
 static ImFont* g_pillFontAnton = nullptr;    // condensed all-caps display faces for term/label PILLS —
 static ImFont* g_pillFontBebas = nullptr;    // read FAR better than the CJK caption face on uppercase
 static ImFont* g_pillFontArchivo = nullptr;  // labels. Selected per-project via meta.pill_font (g_pillFontName).
+static ImFont* g_sceneBigFont = nullptr;     // scene font="display": Archivo Black baked at 132px so big
+                                             // count-up numerals (widgets.stat) render 1:1 crisp, not a
+                                             // scaled-up 48px atlas (LAYOUT_ENGINE.md §9 softness).
 // Param colour: [r,g,b] / [r,g,b,a] (0..255) → ImU32, else the default.
 static ImU32 parse_color(const json& j, ImU32 def) {
     if (j.is_array() && j.size() >= 3)
@@ -5065,7 +5084,8 @@ struct SceneImg { ID3D11ShaderResourceView* srv; float u0, v0, u1, v1; Clay_Colo
                   // DEPTH OF FIELD: cross-fade each mesh cell to `dofSrv` (a cached gaussian-blurred copy)
                   // by its distance from the focus point — sharp within `focusR`, blurring at `dofRate`.
                   ID3D11ShaderResourceView* dofSrv = nullptr;
-                  float focusX = 0.5f, focusY = 0.5f, focusR = 0.2f, dofRate = 0; };
+                  float focusX = 0.5f, focusY = 0.5f, focusR = 0.2f, dofRate = 0;
+                  bool mips = false; };   // source texture has a mip chain → draw with the trilinear sampler
 static std::deque<SceneImg>  g_sceneImgs;
 static bool image_mean_rgb(const std::string& uri, float& r, float& g, float& b);   // auto glow color (defined below)
 // vector shapes (box/ellipse/line/arrow/underline/bracket) drawn within a laid-out box; from/to
@@ -5084,9 +5104,11 @@ struct SceneXform { float tx = 0, ty = 0, op = 1, rot = 0;
 static std::deque<SceneXform> g_sceneXforms;
 static unsigned long long    g_stdMtime = 0;              // presets/lua/std.lua mtime → hot-reload on save
 
-// Pick the scene font by Clay fontId: 1 = monospace (code), else the caption/UI face.
+// Pick the scene font by Clay fontId: 1 = monospace (code), 2 = big display (stat numerals),
+// else the caption/UI face.
 static ImFont* scene_font(uint16_t fontId) {
     if (fontId == 1 && g_monoFont) return g_monoFont;
+    if (fontId == 2 && g_sceneBigFont) return g_sceneBigFont;
     return g_captionFont ? g_captionFont : ImGui::GetFont();
 }
 // Clay measures text in PROJECT px; ImGui scales the 48px atlas (soft at extremes — see doc §9).
@@ -5375,11 +5397,13 @@ static void scene_walk(lua_State* L, int idx, const SceneXform* inXf = nullptr) 
                 if (ft) { srv = ft->srv; srcW = ft->w; srcH = ft->h; }
             }
 #endif
-        } else if (!uri.empty()) {
-            Tex* tex = get_texture(uri);
-            if (tex) { srv = tex->srv; srcW = tex->w; srcH = tex->h; }
         }
-        SceneImg si; si.srv = srv; si.u0 = 0; si.v0 = 0; si.u1 = 1; si.v1 = 1;
+        bool mips = false;
+        if (vsrc.empty() && !uri.empty()) {
+            Tex* tex = get_texture(uri);
+            if (tex) { srv = tex->srv; srcW = tex->w; srcH = tex->h; mips = tex->mips; }
+        }
+        SceneImg si; si.srv = srv; si.mips = mips; si.u0 = 0; si.v0 = 0; si.u1 = 1; si.v1 = 1;
         lua_getfield(L, idx, "crop");   // {x,y,w,h} as fractions 0..1 of the source → the pan/zoom window
         if (lua_istable(L, -1)) {
             lua_geti(L, -1, 1); float cx = (float)lua_tonumber(L, -1); lua_pop(L, 1);
@@ -5447,7 +5471,8 @@ static void scene_walk(lua_State* L, int idx, const SceneXform* inXf = nullptr) 
         Clay_TextElementConfig tc; memset(&tc, 0, sizeof tc);
         Clay_Color col{ 238, 240, 248, 255 }; lf_color(L, idx, "col", &col); tc.textColor = col;
         tc.fontSize = (uint16_t)lf_num(L, idx, "size", 32);
-        tc.fontId = (lf_str(L, idx, "font", "") == "mono") ? 1 : 0;   // monospace for code
+        { std::string fnm = lf_str(L, idx, "font", "");   // "mono" = code face, "display" = big numeral face
+          tc.fontId = fnm == "mono" ? 1 : fnm == "display" ? 2 : 0; }
         std::string ta = lf_str(L, idx, "ta", "l");
         tc.textAlignment = ta == "c" ? CLAY_TEXT_ALIGN_CENTER : ta == "r" ? CLAY_TEXT_ALIGN_RIGHT : CLAY_TEXT_ALIGN_LEFT;
         std::string wr = lf_str(L, idx, "wrap", "words");
@@ -5599,6 +5624,23 @@ static void scene_draw_shape(ImDrawList* dl, SceneShape* sh, ImVec2 p0, ImVec2 p
 // center, rotate, then translate by (tx,ty) px. `margin` (screen px) grows the box UNIFORMLY on
 // every side (a fixed-width ring around the rotated rect — used for the glow halo, so the halo is
 // the same thickness top/bottom/left/right regardless of the image's aspect).
+// The ImGui DX11 backend's sampler clamps MaxLOD to 0, so a mipped texture (huge stills — see
+// make_rgba_srv) would never read past mip 0. For those draws we swap in a trilinear sampler via
+// a draw callback, then ImDrawCallback_ResetRenderState restores the backend state. Trilinear
+// minification is what stops the zoomed-out codewall from shimmering into encoder noise.
+static ID3D11SamplerState* g_mipSampler = nullptr;
+static void scene_bind_mip_sampler(const ImDrawList*, const ImDrawCmd*) {
+    if (!g_mipSampler) {
+        D3D11_SAMPLER_DESC sd = {};
+        sd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+        sd.AddressU = sd.AddressV = sd.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+        sd.ComparisonFunc = D3D11_COMPARISON_ALWAYS;
+        sd.MinLOD = 0.f; sd.MaxLOD = D3D11_FLOAT32_MAX;
+        g_dev->CreateSamplerState(&sd, &g_mipSampler);
+    }
+    if (g_mipSampler) g_ctx->PSSetSamplers(0, 1, &g_mipSampler);
+}
+
 static void scene_image_quad(const SceneImg* si, ImVec2 q0, ImVec2 q1, float s, float margin, ImVec2 out[4]) {
     ImVec2 c((q0.x + q1.x) * 0.5f, (q0.y + q1.y) * 0.5f);
     float hx = (q1.x - q0.x) * 0.5f * si->scx + margin, hy = (q1.y - q0.y) * 0.5f * si->scy + margin;
@@ -5792,6 +5834,7 @@ static void scene_draw_cmds(ImDrawList* dl, Clay_RenderCommandArray cmds, ImVec2
             case CLAY_RENDER_COMMAND_TYPE_IMAGE: { auto& im = cmd->renderData.image;
                 SceneImg* si = (SceneImg*)im.imageData;
                 if (si && si->srv) {
+                    if (si->mips) dl->AddCallback(scene_bind_mip_sampler, nullptr);
                     ImTextureID tid = (ImTextureID)(intptr_t)si->srv;
                     ImU32 tint = C(si->tint); ImVec2 uv0(si->u0, si->v0), uv1(si->u1, si->v1);
                     ImVec2 q0 = p0, q1 = p1;
@@ -5834,6 +5877,7 @@ static void scene_draw_cmds(ImDrawList* dl, Clay_RenderCommandArray cmds, ImVec2
                     } else if (si->radius > 0) dl->AddImageRounded(tid, q0, q1, uv0, uv1, tint, si->radius * s);
                     else dl->AddImage(tid, q0, q1, uv0, uv1, tint);
                     }   // end else (non-mesh flat / 2D-transform path)
+                    if (si->mips) dl->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
                 } else dl->AddRectFilled(p0, p1, IM_COL32(38, 40, 52, (int)(120 * lop)), 6 * s);   // missing-asset placeholder
             } break;
             // a tilted subtree can't use an axis-aligned scissor (it'd clip the rotated corners), so
@@ -13276,6 +13320,15 @@ int main(int argc, char** argv) {
             *pf.slot = fio.Fonts->AddFontFromFileTTF(pp.c_str(), 48.0f, nullptr, pillRanges.Data);
             if (chosen) { ImFontConfig mc; mc.MergeMode = true;
                           fio.Fonts->AddFontFromFileTTF(chosen, 48.0f, &mc, jpRanges.Data); }
+        }
+        // Scene "display" face — Archivo Black at the size widgets.stat draws its big numeral, so
+        // the count-up renders from a native-size bake (crisp edges) instead of scaling the 48px
+        // atlas 2.75x. Latin/label ranges only (a 132px CJK bake would explode the atlas).
+        {
+            std::string bp = g_repoRoot + "/assets-src/fonts/ArchivoBlack-Regular.ttf";
+            FILE* bf = fopen(bp.c_str(), "rb");
+            if (bf) { fclose(bf);
+                      g_sceneBigFont = fio.Fonts->AddFontFromFileTTF(bp.c_str(), 132.0f, nullptr, pillRanges.Data); }
         }
         // Monospace font for `code` clips (decompilation/source cards). Loaded at a large size so
         // AddText can scale it to any on-screen font_px crisply. Consolas → Lucida Console fallback.
