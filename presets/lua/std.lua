@@ -630,7 +630,17 @@ function widgets.code(t, d)
     local bodyU  = 1.8 + 0.6 * gdig2 + 0.9 + 0.6 * maxchars       -- body width in multiples of `size`
     local titleU = d.title and (3.74 + 0.82 * 0.6 * #d.title) or 0 -- title-bar width in multiples of `size`
     local fit = (W * (d.fit_w or 0.92)) / math.max(bodyU, titleU, 1)
-    if fit < size then size = math.max(12, math.floor(fit)) end
+    -- default: shrink-only (a landscape-authored card that's too wide). `fill`: grow OR shrink so the card
+    -- always spans fit_w of the frame — for PORTRAIT where a short-lined card would otherwise sit tiny in a
+    -- sea of margin. A height guard (fit_h of frame H, default 0.82) keeps a tall card from overflowing.
+    if d.fill then
+      local rowsN = #toklines
+      local cardHU = (d.title and 1.85 or 0) + 1.4 + rowsN * 1.05 + (rowsN - 1) * 0.24  -- card height in `size` units
+      local fitH = (H * (d.fit_h or 0.82)) / math.max(cardHU, 1)
+      size = math.max(12, math.floor(math.min(fit, fitH)))
+    elseif fit < size then
+      size = math.max(12, math.floor(fit))
+    end
   end
   local cc = theme.code
   local gdig = #tostring(#toklines)                            -- gutter digit count
