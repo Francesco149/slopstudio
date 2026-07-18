@@ -56,6 +56,15 @@ via `slop.py`, never hand-edited JSON. Reuse a proven widget when one fits (`cod
 - **Gameplay footage is NOT `solo`** — a landscape 4:3 clip goes in the top content-band with the host as the
   bottom-band presenter (this fills the frame). `blur_fill` is image-only; `layout:"cover"` crops a 4:3 source
   too hard for 9:16 (you get a narrow centre slice).
+- **A landscape SCREENSHOT/receipt (forum post, article, patent) is footage too — do NOT use the `document`
+  widget's contained-band zoom in portrait.** `document` (`fit:"contain"`) fits a 16:9 image into 9:16 as a
+  thin illegible strip floating in a sea of checker (looks unfinished). Instead treat it like gameplay footage:
+  an **`image` clip (`layout:"fit"`, not `solo`) in the top band + host bottom-band**, and get the "zoom" from
+  **two clips with different `crop` rects** — a wide establishing crop then a close crop on the payoff numbers
+  (`params.crop:[x,y,w,h]` fractions). Fills the frame, stays legible, keeps the host present. (lotr2 short6:
+  the GOG forum "measured by eye" post — wide header/intro → push into the movement/range table on "byte for
+  byte, they were right".) It's footage+host, so it takes the same noir grade as other footage beats (extend
+  the filter clip over it; only *code/scene* cards stay ungraded).
 - **The now-playing song chip is OFF on portrait** by default (`slop.py skeleton` sets `meta.song_credits`
   false) — it otherwise covers the first frame = the Short's thumbnail; the song credit goes in the description.
 - **TTS gotcha:** the voice mispronounces some ordinary words (it can't say "deserts" → write "disbands");
