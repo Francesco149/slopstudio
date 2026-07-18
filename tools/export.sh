@@ -39,7 +39,9 @@ W=$(jq -r .width "$PLAN"); H=$(jq -r .height "$PLAN")
 FPS=$(jq -r .fps "$PLAN"); DUR=$(jq -r .duration "$PLAN"); TITLE=$(jq -r .title "$PLAN")
 NAUDIO=$(jq '.audio | length' "$PLAN")
 MG=$(jq -r '.master_gain_db // 0' "$PLAN")   # project final-mix gain (meta.gain_db) — after amix
-[ -n "$OUT" ] || OUT="exports/$(basename "${PROJ%.slop.json}").mp4"
+# Default output lands in an `exports/` dir BESIDE the project (…/projects/<video>/exports/),
+# not a repo-root catch-all — keeps each video's renders with its own project dir.
+[ -n "$OUT" ] || OUT="$(dirname "$PROJ")/exports/$(basename "${PROJ%.slop.json}").mp4"
 mkdir -p "$(dirname "$OUT")"
 
 # The editor renders at the PROJECT fps; --fps only changes the ffmpeg output frame rate
@@ -126,7 +128,7 @@ fi
 
 if [ -n "$AUDIO_ONLY" ]; then
   # just the mixed audio (no video render) — for verifying a music arrangement quickly
-  [ -n "$OUT" ] || OUT="exports/$(basename "${PROJ%.slop.json}").audio.m4a"
+  [ -n "$OUT" ] || OUT="$(dirname "$PROJ")/exports/$(basename "${PROJ%.slop.json}").audio.m4a"
   echo ">> audio-only mix -> $OUT ($NAUDIO inputs, ${DUR}s)" >&2
   if [ "$NAUDIO" -gt 0 ]; then
     ffmpeg -hide_banner -y -i "$AMIX" -c:a aac -b:a "$ABITRATE" -t "$DUR" "$OUT"

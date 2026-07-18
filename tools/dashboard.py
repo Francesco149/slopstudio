@@ -227,7 +227,7 @@ def projects_state():
         sk = sorted(glob.glob(os.path.join(d, "*.skeleton.json")))
         thumbs = sorted(glob.glob(os.path.join(d, "thumbs", "*.thumb.json")))
         pkg = sorted(glob.glob(os.path.join(d, "docs", "*packaging*.md")))
-        exports = sorted(glob.glob(os.path.join(EXPORTS, base + "*.mp4")))
+        exports = sorted(glob.glob(os.path.join(d, "exports", base + "*.mp4")))
         out.append({
             "name": base,
             "skeletons": [os.path.basename(x) for x in sk],

@@ -322,7 +322,7 @@ def cmd_status(a):
     cuts = [x for x in glob.glob(os.path.join(d, "*.slop.json")) if os.sep + "history" + os.sep not in x]
     thumbs = glob.glob(os.path.join(d, "thumbs", "*.thumb.json"))
     pkg = glob.glob(os.path.join(d, "docs", "*packaging*.md"))
-    exports = glob.glob(os.path.join(ROOT, "exports", base + "*.mp4"))
+    exports = glob.glob(os.path.join(d, "exports", base + "*.mp4"))
     mark("skeleton", bool(sk), os.path.basename(sk[0]) if sk else "video.py new / author one")
     mark("compiled cut", bool(cuts), ", ".join(os.path.basename(c) for c in cuts) if cuts else "video.py build")
     mark("thumbnails", bool(thumbs), f"{len(thumbs)} candidate(s)" if thumbs else "tools/thumb.py")
