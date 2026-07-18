@@ -56,15 +56,22 @@ via `slop.py`, never hand-edited JSON. Reuse a proven widget when one fits (`cod
 - **Gameplay footage is NOT `solo`** — a landscape 4:3 clip goes in the top content-band with the host as the
   bottom-band presenter (this fills the frame). `blur_fill` is image-only; `layout:"cover"` crops a 4:3 source
   too hard for 9:16 (you get a narrow centre slice).
-- **A landscape SCREENSHOT/receipt (forum post, article, patent) is footage too — do NOT use the `document`
-  widget's contained-band zoom in portrait.** `document` (`fit:"contain"`) fits a 16:9 image into 9:16 as a
-  thin illegible strip floating in a sea of checker (looks unfinished). Instead treat it like gameplay footage:
-  an **`image` clip (`layout:"fit"`, not `solo`) in the top band + host bottom-band**, and get the "zoom" from
-  **two clips with different `crop` rects** — a wide establishing crop then a close crop on the payoff numbers
-  (`params.crop:[x,y,w,h]` fractions). Fills the frame, stays legible, keeps the host present. (lotr2 short6:
-  the GOG forum "measured by eye" post — wide header/intro → push into the movement/range table on "byte for
-  byte, they were right".) It's footage+host, so it takes the same noir grade as other footage beats (extend
-  the filter clip over it; only *code/scene* cards stay ungraded).
+- **A landscape SCREENSHOT/receipt (forum post, article, patent) — zoom it with the `document` widget, `fit:
+  "contain"`, and make EVERY excerpt (and `from`) the SAME aspect ratio.** Two traps to avoid: `fit:"cover"`
+  **stretches** the image non-uniformly to fill 9:16 (owner-rejected — the text distorts vertically); and
+  `contain` with tight, *differently*-shaped crops both bands it thin AND reshapes the inset as it pans. The fix
+  that reads as a clean push-in: keep all `rect`s at one fixed aspect (**~1.5:1** works — a landscape inset ≈
+  1080×720, ~37% frame height, aspect-correct), each progressively tighter + panned onto the payoff. Same aspect
+  → the inset is one FIXED rectangle and only the *content* scale-zooms (no stretch, no reshaping). **Put the
+  crop's x on the TEXT column, not the whole image** — a forum post has a wide left avatar/margin gutter (~first
+  third); start `x≈0.30` or the inset fills its left half with empty page. The wide paragraphs crop at the right
+  edge (fine — "the other text isn't fully visible horizontally"); the tables/numbers stay whole. **Anchor that
+  beat's transcript to the top band** (`slop.py anchor --beat bNN --pos 0,-603`) so captions clear the inset;
+  blank the excerpt `tr`. Solo (no host) is fine — it's a scene card, but a filled screenshot grades like footage
+  so extend the noir filter over it (only the bare-grid code cards stay ungraded). (lotr2 short6: GOG "units
+  stats" post — movement table on "measured by eye" → scale-zoom into ranges 16/8/20 on "byte for byte, they
+  were right".) *Alt layout if you want the host present:* an `image` clip (`layout:"fit"`, not `solo`) top-band
+  + host bottom-band, "zoom" via two `crop` rects — but the owner prefers the solo `document` inset-zoom.
 - **The now-playing song chip is OFF on portrait** by default (`slop.py skeleton` sets `meta.song_credits`
   false) — it otherwise covers the first frame = the Short's thumbnail; the song credit goes in the description.
 - **TTS gotcha:** the voice mispronounces some ordinary words (it can't say "deserts" → write "disbands");
