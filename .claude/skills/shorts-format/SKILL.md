@@ -31,11 +31,21 @@ via `slop.py`, never hand-edited JSON. Reuse a proven widget when one fits (`cod
 - **Code cards MUST be authored NARROW for portrait.** A widescreen card (long right-aligned trailing
   comments) clips the right edge on 1080-wide portrait. Reformat so comments sit on their OWN lines, the
   widest line is **≤ ~30 chars**, and the card is **≤ ~14 lines** — it then renders at a large, legible font.
-  (`widgets.code` auto-fits font to width as a backstop, but narrow authoring keeps the font big, not shrunk.)
+  Set **`data.fill: true`** so the card GROWS to span the frame (`fit_w`, default 0.92 = ~91% width with a
+  small margin) instead of sitting narrow in a sea of margin — the widget's plain auto-fit only ever *shrinks*
+  a too-wide card, so a short-lined portrait card stays tiny without `fill`. A `fit_h` guard (default 0.82·H)
+  keeps a tall filled card from overflowing. Author narrow AND `fill:true` = big font, edge-to-edge.
 - **Captions must never obstruct a code/scene card.** The animated transcript sits in the **top safe band**
-  (~y 240–340px) and a code card centres below it (a ≤14-line card's top ≈ 665px = clear gap). Keep captions
-  clear of the top ~10% (Shorts progress bar) and the bottom ~16% (Shorts title/like/comment/share UI). If a
-  card must be taller, split it across two beats rather than let it climb into the caption.
+  (`tr_room` anchor, ~y 240–340px) and the centred code card clears below it (even a `fill`ed 14-line card's
+  top ≈ 475px = clear gap). Keep captions clear of the top ~10% (Shorts progress bar) and the bottom ~16%
+  (Shorts title/like/comment/share UI). If a card must be taller, split it across two beats rather than let it
+  climb into the caption. **GOTCHA:** the compiler routes a code beat's transcript to the top band via the
+  *room* path (`span_has_content`=false) — but a scene-code card isn't counted as "content", so if a
+  **fullscreen video/image from an earlier beat lingers into the code beat's span**, `span_has_content` fires
+  and the transcript drops to `tr_content` (CENTER), colliding with the card (hit on lotr2 short6 b04, whose
+  b02 video overran). Fix without a recompile: a caption-anchor clip lifting that beat's chunks back to the
+  top band — `slop.py anchor <proj> --beat bNN --pos 0,-603` (tr_content→tr_room delta) — it survives
+  transcript regen.
 - **Full-frame scene widgets carry NO top title/subtitle on portrait** — the caption band owns the top, so a
   widget title collides with it. Drop `title`/`sub` and let the caption + VO name it; carry detail with the
   widget's own in-body labels (chart markers/vlines/axis labels, versus bar notes). For a chart, also push the
