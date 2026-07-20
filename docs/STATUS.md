@@ -2,7 +2,18 @@
 
 Hand-maintained "what's true right now." **Read this first after `CLAUDE.md`** and update it
 in the same change that lands work, so a fresh session reorients in ~60s. Last updated:
-**2026-07-17**. For composing a video as an agent, **`docs/LLM_WORKFLOW.md`**.
+**2026-07-20**. For composing a video as an agent, **`docs/LLM_WORKFLOW.md`**.
+
+**★ KEYFRAMES RIDE THE CLIP START + REVEAL-WIDGET VIDEO (2026-07-20, `ca128ee`):** keyframes are
+absolute-time and anchored to the clip START, so every start-changing edit must shift them with it —
+whole-clip moves already did (`shiftClip`), and now **LEFT-edge trim + the inspector "start (s)" field**
+do too. This fixes a reveal detaching from its clip: left-trimming to advance a video's source in-point
+moved the start but stranded the keyframes, and a compensating move-back then drifted them by the trim
+amount (the b16 tilt-reveal firing ~10s early). Right-edge trims leave the start put (start-anchored
+reveals stay). Also **`widgets.reveal` now plays LIVE video** — pass `video=<uri>` (+`vt0` in-point,
+`full`, `fit`) and the slide/straighten/glow rides the footage via the scene image node's video decode
+(the static `image=` path is unchanged). Body-harvest's b16 Lemmings uses it; the whole cut re-exported.
+(Playwright `.#webcapture` works for repo/dashboard screenshots — the older "times out" note is stale.)
 
 **★ SLOPTHUMB MANIPULATION OVERHAUL (2026-07-17) — the teidraw/cosmic2d editor feel, ported. Docs: `docs/THUMBNAIL_TOOL.md` § GUI:**
 Unified canvas gizmo (rotation-aware content-hugging OBBs · corner scale about the fixed opposite
