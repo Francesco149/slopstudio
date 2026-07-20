@@ -284,6 +284,10 @@ end
 -- straightens from a slight tilt (a hair of overshoot), and blooms a glow that fades after it settles.
 -- Exercises the per-node image transform (tx/ty/rot) + glow. data:
 --   { image=uri, dx=px(from), dy=px(from), rot=deg(from), glow=0..1, dur=sec, size=0..1(pw), radius=px }
+-- LIVE VIDEO: pass `video=<src uri>` instead of `image=` and the reveal plays the footage (not a frozen
+-- frame) — `vt = (vt0 or 0) + t` advances the source clock, so the clip keeps rolling after it settles.
+-- `vt0` = the source in-point (start N seconds in). `fit` ("cover" default / "contain") + `full=true`
+-- (grow to fill the frame instead of the `size` card) let it stand in for a fullscreen video entrance.
 function widgets.reveal(t, d)
   d = d or {}
   local dur = d.dur or 0.9
@@ -298,8 +302,12 @@ function widgets.reveal(t, d)
   local glow = (d.glow or 0.85) * gin * gout
   local mb = nil                                                     -- motion blur from the slide velocity
   if d.blur ~= false then local px, py = slide(t - 1 / 60); mb = { dx - px, dy - py } end
-  local n = center(image{ asset = d.image, pw = d.size or 0.66, aspect = true,
-    tx = dx, ty = dy, rot = rot, glow = glow, glow_col = d.glow_col, radius = d.radius or 0, mb = mb })
+  local img = { tx = dx, ty = dy, rot = rot, glow = glow, glow_col = d.glow_col,
+    radius = d.radius or 0, mb = mb, aspect = true }
+  if d.video then img.video, img.vt, img.fit = d.video, (d.vt0 or 0) + t, d.fit or "cover"
+  else img.asset = d.image end
+  if d.full then img.growx, img.growy = true, true else img.pw = d.size or 0.66 end
+  local n = center(image(img))
   if d.shake then n.ox, n.oy = anim.shake(t - dur, d.shake_mag or 16, d.shake_dur or 0.45) end   -- jolt on landing
   return n
 end

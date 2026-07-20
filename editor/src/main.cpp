@@ -8708,6 +8708,12 @@ static void DrawTimeline(Project& p, UIState& st, const std::map<std::string, Ge
                         c.params["in"] = advance_in_folded(p, c.asset, c.params, in0, d * k);
                     }
                     c.start += d; c.dur = nd; reanchor_leading_fade(c, d);   // fade-in follows the moved start
+                    // Keyframes are absolute-time and anchored to the clip START, so they must ride a
+                    // moved start edge (same as a whole-clip move via shiftClip) — otherwise a start
+                    // reveal (tilt/slide) detaches and, after a compensating move-back, drifts by the
+                    // trim amount (the b16 Lemmings-reveal bug). Right-edge trims leave the start put,
+                    // so start-anchored reveals correctly stay; only trailing fades reanchor there.
+                    for (auto& kp : c.keyframes) for (auto& k : kp.second) k.t += d;
                 }
             }
             ImGui::SetCursorScreenPos(ImVec2(b.x - HANDLE, a.y));
@@ -11702,7 +11708,10 @@ static void DrawUI(Project& p, UIState& st, bool& reload, const std::map<std::st
                 draw_avatar_emotion_panel(c, rigName);
             }
             float start = (float)c.start, len = (float)c.dur;
-            if (ImGui::DragFloat("start (s)", &start, 0.01f, 0.0f, 1e5f)) c.start = start;  // instant
+            if (ImGui::DragFloat("start (s)", &start, 0.01f, 0.0f, 1e5f)) {  // instant; keyframes ride the start
+                double d = (double)start - c.start; c.start = start;
+                for (auto& kp : c.keyframes) for (auto& k : kp.second) k.t += d;
+            }
             if (ImGui::DragFloat("dur (s)", &len, 0.01f, 0.01f, 1e5f)) c.dur = len;          // instant
             float pos[2] = {(float)c.tx_pos[0], (float)c.tx_pos[1]};
             float op = (float)c.tx_opacity;
