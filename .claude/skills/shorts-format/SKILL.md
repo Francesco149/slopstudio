@@ -72,8 +72,10 @@ via `slop.py`, never hand-edited JSON. Reuse a proven widget when one fits (`cod
   stats" post — movement table on "measured by eye" → scale-zoom into ranges 16/8/20 on "byte for byte, they
   were right".) *Alt layout if you want the host present:* an `image` clip (`layout:"fit"`, not `solo`) top-band
   + host bottom-band, "zoom" via two `crop` rects — but the owner prefers the solo `document` inset-zoom.
-- **The now-playing song chip is OFF on portrait** by default (`slop.py skeleton` sets `meta.song_credits`
-  false) — it otherwise covers the first frame = the Short's thumbnail; the song credit goes in the description.
+- **The now-playing song chip is ON by default** (portrait too, since 2026-07-21 — owner wants the music-credit
+  plate on shorts; it's a small fading top-corner pill that clears the centred hook, and @GemmaExplains uses
+  custom thumbnails). Suppress per-short with `"song_credits": false` in the skeleton (or `params.credit=false`
+  on the bed clip) if it lands on the frame you pick as the Short's thumbnail; the description credit is emitted regardless.
 - **TTS gotcha:** the voice mispronounces some ordinary words (it can't say "deserts" → write "disbands");
   keep the on-screen spelling via `params.transcript` when the spoken respell differs from the display text.
 

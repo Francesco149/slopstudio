@@ -500,10 +500,12 @@ def cmd_skeleton(a):
     if portrait or rate != 1.0:
         p["meta"]["speech_rate"]=rate         # explicit, so retime/lint/editor agree verbatim
                                               # (landscape honors skeleton speech_rate too)
-    # portrait SHORTS suppress the on-screen "now playing" chip by default — it covers the hook on the
-    # FIRST frame (= the Short's thumbnail); the song credit goes in the description/sidecar instead.
-    # Override per-skeleton with "song_credits": true; landscape keeps the editor default (on).
-    if not sk.get("song_credits", not portrait):
+    # The on-screen "now playing" song-credit chip defaults ON everywhere — portrait too (owner
+    # 2026-07-21: the shorts were missing the music-credit plate; @GemmaExplains uses custom-designed
+    # thumbnails, and the chip is a small fading top-corner pill that clears the centred hook). Only an
+    # explicit "song_credits": false in the skeleton suppresses it (e.g. if it lands on a Short's picked
+    # thumbnail frame); the description/sidecar credit is emitted regardless.
+    if not sk.get("song_credits", True):
         p["meta"]["song_credits"]=False
     voice=sk.get("voice","gemma-san-deep-clone"); rig=sk.get("rig","gemma-big")
     # rows in draw order (top-first): captions/callouts > HOST > code/diagram > content > blur > bg > filler
