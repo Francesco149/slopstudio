@@ -278,21 +278,22 @@ def apply_transition(p, cid, preset, indur=0.9, do_out=True):
     kfs["transform.opacity"] = op
 
 def _reveal_media(p, cid, v, lay):
-    """Entrance for a single framed media clip. `reveal:"tilt|slide-l|slide-r|rise|pop|fade|none"`
-    overrides; the DEFAULT for fit/inset media is the fancy tilt-slide. pop is reserved for small
-    insets / stacked multiples (the staggered unveil); fullscreen footage just cuts (eras)."""
+    """Entrance for a single framed media clip. `reveal:"tilt|tilt-l|slide-l|slide-r|rise|drop-soft|
+    drop-bounce|pop|fade|none"` overrides; the DEFAULT for fit/inset media is the fancy tilt-slide.
+    pop is reserved for small insets / stacked multiples; fullscreen footage just cuts (eras).
+
+    DECLARATIVE only — the editor computes a live spring slide from the clip EDGE every frame
+    (reveal_spec/clip_transition): resize/trim-robust, composes with the default fade, and leaves
+    transform.pos a fully editable OFFSET. We deliberately DON'T bake keyframes anymore — baked
+    pos/opacity keyframes locked the pos field, disabled the auto-transitions, and killed the fade
+    (the owner's edit-time complaint). `params.reveal` also tells retime not to crossfade into it and
+    tells the editor to disarm the fit/inset auto-pop; no `transition.in:"none"` pin is needed."""
     if not cid: return
     rev = v.get("reveal")
     if rev is None:
         rev = "tilt" if lay in ("fit", "inset") else None
     if rev and rev != "none" and rev in PRESETS:
-        apply_transition(p, cid, rev, 0.8, do_out=False)
-        # the reveal IS the entrance (keyframed). Disarm two footguns that would fight it: (1) the editor
-        # auto-POPS fit/inset media that has no explicit transition.in — pin it to "none" so the slide/tilt
-        # isn't stacked on a scale-pop; (2) mark the clip so retime won't crossfade-OVERLAP it (a reveal
-        # wants a clean cut-in over the backdrop, not a dissolve lingering from the previous shot).
         c = p["clips"][cid]; prm = c.setdefault("params", OD())
-        tr = prm.get("transition") or OD(); tr["in"] = "none"; prm["transition"] = tr
         prm["reveal"] = rev
 
 # ── overview: compact timeline (structured + ascii lanes) ──

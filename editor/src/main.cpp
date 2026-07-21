@@ -6134,7 +6134,30 @@ struct TransInfo {
     bool glideIn = false;                  // same-sprite reposition glide
     bool popThrough = false;               // contiguous media swap still pops (fade suppressed)
     bool explicitPop = false;              // transition.in was EXPLICITLY "pop" (not the inset auto-pop)
+    std::string revealType;                // params.reveal slide/tilt/rise/drop/fade → live spring entrance
 };
+
+// Native media REVEAL entrance — a live, resize-robust spring slide (+ the default fade), recomputed
+// from the clip EDGE every frame (exactly like the pop, and unlike baked keyframes, which strand on a
+// trim/resize and lock transform.pos so the pos field stops working). `params.reveal`:
+// tilt|tilt-l|slide-l|slide-r|rise|drop-soft|drop-bounce|fade|pop|none. Fills dx/dy (project-px
+// enter-from offset) + the spring stiffness/damping (mirrors tools/slop.py PRESETS). Returns true for a
+// pop-SUPPRESSING reveal — every slide type plus "fade" (fade = zero offset, fade only, no auto-pop);
+// false for "pop"/"none"/absent/unknown (those fall through to the normal pop/fade path). NOTE: media
+// clips draw as axis-aligned quads (no rotation), so the historical "tilt" rot was never rendered —
+// this reproduces the slide+fade that actually showed, with no dead rotation keyframes.
+static bool reveal_spec(const std::string& r, double& dx, double& dy, double& K, double& C) {
+    dx = dy = 0; K = 120; C = 17;
+    if (r == "tilt")                          { dx =  360; K = 120; C = 17; return true; }
+    if (r == "tilt-l")                        { dx = -360; K = 120; C = 17; return true; }
+    if (r == "slide-r" || r == "slide_right") { dx =  420; K = 130; C = 22; return true; }
+    if (r == "slide-l" || r == "slide_left")  { dx = -420; K = 130; C = 22; return true; }
+    if (r == "rise")                          { dy =   90; K = 130; C = 23; return true; }
+    if (r == "drop-soft")                     { dy = -130; K = 110; C = 21; return true; }
+    if (r == "drop-bounce")                   { dy = -130; K = 190; C = 11; return true; }
+    if (r == "fade")                          { return true; }   // pure fade: suppress the auto-pop, no slide
+    return false;                                                  // pop/none/absent/unknown → not a slide reveal
+}
 static TransInfo clip_trans_info(Project& p, Clip& c) {
     TransInfo ti;
     const json& tr = (c.params.is_object() && c.params.contains("transition")) ? c.params["transition"] : json();
@@ -6150,12 +6173,24 @@ static TransInfo clip_trans_info(Project& p, Clip& c) {
     };
     spec("in", ti.inType, ti.inDur); spec("out", ti.outType, ti.outDur);
     ti.explicitPop = (ti.inType == "pop");   // authored pop (vs the inset/fit auto-pop below) → the ONLY pop that SOUNDS
+    // Native reveal entrance (params.reveal) — the DEFAULT for framed media, authored as a live spring
+    // slide (tools/slop.py sets the string, no keyframes). A slide/tilt/rise/drop/fade reveal SUPPRESSES
+    // the fit/inset auto-pop below (the slide IS the entrance) while keeping the default fade-in; an
+    // explicit "pop" reveal just maps onto the pop path. Diagram/plot use `reveal` as a NUMBER (staged
+    // draw-in) → jstr() returns "" → no interference here.
+    {
+        std::string rev = jstr(c.params, "reveal");
+        double _dx, _dy, _k, _c;
+        if (rev == "pop") ti.inType = "pop";
+        else if (reveal_spec(rev, _dx, _dy, _k, _c)) ti.revealType = rev;
+    }
     // Non-fullscreen media showcases POP in by default (the user's pick): an inset/fit image or
-    // video with no explicit `transition.in` enters with the spring pop instead of a plain fade.
+    // video with no explicit `transition.in` enters with the spring pop instead of a plain fade —
+    // UNLESS a slide reveal owns the entrance (ti.revealType), which keeps the fade + adds the slide.
     if (ti.inType == "fade" && !(tr.is_object() && tr.contains("in"))) {
         if (c.type == "image" || c.type == "video") {
             std::string lay = jstr(c.params, "layout");
-            if (lay == "fit" || lay.rfind("inset", 0) == 0) ti.inType = "pop";
+            if ((lay == "fit" || lay.rfind("inset", 0) == 0) && ti.revealType.empty()) ti.inType = "pop";
         } else if (c.type == "diagram" || c.type == "plot") ti.inType = "pop";   // diagram/plot cards enter like image showcases
     }
     double half = c.dur * 0.5;
@@ -6299,6 +6334,19 @@ static TransFx clip_transition(Project& p, Clip& c, double T) {
         }
         if (ti.inType == "pop")                                                // SPRING pop-in (own timescale)
             fx.sclMul *= (float)(POP_MIN + (1.0 - POP_MIN) * spring_response(tin, POP_K, POP_C));
+    }
+    // Native reveal SLIDE (tilt/slide/rise/drop) — a spring entrance on its OWN timescale (decoupled
+    // from the fade), recomputed from the clip edge every frame so it's resize/trim-robust and stays a
+    // pure ADDITIVE offset on transform.pos (which remains fully editable — the whole point of moving
+    // off baked keyframes). Fires regardless of contiguity: a reveal is a deliberate slide-in over the
+    // backdrop, not a cross-fade. The default fade-in above rides along; self-nullifies once settled.
+    if (!ti.revealType.empty()) {
+        double rdx, rdy, rK, rC;
+        if (reveal_spec(ti.revealType, rdx, rdy, rK, rC) && (rdx != 0 || rdy != 0) && tin >= 0 && tin < 1.4) {
+            double resp = spring_response(tin, rK, rC);
+            fx.dx += (float)(rdx * (1.0 - resp));
+            fx.dy += (float)(rdy * (1.0 - resp));
+        }
     }
     if (!ti.skipOut && ti.outType != "none" && ti.outDur > 1e-3 && tout < ti.outDur) {
         double e = ease(tout / ti.outDur);

@@ -2,7 +2,22 @@
 
 Hand-maintained "what's true right now." **Read this first after `CLAUDE.md`** and update it
 in the same change that lands work, so a fresh session reorients in ~60s. Last updated:
-**2026-07-20**. For composing a video as an agent, **`docs/LLM_WORKFLOW.md`**.
+**2026-07-21**. For composing a video as an agent, **`docs/LLM_WORKFLOW.md`**.
+
+**★ REVEALS ARE NOW NATIVE TRANSITIONS, NOT BAKED KEYFRAMES (2026-07-21):** the fit/inset media
+`reveal:"tilt|tilt-l|slide-l|slide-r|rise|drop-soft|drop-bounce|fade"` entrance is now a LIVE spring
+slide computed from the clip EDGE every frame (editor `reveal_spec()` + `clip_transition`), exactly like
+the existing spring `pop` — **resize/trim-robust, composes with the default fade, and leaves `transform.pos`
+a fully editable offset.** This replaces the old approach where `tools/slop.py` BAKED the reveal into
+`transform.pos/rot/opacity` keyframes (owner's complaint: baked keyframes disabled the auto-transitions,
+killed the opacity fade, and locked the pos field the moment you nudged a clip). `_reveal_media` now just
+sets `params.reveal` (declarative, no keyframes, no `transition.in:"none"` pin); the editor suppresses the
+fit/inset auto-pop when a slide reveal is set but keeps the fade-in. Media clips draw as axis-aligned quads
+(no rotation), so the historical "tilt" ROT was never actually rendered — the native reveal reproduces the
+slide+fade that showed. **Migrated all body-harvest shorts + the main cut** (baked reveal keyframes stripped,
+`params.reveal` kept, owner tweaks preserved, lint clean) and re-exported. Also: the **"Tell Ciaran" beat**
+(main + short1) is now a `widgets.code` card of the game's real sound-engine debug strings (verbatim @ROM
+0x38EA0 — "Error:GetFreeSeqPlayer - Tell Ciaran") instead of gameplay footage.
 
 **★ KEYFRAMES RIDE THE CLIP START + REVEAL-WIDGET VIDEO (2026-07-20, `ca128ee`):** keyframes are
 absolute-time and anchored to the clip START, so every start-changing edit must shift them with it —
